@@ -45,6 +45,7 @@ func withEnv(t *testing.T, key, value string) {
 func TestDetectPackwizFromPathAndPersist(t *testing.T) {
 	dir := t.TempDir()
 	fakeTool(t, dir, "packwiz")
+	withEnv(t, "PACKWIZ", "") // 清空可能存在的 PACKWIZ 变量，避免误命中
 	withEnv(t, "PATH", dir+";"+os.Getenv("PATH"))
 
 	svc := NewEnvService(newTestConfig(t))
@@ -63,6 +64,7 @@ func TestDetectPackwizFromGoBin(t *testing.T) {
 	dir := t.TempDir()
 	fakeTool(t, filepath.Join(dir, "go", "bin"), "packwiz")
 	withEnv(t, "USERPROFILE", dir)
+	withEnv(t, "PACKWIZ", "") // 清空可能存在的 PACKWIZ 变量，避免误命中
 	// 清空 PATH，避免命中系统里真实安装的 packwiz
 	withEnv(t, "PATH", t.TempDir()) // 指向无 packwiz 的临时目录
 
@@ -122,6 +124,7 @@ func TestDetectPackwizRefallsWhenConfigInvalid(t *testing.T) {
 func TestDetectPrismFromLocalAppData(t *testing.T) {
 	dir := t.TempDir()
 	fakeTool(t, filepath.Join(dir, "Programs", "PrismLauncher"), "prismlauncher")
+	withEnv(t, "PRISM", "") // 清空本机可能存在的 PRISM 变量，避免误命中
 	withEnv(t, "LOCALAPPDATA", dir)
 	withEnv(t, "ProgramFiles", t.TempDir())
 	withEnv(t, "ProgramFiles(x86)", t.TempDir())
@@ -141,6 +144,7 @@ func TestDetectPrismFromLocalAppData(t *testing.T) {
 func TestDetectPrismFromProgramFilesScan(t *testing.T) {
 	dir := t.TempDir()
 	fakeTool(t, filepath.Join(dir, "Prism Launcher"), "prismlauncher")
+	withEnv(t, "PRISM", "") // 清空本机可能存在的 PRISM 变量，避免误命中
 	withEnv(t, "ProgramFiles", dir)
 	withEnv(t, "ProgramFiles(x86)", t.TempDir())
 	withEnv(t, "LOCALAPPDATA", t.TempDir())
@@ -153,10 +157,76 @@ func TestDetectPrismFromProgramFilesScan(t *testing.T) {
 	}
 }
 
+// prism 应通过 PRISM 环境变量检测到（用户以 %PRISM% 配置的常见方式）
+func TestDetectPrismFromEnvVar(t *testing.T) {
+	dir := t.TempDir()
+	exe := fakeTool(t, dir, "prismlauncher")
+	withEnv(t, "PRISM", dir)
+	withEnv(t, "LOCALAPPDATA", t.TempDir())
+	withEnv(t, "ProgramFiles", t.TempDir())
+	withEnv(t, "ProgramFiles(x86)", t.TempDir())
+
+	svc := NewEnvService(newTestConfig(t))
+	info := svc.detectPrism()
+
+	if !info.Found || info.Source != "env" || info.Path != exe {
+		t.Fatalf("应从 PRISM 环境变量检测到 prism，实际 found=%v source=%s path=%s", info.Found, info.Source, info.Path)
+	}
+}
+
+// packwiz 应通过 PACKWIZ 环境变量检测到
+func TestDetectPackwizFromEnvVar(t *testing.T) {
+	dir := t.TempDir()
+	exe := fakeTool(t, dir, "packwiz")
+	withEnv(t, "PACKWIZ", dir)
+	withEnv(t, "PATH", t.TempDir())
+	withEnv(t, "USERPROFILE", t.TempDir())
+
+	svc := NewEnvService(newTestConfig(t))
+	info := svc.detectPackwiz()
+
+	if !info.Found || info.Source != "env" || info.Path != exe {
+		t.Fatalf("应从 PACKWIZ 环境变量检测到 packwiz，实际 found=%v source=%s path=%s", info.Found, info.Source, info.Path)
+	}
+}
+
+// 环境变量值也可直接指向 exe 文件本身
+func TestDetectFromEnvVarPointingToFile(t *testing.T) {
+	exe := fakeTool(t, t.TempDir(), "prismlauncher")
+	withEnv(t, "PRISM", exe)
+	withEnv(t, "LOCALAPPDATA", t.TempDir())
+	withEnv(t, "ProgramFiles", t.TempDir())
+	withEnv(t, "ProgramFiles(x86)", t.TempDir())
+
+	svc := NewEnvService(newTestConfig(t))
+	info := svc.detectPrism()
+
+	if !info.Found || info.Source != "env" || info.Path != exe {
+		t.Fatalf("PRISM 指向 exe 文件时应直接命中，实际 found=%v source=%s path=%s", info.Found, info.Source, info.Path)
+	}
+}
+
+// normalizePathEntry 应正确规范化 PATH 条目
+func TestNormalizePathEntry(t *testing.T) {
+	cases := map[string]string{
+		`C:\Foo\Bar\`:     `c:\foo\bar`,
+		`C:\Foo\Bar`:      `c:\foo\bar`,
+		`  C:\Foo\Bar  `:  `c:\foo\bar`,
+		`C:\Foo\Bar\Baz\`: `c:\foo\bar\baz`,
+	}
+	for in, want := range cases {
+		if got := normalizePathEntry(in); got != want {
+			t.Errorf("normalizePathEntry(%q) = %q, 期望 %q", in, got, want)
+		}
+	}
+}
+
 // 完全找不到时返回 Found=false 且不写 config
 func TestDetectNotFound(t *testing.T) {
 	withEnv(t, "PATH", t.TempDir())
 	withEnv(t, "USERPROFILE", t.TempDir())
+	withEnv(t, "PACKWIZ", "")
+	withEnv(t, "PRISM", "")
 	withEnv(t, "LOCALAPPDATA", t.TempDir())
 	withEnv(t, "ProgramFiles", t.TempDir())
 	withEnv(t, "ProgramFiles(x86)", t.TempDir())

@@ -45,8 +45,8 @@ func (s *EnvService) Detect() []ToolInfo {
 	return []ToolInfo{packwiz, prism}
 }
 
-// detectPackwiz 检测顺序：config 中保存的路径 → 环境变量(PATH) →
-// 默认目录 %USERPROFILE%\go\bin；找不到则提示用户键入安装路径。
+// detectPackwiz 检测顺序：config 中保存的路径 → 环境变量 PACKWIZ →
+// 环境变量(PATH) → 默认目录 %USERPROFILE%\go\bin；找不到则提示用户键入安装路径。
 func (s *EnvService) detectPackwiz() ToolInfo {
 	info := ToolInfo{Name: "packwiz"}
 	cfg := s.config.Get()
@@ -59,7 +59,17 @@ func (s *EnvService) detectPackwiz() ToolInfo {
 		}
 	}
 
-	// 1. 环境变量 PATH
+	// 1. 环境变量 PACKWIZ（用户可用 %PACKWIZ% 配置并调用）
+	if info.Path == "" {
+		if p := strings.TrimSpace(os.Getenv("PACKWIZ")); p != "" {
+			if resolved, ok := resolveToolPath(p, "packwiz"); ok {
+				info.Path = resolved
+				info.Source = "env"
+			}
+		}
+	}
+
+	// 2. 环境变量 PATH
 	if info.Path == "" {
 		if p, err := exec.LookPath("packwiz"); err == nil {
 			info.Path = p
@@ -67,7 +77,7 @@ func (s *EnvService) detectPackwiz() ToolInfo {
 		}
 	}
 
-	// 2. 默认目录 %USERPROFILE%\go\bin（go install 的默认安装位置）
+	// 3. 默认目录 %USERPROFILE%\go\bin（go install 的默认安装位置）
 	if info.Path == "" {
 		dir := filepath.Join(os.Getenv("USERPROFILE"), "go", "bin")
 		if resolved, ok := resolveToolPath(dir, "packwiz"); ok {
@@ -80,7 +90,7 @@ func (s *EnvService) detectPackwiz() ToolInfo {
 	return info
 }
 
-// detectPrism 检测顺序：config 中保存的路径 → 默认路径
+// detectPrism 检测顺序：config 中保存的路径 → 环境变量 PRISM → 默认路径
 // %LOCALAPPDATA%\Programs\PrismLauncher → Program Files / Program Files (x86)
 // （含这两个目录下的子目录浅层扫描）；找不到则提示用户键入安装路径。
 func (s *EnvService) detectPrism() ToolInfo {
@@ -95,7 +105,17 @@ func (s *EnvService) detectPrism() ToolInfo {
 		}
 	}
 
-	// 1. 默认安装路径
+	// 1. 环境变量 PRISM（用户可用 %PRISM% 配置并调用）
+	if info.Path == "" {
+		if p := strings.TrimSpace(os.Getenv("PRISM")); p != "" {
+			if resolved, ok := resolveToolPath(p, "prismlauncher"); ok {
+				info.Path = resolved
+				info.Source = "env"
+			}
+		}
+	}
+
+	// 2. 默认安装路径
 	if info.Path == "" {
 		if p, source := detectPrismDefaultDirs(); p != "" {
 			info.Path = p
@@ -178,6 +198,8 @@ func toolMessage(source, path string) string {
 	switch source {
 	case "config":
 		return "使用 config.toml 中保存的路径: " + path
+	case "env":
+		return "通过环境变量找到: " + path
 	case "path":
 		return "已存在于环境变量 PATH: " + path
 	case "default-dir":
@@ -187,9 +209,31 @@ func toolMessage(source, path string) string {
 	}
 }
 
-// inUserPath 判断目录是否已存在于用户级 PATH（忽略大小写）
+// expandEnv 展开字符串中的 %VAR% 环境变量（Windows 语法）。
+// 注意：os.ExpandEnv 只支持 $VAR 语法，不能用于 Windows 的 %VAR%。
+func expandEnv(s string) string {
+	src, err := syscall.UTF16PtrFromString(s)
+	if err != nil {
+		return s
+	}
+	proc := windows.NewLazySystemDLL("kernel32.dll").NewProc("ExpandEnvironmentStringsW")
+	// 第一次调用（dst=nil, size=0）返回所需缓冲大小（含结尾空字符）
+	n, _, _ := proc.Call(uintptr(unsafe.Pointer(src)), 0, 0)
+	if n == 0 {
+		return s
+	}
+	buf := make([]uint16, n)
+	ret, _, _ := proc.Call(uintptr(unsafe.Pointer(src)), uintptr(unsafe.Pointer(&buf[0])), n)
+	if ret == 0 {
+		return s
+	}
+	return syscall.UTF16ToString(buf)
+}
+
+// inUserPath 判断目录是否已存在于用户级 PATH（忽略大小写）。
+// PATH 条目可能是 %VAR% 未展开形式，比较前先展开。
 func inUserPath(dir string) bool {
-	dir = strings.TrimSuffix(strings.TrimSpace(dir), `\`)
+	dir = normalizePathEntry(dir)
 	k, err := registry.OpenKey(registry.CURRENT_USER, `Environment`, registry.QUERY_VALUE)
 	if err != nil {
 		return false
@@ -200,11 +244,18 @@ func inUserPath(dir string) bool {
 		return false
 	}
 	for _, part := range strings.Split(cur, ";") {
-		if strings.EqualFold(strings.TrimSuffix(strings.TrimSpace(part), `\`), dir) {
+		if strings.EqualFold(normalizePathEntry(expandEnv(part)), dir) {
 			return true
 		}
 	}
 	return false
+}
+
+// normalizePathEntry 规范化 PATH 条目用于比较：去空白、去尾部反斜杠、转小写
+func normalizePathEntry(p string) string {
+	p = strings.TrimSpace(p)
+	p = strings.TrimSuffix(p, `\`)
+	return strings.ToLower(p)
 }
 
 // Configure 将检测到的工具所在目录写入用户级 PATH（幂等），
@@ -256,17 +307,17 @@ func addDirsToUserPath(dirs []string) ([]string, error) {
 		vtype = t
 	}
 
-	// 去重（大小写不敏感）
+	// 去重（大小写不敏感，%VAR% 条目先展开再比较）
 	existing := map[string]bool{}
 	for _, p := range strings.Split(cur, ";") {
-		if p = strings.TrimSuffix(strings.TrimSpace(p), `\`); p != "" {
-			existing[strings.ToLower(p)] = true
+		if p = normalizePathEntry(expandEnv(p)); p != "" {
+			existing[p] = true
 		}
 	}
 
 	added := []string{}
 	for _, d := range dirs {
-		key := strings.ToLower(strings.TrimSuffix(strings.TrimSpace(d), `\`))
+		key := normalizePathEntry(expandEnv(d))
 		if existing[key] {
 			continue
 		}
