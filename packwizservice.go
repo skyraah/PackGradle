@@ -230,9 +230,17 @@ func cfCacheKey(projectID, fileID int64) string {
 	return fmt.Sprintf("%d:%d", projectID, fileID)
 }
 
-// applyCfCache 将本地缓存的 CurseForge 文件信息回填到项目的 mod 列表
+// cfCacheStore 返回项目对应的缓存存储（<项目目录>/.cache）
+func (s *PackwizService) cfCacheStore(proj PackProject) *CfCacheStore {
+	return NewCfCacheStore(filepath.Join(proj.Path, ".cache"))
+}
+
+// applyCfCache 将项目缓存的 CurseForge 文件信息回填到 mod 列表
 func (s *PackwizService) applyCfCache(proj *PackProject) {
-	cache := s.config.Get().CfCache
+	cache, err := s.cfCacheStore(*proj).Load(proj.Name)
+	if err != nil {
+		return // 缓存不可读时静默（仅影响版本显示）
+	}
 	for i := range proj.Mods {
 		m := &proj.Mods[i]
 		if m.CfProjectID == 0 || m.CfFileID == 0 {

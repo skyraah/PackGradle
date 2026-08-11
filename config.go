@@ -31,8 +31,6 @@ type appConfig struct {
 	Projects    []ProjectEntry `toml:"projects"`
 	// 用户自行填写的 CurseForge API Key（用于按需查询 mod 版本等）
 	CurseforgeApiKey string `toml:"curseforge_api_key"`
-	// CurseForge 文件信息本地缓存（键为 "projectID:fileID"）
-	CfCache map[string]CfFileCache `toml:"curseforge_cache"`
 }
 
 // ConfigManager 负责配置文件的读写，所有服务共享同一实例
@@ -127,16 +125,5 @@ func (m *ConfigManager) SetApiKey(key string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.cfg.CurseforgeApiKey = key
-	return m.save()
-}
-
-// SetCurseforgeCache 写入一条 CurseForge 文件信息缓存
-func (m *ConfigManager) SetCurseforgeCache(key string, entry CfFileCache) error {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	if m.cfg.CfCache == nil {
-		m.cfg.CfCache = map[string]CfFileCache{}
-	}
-	m.cfg.CfCache[key] = entry
 	return m.save()
 }

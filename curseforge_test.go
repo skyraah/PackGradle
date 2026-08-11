@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/BurntSushi/toml"
+	"os"
 )
 
 // fakeCfServer 模拟 CurseForge 官方 Get Mod File 接口
@@ -128,17 +128,18 @@ func TestFetchModVersionEndToEnd(t *testing.T) {
 		t.Errorf("返回的 ModInfo 未回填缓存字段: %+v", updated)
 	}
 
-	// 缓存已写入内存并持久化到磁盘
+	// 缓存已写入项目目录的 .cache/<项目名>.cache，并可从磁盘读回
 	key := cfCacheKey(328085, 7178761)
-	if entry, ok := m.Get().CfCache[key]; !ok || entry.DisplayName != "Mekanism-1.20.1-10.4.16.80.jar" {
-		t.Errorf("缓存未写入: %+v", m.Get().CfCache)
+	store := NewCfCacheStore(filepath.Join(dir, ".cache"))
+	cache, err := store.Load("CF Test")
+	if err != nil {
+		t.Fatalf("读取缓存失败: %v", err)
 	}
-	m2 := &ConfigManager{path: m.path}
-	if _, err := toml.DecodeFile(m2.path, &m2.cfg); err != nil {
-		t.Fatal(err)
+	if entry, ok := cache[key]; !ok || entry.DisplayName != "Mekanism-1.20.1-10.4.16.80.jar" {
+		t.Errorf("缓存未写入: %+v", cache)
 	}
-	if entry, ok := m2.cfg.CfCache[key]; !ok || entry.DisplayName == "" {
-		t.Errorf("缓存未持久化到磁盘: %+v", m2.cfg.CfCache)
+	if _, err := os.Stat(filepath.Join(dir, ".cache", "CF Test.cache")); err != nil {
+		t.Errorf("缓存文件不存在: %v", err)
 	}
 
 	// 未配置 API Key
@@ -200,10 +201,12 @@ func TestApplyCfCache(t *testing.T) {
 	if err := m.AddProject(ProjectEntry{Name: "CF Test", Path: dir}); err != nil {
 		t.Fatal(err)
 	}
-	if err := m.SetCurseforgeCache(cfCacheKey(328085, 7178761), CfFileCache{
-		DisplayName: "create-1.20.1-6.0.8.jar",
-		FileDate:    "2025-06-12T00:00:00Z",
-		ReleaseType: 1,
+	if err := NewCfCacheStore(filepath.Join(dir, ".cache")).Save("CF Test", map[string]CfFileCache{
+		cfCacheKey(328085, 7178761): {
+			DisplayName: "create-1.20.1-6.0.8.jar",
+			FileDate:    "2025-06-12T00:00:00Z",
+			ReleaseType: 1,
+		},
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -277,5 +280,52 @@ func TestParseUpdateOutputNoUpdates(t *testing.T) {
 	updates, errors = parseUpdateOutput("")
 	if len(updates) != 0 || len(errors) != 0 {
 		t.Errorf("空输出不应解析出条目: updates=%+v errors=%+v", updates, errors)
+	}
+}
+
+// CfCacheStore：Load/Save/Upsert 与按项目隔离
+func TestCfCacheStore(t *testing.T) {
+	root := filepath.Join(t.TempDir(), ".cache")
+	store := NewCfCacheStore(root)
+
+	// 不存在的项目缓存返回空 map
+	if cache, err := store.Load("Project A"); err != nil || len(cache) != 0 {
+		t.Fatalf("空缓存应返回空 map: %v %v", cache, err)
+	}
+
+	// 写入并读回
+	entry := CfFileCache{DisplayName: "create-1.20.1-6.0.8.jar", ReleaseType: 1}
+	if err := store.Save("Project A", map[string]CfFileCache{"1:2": entry}); err != nil {
+		t.Fatal(err)
+	}
+	cache1, _ := store.Load("Project A")
+	if got := cache1["1:2"]; got.DisplayName != "create-1.20.1-6.0.8.jar" {
+		t.Errorf("读回不正确: %+v", got)
+	}
+	if _, err := os.Stat(filepath.Join(root, "Project A.cache")); err != nil {
+		t.Errorf("缓存文件不存在: %v", err)
+	}
+
+	// Upsert 追加条目，不影响已有条目
+	if err := store.Upsert("Project A", "3:4", CfFileCache{DisplayName: "other.jar"}); err != nil {
+		t.Fatal(err)
+	}
+	cache, _ := store.Load("Project A")
+	if len(cache) != 2 || cache["1:2"].DisplayName == "" || cache["3:4"].DisplayName != "other.jar" {
+		t.Errorf("Upsert 后缓存不正确: %+v", cache)
+	}
+
+	// 项目间隔离
+	if err := store.Save("Project B", map[string]CfFileCache{"9:9": entry}); err != nil {
+		t.Fatal(err)
+	}
+	cacheA, _ := store.Load("Project A")
+	if len(cacheA) != 2 {
+		t.Errorf("项目 A 缓存应不受项目 B 影响: %+v", cacheA)
+	}
+
+	// 不残留临时文件
+	if _, err := os.Stat(filepath.Join(root, "Project A.cache.tmp")); !os.IsNotExist(err) {
+		t.Errorf("不应残留临时文件: %v", err)
 	}
 }

@@ -141,7 +141,7 @@ func (s *PackwizService) FetchModVersion(projectName, modID string) (ModInfo, er
 	if err != nil {
 		return ModInfo{}, err
 	}
-	if err := s.config.SetCurseforgeCache(cfCacheKey(mod.CfProjectID, mod.CfFileID), entry); err != nil {
+	if err := s.cfCacheStore(proj).Upsert(proj.Name, cfCacheKey(mod.CfProjectID, mod.CfFileID), entry); err != nil {
 		return ModInfo{}, err
 	}
 	s.applyCfCache(&proj)
@@ -175,6 +175,7 @@ func (s *PackwizService) FetchAllModVersions(projectName string) ([]ModVersionRe
 	}
 
 	results := make([]ModVersionResult, len(targets))
+	store := s.cfCacheStore(proj)
 	sem := make(chan struct{}, 8)
 	var wg sync.WaitGroup
 	for i, m := range targets {
@@ -188,7 +189,7 @@ func (s *PackwizService) FetchAllModVersions(projectName string) ([]ModVersionRe
 				results[i] = ModVersionResult{ID: m.ID, Name: m.Name, OK: false, Error: err.Error()}
 				return
 			}
-			if err := s.config.SetCurseforgeCache(cfCacheKey(m.CfProjectID, m.CfFileID), entry); err != nil {
+			if err := store.Upsert(proj.Name, cfCacheKey(m.CfProjectID, m.CfFileID), entry); err != nil {
 				results[i] = ModVersionResult{ID: m.ID, Name: m.Name, OK: false, Error: err.Error()}
 				return
 			}
