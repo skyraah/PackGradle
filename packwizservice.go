@@ -27,10 +27,6 @@ type ModInfo struct {
 	CfVersion     string `json:"cf_version"`      // displayName（版本）
 	CfFileDate    string `json:"cf_file_date"`    // 发布日期
 	CfReleaseType int    `json:"cf_release_type"` // 1=正式版 2=测试版 3=Alpha
-	// 本地缓存的更新检查结果（检查更新后填充）
-	CfLatestFileID   int64  `json:"cf_latest_file_id"`   // 匹配到的最新文件 file-id
-	CfLatestFileName string `json:"cf_latest_file_name"` // 最新文件名
-	CfLatestRelease  int    `json:"cf_latest_release"`   // 最新文件 releaseType
 }
 
 // PackProject 描述一个已导入的 packwiz 项目
@@ -249,9 +245,6 @@ func (s *PackwizService) applyCfCache(proj *PackProject) {
 		m.CfVersion = entry.DisplayName
 		m.CfFileDate = entry.FileDate
 		m.CfReleaseType = entry.ReleaseType
-		m.CfLatestFileID = entry.LatestFileID
-		m.CfLatestFileName = entry.LatestFileName
-		m.CfLatestRelease = entry.LatestRelease
 	}
 }
 

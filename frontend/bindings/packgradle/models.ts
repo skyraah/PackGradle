@@ -54,48 +54,16 @@ export interface ModInfo {
      * 1=正式版 2=测试版 3=Alpha
      */
     "cf_release_type": number;
-
-    /**
-     * 本地缓存的更新检查结果（检查更新后填充）
-     * 匹配到的最新文件 file-id
-     */
-    "cf_latest_file_id": number;
-
-    /**
-     * 最新文件名
-     */
-    "cf_latest_file_name": string;
-
-    /**
-     * 最新文件 releaseType
-     */
-    "cf_latest_release": number;
 }
 
 /**
- * ModUpdateInfo 是单个 mod 的更新检查结果
+ * ModUpdateInfo 是 packwiz update 检查结果中单个 mod 的信息
  */
 export interface ModUpdateInfo {
-    "id": string;
     "name": string;
     "has_update": boolean;
-
-    /**
-     * 当前已安装文件名
-     */
     "current_file": string;
-
-    /**
-     * 最新文件名
-     */
     "latest_file": string;
-    "latest_file_id": number;
-
-    /**
-     * 1=正式版 2=测试版 3=Alpha
-     */
-    "latest_release": number;
-    "latest_date": string;
     "error": string;
 }
 
@@ -193,4 +161,22 @@ export interface ToolInfo {
      * 该目录是否已在用户 PATH 中
      */
     "env_ok": boolean;
+}
+
+/**
+ * UpdateCheckResult 是 packwiz update 检查结果
+ */
+export interface UpdateCheckResult {
+    "ok": boolean;
+    "output": string;
+
+    /**
+     * 有更新的 mod
+     */
+    "updates": ModUpdateInfo[] | null;
+
+    /**
+     * 检查失败 / 跳过 / 无更新源的 mod
+     */
+    "errors": ModUpdateInfo[] | null;
 }

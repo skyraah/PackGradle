@@ -21,11 +21,6 @@ type CfFileCache struct {
 	FileDate    string `toml:"file_date"`    // 发布日期（RFC3339）
 	ReleaseType int    `toml:"release_type"` // 1=正式版 2=测试版 3=Alpha
 	FetchedAt   string `toml:"fetched_at"`   // 获取时间（RFC3339）
-	// 更新检查结果（检查更新后写入）
-	LatestFileID   int64  `toml:"latest_file_id"`   // 匹配到的最新文件 file-id
-	LatestFileName string `toml:"latest_file_name"` // 最新文件名
-	LatestRelease  int    `toml:"latest_release"`   // 最新文件 releaseType
-	CheckedAt      string `toml:"checked_at"`       // 检查时间（RFC3339）
 }
 
 // appConfig 持久化在 %AppData%\PackGradle\config.toml

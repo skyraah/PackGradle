@@ -2,7 +2,7 @@
 import { onMounted, ref } from 'vue'
 import { Dialogs } from '@wailsio/runtime'
 import { PackwizService } from '../../bindings/packgradle'
-import type { PackProject, ModInfo } from '../../bindings/packgradle/models'
+import type { PackProject, ModInfo, UpdateCheckResult } from '../../bindings/packgradle/models'
 
 const projects = ref<PackProject[]>([])
 const loading = ref(false)
@@ -87,6 +87,7 @@ async function refreshProject(proj: PackProject) {
     refreshing.value = proj.name
     try {
         const result = await PackwizService.RefreshProject(proj.name)
+        outputTitle.value = 'packwiz refresh 输出'
         refreshOutput.value = result.output || (result.ok ? 'packwiz refresh 执行成功（无输出）' : '执行失败')
         outputDialog.value = true
         await load()
@@ -102,8 +103,6 @@ function loaderChip(loader: string) {
 // —— CurseForge 版本获取 ——
 const fetching = ref<string | null>(null) // 单行获取中的 mod id
 const fetchingAll = ref<string | null>(null) // 批量获取中的项目名
-const checking = ref<string | null>(null) // 单行更新检查中的 mod id
-const checkingAll = ref<string | null>(null) // 批量更新检查中的项目名
 
 function isCfMod(mod: ModInfo): boolean {
     return (mod.cf_project_id ?? 0) > 0 && (mod.cf_file_id ?? 0) > 0
@@ -152,28 +151,25 @@ async function fetchAllVersions(proj: PackProject) {
     }
 }
 
-// —— CurseForge 更新检查 ——
-function hasCfUpdate(mod: ModInfo): boolean {
-    return (mod.cf_latest_file_id ?? 0) > 0 && mod.cf_latest_file_id !== mod.cf_file_id
-}
+// —— packwiz 更新检查（复用 packwiz 官方 update 命令）——
+const checking = ref<string | null>(null) // 检查中的项目名
+const checkingProj = ref<PackProject | null>(null) // 检查结果对应的项目
+const checkResult = ref<UpdateCheckResult | null>(null)
+const checkDialog = ref(false)
+const updatingAll = ref(false) // 正在应用全部更新
+const outputTitle = ref('packwiz refresh 输出') // 命令输出对话框标题
 
-async function checkModUpdate(proj: PackProject, mod: ModInfo) {
-    checking.value = mod.id
+// 检查：运行 `packwiz update --all` 并喂入 "n"，只列出可更新项不实际应用
+async function checkUpdates(proj: PackProject) {
+    checking.value = proj.name
+    checkingProj.value = proj
     try {
-        const info = await PackwizService.CheckModUpdate(proj.name, mod.id)
-        const target = proj.mods?.find(m => m.id === mod.id)
-        if (target && info) {
-            Object.assign(target, {
-                cf_latest_file_id: info.latest_file_id,
-                cf_latest_file_name: info.latest_file,
-                cf_latest_release: info.latest_release,
-            })
-        }
-        snackbarMsg.value = info?.error
-            ? `「${info.name}」检查失败: ${info.error}`
-            : info?.has_update
-                ? `「${info.name}」有更新：${info.current_file} → ${info.latest_file}`
-                : `「${info.name}」已是最新`
+        const result = await PackwizService.CheckUpdates(proj.name)
+        checkResult.value = result
+        checkDialog.value = true
+        const upd = result?.updates?.length ?? 0
+        const err = result?.errors?.length ?? 0
+        snackbarMsg.value = `检查完成：${upd} 个有更新${err ? `，${err} 个失败/跳过` : ''}`
         snackbar.value = true
     } catch (e) {
         snackbarMsg.value = String(e)
@@ -183,20 +179,23 @@ async function checkModUpdate(proj: PackProject, mod: ModInfo) {
     }
 }
 
-async function checkAllUpdates(proj: PackProject) {
-    checkingAll.value = proj.name
+// 应用更新：更新全部有更新的 mod（packwiz update --all -y）
+async function applyAllUpdates() {
+    const proj = checkingProj.value
+    if (!proj) return
+    updatingAll.value = true
     try {
-        const results = (await PackwizService.CheckAllModUpdates(proj.name)) ?? []
-        const upd = results.filter(r => r.has_update).length
-        const err = results.filter(r => r.error).length
-        snackbarMsg.value = `检查完成：${upd} 个有更新，${results.length - upd - err} 个已最新${err ? `，${err} 个失败` : ''}`
-        snackbar.value = true
+        const result = await PackwizService.UpdateMods(proj.name, '')
+        outputTitle.value = 'packwiz update 输出'
+        refreshOutput.value = result.output || (result.ok ? 'packwiz update 执行成功（无输出）' : '执行失败')
+        outputDialog.value = true
+        checkDialog.value = false
         await load()
     } catch (e) {
         snackbarMsg.value = String(e)
         snackbar.value = true
     } finally {
-        checkingAll.value = null
+        updatingAll.value = false
     }
 }
 
@@ -269,9 +268,9 @@ onMounted(load)
                         icon="mdi-update"
                         variant="text"
                         size="small"
-                        title="检查全部 mod 更新（CurseForge）"
-                        :loading="checkingAll === proj.name"
-                        @click.stop="checkAllUpdates(proj)"
+                        title="检查全部 mod 更新（packwiz）"
+                        :loading="checking === proj.name"
+                        @click.stop="checkUpdates(proj)"
                     />
                     <v-btn
                         v-if="!proj.error"
@@ -336,35 +335,15 @@ onMounted(load)
                                     <div v-if="mod.cf_version" class="text-medium-emphasis">
                                         {{ cfReleaseLabel(mod.cf_release_type) }} · {{ cfDateText(mod.cf_file_date) }}
                                     </div>
-                                    <v-chip
-                                        v-if="hasCfUpdate(mod)"
-                                        size="x-small"
-                                        color="warning"
-                                        variant="tonal"
-                                        class="mt-1"
-                                        :title="'最新: ' + (mod.cf_latest_file_name || '')"
-                                    >
-                                        有更新
-                                    </v-chip>
                                 </td>
                                 <td class="text-right">
-                                    <v-btn
-                                        v-if="isCfMod(mod)"
-                                        icon="mdi-update"
-                                        size="x-small"
-                                        variant="text"
-                                        :loading="checking === mod.id"
-                                        :disabled="checkingAll !== null || fetchingAll !== null"
-                                        title="检查更新"
-                                        @click="checkModUpdate(proj, mod)"
-                                    />
                                     <v-btn
                                         v-if="isCfMod(mod)"
                                         icon="mdi-cloud-download-outline"
                                         size="x-small"
                                         variant="text"
                                         :loading="fetching === mod.id"
-                                        :disabled="checkingAll !== null || fetchingAll !== null"
+                                        :disabled="fetchingAll !== null"
                                         :title="mod.cf_version ? '重新获取版本' : '从 CurseForge 获取版本'"
                                         @click="fetchModVersion(proj, mod)"
                                     />
@@ -381,13 +360,75 @@ onMounted(load)
 
         <v-dialog v-model="outputDialog" max-width="640">
             <v-card>
-                <v-card-title class="text-subtitle-1">packwiz refresh 输出</v-card-title>
+                <v-card-title class="text-subtitle-1">{{ outputTitle }}</v-card-title>
                 <v-card-text>
                     <pre class="text-body-2 refresh-output">{{ refreshOutput }}</pre>
                 </v-card-text>
                 <v-card-actions>
                     <v-spacer />
                     <v-btn variant="tonal" @click="outputDialog = false">关闭</v-btn>
+                </v-card-actions>
+            </v-card>
+        </v-dialog>
+
+        <v-dialog v-model="checkDialog" max-width="640">
+            <v-card>
+                <v-card-title class="text-subtitle-1">
+                    <v-icon icon="mdi-update" class="mr-1" />
+                    更新检查结果
+                </v-card-title>
+                <v-card-text>
+                    <v-alert
+                        v-if="!checkResult?.ok"
+                        type="error"
+                        variant="tonal"
+                        density="compact"
+                        class="mb-3"
+                    >
+                        packwiz update 执行失败（退出码非 0），以下为输出
+                    </v-alert>
+                    <v-alert
+                        v-else-if="(checkResult?.updates?.length ?? 0) === 0 && (checkResult?.errors?.length ?? 0) === 0"
+                        type="success"
+                        variant="tonal"
+                        density="compact"
+                        class="mb-3"
+                    >
+                        所有 mod 均是最新版本
+                    </v-alert>
+                    <v-list v-if="(checkResult?.updates?.length ?? 0) > 0" density="compact" class="mb-3">
+                        <v-list-subheader>有更新（{{ checkResult?.updates?.length }}）</v-list-subheader>
+                        <v-list-item v-for="u in checkResult?.updates ?? []" :key="u.name">
+                            <v-list-item-title class="text-body-2">{{ u.name }}</v-list-item-title>
+                            <v-list-item-subtitle class="text-caption">
+                                {{ u.current_file }}
+                                <v-icon icon="mdi-arrow-right" size="x-small" />
+                                <span class="text-primary">{{ u.latest_file }}</span>
+                            </v-list-item-subtitle>
+                        </v-list-item>
+                    </v-list>
+                    <v-list v-if="(checkResult?.errors?.length ?? 0) > 0" density="compact" class="mb-3">
+                        <v-list-subheader>失败 / 跳过（{{ checkResult?.errors?.length }}）</v-list-subheader>
+                        <v-list-item v-for="e in checkResult?.errors ?? []" :key="e.name + e.error">
+                            <v-list-item-title class="text-caption">
+                                {{ e.name }}：<span class="text-error">{{ e.error }}</span>
+                            </v-list-item-title>
+                        </v-list-item>
+                    </v-list>
+                    <pre class="text-body-2 refresh-output">{{ checkResult?.output }}</pre>
+                </v-card-text>
+                <v-card-actions>
+                    <v-spacer />
+                    <v-btn variant="text" @click="checkDialog = false">关闭</v-btn>
+                    <v-btn
+                        v-if="(checkResult?.updates?.length ?? 0) > 0"
+                        color="primary"
+                        variant="tonal"
+                        :loading="updatingAll"
+                        @click="applyAllUpdates"
+                    >
+                        应用全部更新
+                    </v-btn>
                 </v-card-actions>
             </v-card>
         </v-dialog>

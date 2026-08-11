@@ -15,18 +15,11 @@ import { Call as $Call, CancellablePromise as $CancellablePromise } from "@wails
 import * as $models from "./models.js";
 
 /**
- * CheckAllModUpdates 检查项目中所有 CurseForge 源 mod 的更新（并发上限 8），
- * 结果写入本地缓存并逐条返回
+ * CheckUpdates 通过 packwiz 官方 update 命令检查项目更新（不实际应用）：
+ * 运行 `packwiz update --all` 并向确认提示喂入 "n"，使其打印更新列表后取消
  */
-export function CheckAllModUpdates(projectName: string): $CancellablePromise<$models.ModUpdateInfo[] | null> {
-    return $Call.ByID(3904345613, projectName);
-}
-
-/**
- * CheckModUpdate 检查单个 mod 是否有更新（写入本地缓存并返回结果）
- */
-export function CheckModUpdate(projectName: string, modID: string): $CancellablePromise<$models.ModUpdateInfo> {
-    return $Call.ByID(2080554025, projectName, modID);
+export function CheckUpdates(projectName: string): $CancellablePromise<$models.UpdateCheckResult> {
+    return $Call.ByID(752923826, projectName);
 }
 
 /**
@@ -71,4 +64,13 @@ export function RefreshProject(name: string): $CancellablePromise<$models.Refres
  */
 export function RemoveProject(name: string): $CancellablePromise<$models.PackProject[] | null> {
     return $Call.ByID(4221499969, name);
+}
+
+/**
+ * UpdateMods 应用更新：modName 非空时更新单个（packwiz update <name>，无确认直接应用），
+ * 为空时更新全部（packwiz update --all -y）。
+ * name 为 .pw.toml 文件名（即 mod id）
+ */
+export function UpdateMods(projectName: string, modName: string): $CancellablePromise<$models.RefreshResult> {
+    return $Call.ByID(2687918632, projectName, modName);
 }

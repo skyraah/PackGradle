@@ -14,5 +14,6 @@ export type {
     ModVersionResult,
     PackProject,
     RefreshResult,
-    ToolInfo
+    ToolInfo,
+    UpdateCheckResult
 } from "./models.js";

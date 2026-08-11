@@ -5,7 +5,9 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -80,246 +82,6 @@ func fetchCfFile(apiKey string, projectID, fileID int64) (CfFileCache, error) {
 		ReleaseType: out.Data.ReleaseType,
 		FetchedAt:   time.Now().Format(time.RFC3339),
 	}, nil
-}
-
-// cfModLatestFile 是 Get Mod 响应 latestFiles 数组中的条目（最近发布的文件）
-type cfModLatestFile struct {
-	ID           uint32   `json:"id"`
-	FileName     string   `json:"fileName"`
-	ReleaseType  int      `json:"releaseType"`
-	FileDate     string   `json:"fileDate"`
-	GameVersions []string `json:"gameVersions"`
-}
-
-// cfModLatestIndex 是 Get Mod 响应 latestFilesIndexes 数组中的条目（每个 MC 版本一个最新文件）
-type cfModLatestIndex struct {
-	GameVersion string `json:"gameVersion"`
-	FileID      uint32 `json:"fileId"`
-	Name        string `json:"filename"`
-	ReleaseType int    `json:"releaseType"`
-	Modloader   int    `json:"modLoader"`
-}
-
-// cfMod 是官方 Get Mod 接口响应中的 mod 信息（检查更新用）。
-// latestFilesIndexes 每个 MC 版本一个最新文件条目，latestFiles 为最近发布的文件列表
-// 文档: https://docs.curseforge.com/rest-api/#get-mod
-type cfMod struct {
-	ID                 uint32             `json:"id"`
-	Name               string             `json:"name"`
-	LatestFiles        []cfModLatestFile  `json:"latestFiles"`
-	LatestFilesIndexes []cfModLatestIndex `json:"latestFilesIndexes"`
-}
-
-// fetchCfMod 调用官方 Get Mod 接口获取 mod 信息
-func fetchCfMod(apiKey string, projectID int64) (cfMod, error) {
-	body, err := cfGet(apiKey, fmt.Sprintf("/v1/mods/%d", projectID))
-	if err != nil {
-		return cfMod{}, err
-	}
-	var out struct {
-		Data cfMod `json:"data"`
-	}
-	if err := json.Unmarshal(body, &out); err != nil {
-		return cfMod{}, fmt.Errorf("解析响应失败: %w", err)
-	}
-	return out.Data, nil
-}
-
-// cfLoaderName 返回加载器在文件 gameVersions 数组中的标记名
-func cfLoaderName(loader string) string {
-	switch strings.ToLower(loader) {
-	case "forge":
-		return "Forge"
-	case "fabric":
-		return "Fabric"
-	case "quilt":
-		return "Quilt"
-	case "neoforge":
-		return "NeoForge"
-	}
-	return ""
-}
-
-// cfLoaderType 返回加载器对应的 CurseForge modloaderType 数值（1=Forge 4=Fabric 5=Quilt 6=NeoForge）
-func cfLoaderType(loader string) int {
-	switch strings.ToLower(loader) {
-	case "forge":
-		return 1
-	case "fabric":
-		return 4
-	case "quilt":
-		return 5
-	case "neoforge":
-		return 6
-	}
-	return 0 // 未知加载器按「任意」处理
-}
-
-// cfLatestCandidate 是一个可匹配的最新文件候选
-type cfLatestCandidate struct {
-	fileID      int64
-	fileName    string
-	releaseType int
-	fileDate    string
-	mcMatch     bool // gameVersion 与 pack 的 MC 版本精确匹配
-	loaderMatch bool // 加载器匹配
-}
-
-// betterCfCandidate 判断 a 是否优于 b：MC 版本匹配优先，其次加载器匹配，
-// 最后 file-id 更大（相等时取后遍历到的条目，可用 latestFiles 的完整信息补全）
-func betterCfCandidate(a, b cfLatestCandidate) bool {
-	if a.mcMatch != b.mcMatch {
-		return a.mcMatch
-	}
-	if a.loaderMatch != b.loaderMatch {
-		return a.loaderMatch
-	}
-	return a.fileID >= b.fileID
-}
-
-// findLatestCfFile 从 Get Mod 响应中按 pack 的 MC 版本与加载器匹配最新文件
-// （与 packwiz 一致：优先 latestFilesIndexes，回退 latestFiles）。
-// 快照版本名未做映射，需精确匹配（正式版无影响）
-func findLatestCfFile(mod cfMod, mcVersion, loader string) cfLatestCandidate {
-	wantLoader := cfLoaderType(loader)
-	loaderName := cfLoaderName(loader)
-	var best cfLatestCandidate
-
-	for _, f := range mod.LatestFilesIndexes {
-		c := cfLatestCandidate{
-			fileID:      int64(f.FileID),
-			fileName:    f.Name,
-			releaseType: f.ReleaseType,
-			mcMatch:     f.GameVersion == mcVersion,
-			loaderMatch: wantLoader == 0 || f.Modloader == wantLoader,
-		}
-		if betterCfCandidate(c, best) {
-			best = c
-		}
-	}
-	for _, f := range mod.LatestFiles {
-		mcMatch, loaderMatch := false, loaderName == ""
-		for _, gv := range f.GameVersions {
-			if gv == mcVersion {
-				mcMatch = true
-			}
-			if gv == loaderName {
-				loaderMatch = true
-			}
-		}
-		c := cfLatestCandidate{
-			fileID:      int64(f.ID),
-			fileName:    f.FileName,
-			releaseType: f.ReleaseType,
-			fileDate:    f.FileDate,
-			mcMatch:     mcMatch,
-			loaderMatch: loaderMatch,
-		}
-		if betterCfCandidate(c, best) {
-			best = c
-		}
-	}
-	return best
-}
-
-// ModUpdateInfo 是单个 mod 的更新检查结果
-type ModUpdateInfo struct {
-	ID            string `json:"id"`
-	Name          string `json:"name"`
-	HasUpdate     bool   `json:"has_update"`
-	CurrentFile   string `json:"current_file"` // 当前已安装文件名
-	LatestFile    string `json:"latest_file"`  // 最新文件名
-	LatestFileID  int64  `json:"latest_file_id"`
-	LatestRelease int    `json:"latest_release"` // 1=正式版 2=测试版 3=Alpha
-	LatestDate    string `json:"latest_date"`
-	Error         string `json:"error"`
-}
-
-// checkCfModUpdate 检查单个 mod 是否有更新：查 Get Mod → 按 MC 版本+加载器匹配最新文件
-// → 与已安装 file-id 对比 → 最新文件信息写入本地缓存。
-// 与 packwiz 一致：对比的是 file-id（CurseForge 的 file-id 单调递增，越大越新）
-func (s *PackwizService) checkCfModUpdate(apiKey string, proj PackProject, m ModInfo) ModUpdateInfo {
-	info := ModUpdateInfo{ID: m.ID, Name: m.Name, CurrentFile: m.File}
-	if m.CfProjectID == 0 || m.CfFileID == 0 {
-		info.Error = "不是 CurseForge 源（元数据中无 project-id/file-id）"
-		return info
-	}
-	mod, err := fetchCfMod(apiKey, m.CfProjectID)
-	if err != nil {
-		info.Error = err.Error()
-		return info
-	}
-	latest := findLatestCfFile(mod, proj.Minecraft, proj.Modloader)
-	if latest.fileID == 0 {
-		// 未找到匹配文件（API 无数据等）：视为无更新（与 packwiz 一致）
-		return info
-	}
-	info.LatestFileID = latest.fileID
-	info.LatestFile = latest.fileName
-	info.LatestRelease = latest.releaseType
-	info.LatestDate = latest.fileDate
-	info.HasUpdate = latest.fileID != m.CfFileID
-
-	key := cfCacheKey(m.CfProjectID, m.CfFileID)
-	entry := s.config.Get().CfCache[key]
-	entry.LatestFileID = latest.fileID
-	entry.LatestFileName = latest.fileName
-	entry.LatestRelease = latest.releaseType
-	entry.CheckedAt = time.Now().Format(time.RFC3339)
-	if err := s.config.SetCurseforgeCache(key, entry); err != nil {
-		info.Error = "写入缓存失败: " + err.Error()
-	}
-	return info
-}
-
-// CheckModUpdate 检查单个 mod 是否有更新（写入本地缓存并返回结果）
-func (s *PackwizService) CheckModUpdate(projectName, modID string) (ModUpdateInfo, error) {
-	proj, mod, err := s.findProjectMod(projectName, modID)
-	if err != nil {
-		return ModUpdateInfo{}, err
-	}
-	apiKey, err := s.apiKeyOrError()
-	if err != nil {
-		return ModUpdateInfo{}, err
-	}
-	return s.checkCfModUpdate(apiKey, proj, mod), nil
-}
-
-// CheckAllModUpdates 检查项目中所有 CurseForge 源 mod 的更新（并发上限 8），
-// 结果写入本地缓存并逐条返回
-func (s *PackwizService) CheckAllModUpdates(projectName string) ([]ModUpdateInfo, error) {
-	proj, err := s.findProject(projectName)
-	if err != nil {
-		return nil, err
-	}
-	var targets []ModInfo
-	for _, m := range proj.Mods {
-		if m.CfProjectID > 0 && m.CfFileID > 0 {
-			targets = append(targets, m)
-		}
-	}
-	if len(targets) == 0 {
-		return []ModUpdateInfo{}, fmt.Errorf("项目中没有 CurseForge 源的 mod")
-	}
-	apiKey, err := s.apiKeyOrError()
-	if err != nil {
-		return nil, err
-	}
-
-	results := make([]ModUpdateInfo, len(targets))
-	sem := make(chan struct{}, 8)
-	var wg sync.WaitGroup
-	for i, m := range targets {
-		wg.Add(1)
-		go func(i int, m ModInfo) {
-			defer wg.Done()
-			sem <- struct{}{}
-			defer func() { <-sem }()
-			results[i] = s.checkCfModUpdate(apiKey, proj, m)
-		}(i, m)
-	}
-	wg.Wait()
-	return results, nil
 }
 
 // findProject 按名称查找项目并解析
@@ -435,4 +197,105 @@ func (s *PackwizService) FetchAllModVersions(projectName string) ([]ModVersionRe
 	}
 	wg.Wait()
 	return results, nil
+}
+
+// ModUpdateInfo 是 packwiz update 检查结果中单个 mod 的信息
+type ModUpdateInfo struct {
+	Name        string `json:"name"`
+	HasUpdate   bool   `json:"has_update"`
+	CurrentFile string `json:"current_file"`
+	LatestFile  string `json:"latest_file"`
+	Error       string `json:"error"`
+}
+
+// UpdateCheckResult 是 packwiz update 检查结果
+type UpdateCheckResult struct {
+	OK      bool            `json:"ok"`
+	Output  string          `json:"output"`
+	Updates []ModUpdateInfo `json:"updates"` // 有更新的 mod
+	Errors  []ModUpdateInfo `json:"errors"`  // 检查失败 / 跳过 / 无更新源的 mod
+}
+
+// 解析 `packwiz update --all` 输出（对应 packwiz 源码 cmd/update.go 的打印格式）。
+// 注意：检查顺序为 固定跳过 → 无更新源 → 检查失败 → 有更新，避免错误信息误匹配更新行
+var (
+	pinnedSkipRe  = regexp.MustCompile(`^Update skipped for pinned mod (.+)$`)
+	noUpdaterRe   = regexp.MustCompile(`^A supported update system for "(.+)" cannot be found\.$`)
+	failedCheckRe = regexp.MustCompile(`^Failed to check updates for (.+?): (.+)$`)
+	updateLineRe  = regexp.MustCompile(`^(.+): (.+) -> (.+)$`) // <Name>: <旧文件> -> <新文件>
+)
+
+// parseUpdateOutput 解析 `packwiz update --all` 的文本输出，提取有更新的 mod 与失败/跳过的 mod
+func parseUpdateOutput(output string) (updates, errors []ModUpdateInfo) {
+	for _, line := range strings.Split(output, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		if m := pinnedSkipRe.FindStringSubmatch(line); m != nil {
+			errors = append(errors, ModUpdateInfo{Name: m[1], Error: "版本已固定（pinned），跳过更新"})
+			continue
+		}
+		if m := noUpdaterRe.FindStringSubmatch(line); m != nil {
+			errors = append(errors, ModUpdateInfo{Name: m[1], Error: "无支持的更新源"})
+			continue
+		}
+		if m := failedCheckRe.FindStringSubmatch(line); m != nil {
+			errors = append(errors, ModUpdateInfo{Name: m[1], Error: m[2]})
+			continue
+		}
+		if m := updateLineRe.FindStringSubmatch(line); m != nil {
+			updates = append(updates, ModUpdateInfo{
+				Name:        m[1],
+				HasUpdate:   true,
+				CurrentFile: m[2],
+				LatestFile:  m[3],
+			})
+		}
+	}
+	return
+}
+
+// CheckUpdates 通过 packwiz 官方 update 命令检查项目更新（不实际应用）：
+// 运行 `packwiz update --all` 并向确认提示喂入 "n"，使其打印更新列表后取消
+func (s *PackwizService) CheckUpdates(projectName string) (UpdateCheckResult, error) {
+	proj, err := s.findProject(projectName)
+	if err != nil {
+		return UpdateCheckResult{}, err
+	}
+	packwiz, err := s.findPackwiz()
+	if err != nil {
+		return UpdateCheckResult{OK: false, Output: err.Error()}, nil
+	}
+	cmd := exec.Command(packwiz, "update", "--all")
+	cmd.Dir = proj.Path
+	cmd.Stdin = strings.NewReader("n\n") // 确认输入为 n：只打印更新列表，不应用
+	out, err := cmd.CombinedOutput()
+	output := strings.TrimSpace(string(out))
+	updates, errors := parseUpdateOutput(output)
+	return UpdateCheckResult{OK: err == nil, Output: output, Updates: updates, Errors: errors}, nil
+}
+
+// UpdateMods 应用更新：modName 非空时更新单个（packwiz update <name>，无确认直接应用），
+// 为空时更新全部（packwiz update --all -y）。
+// name 为 .pw.toml 文件名（即 mod id）
+func (s *PackwizService) UpdateMods(projectName, modName string) (RefreshResult, error) {
+	proj, err := s.findProject(projectName)
+	if err != nil {
+		return RefreshResult{}, err
+	}
+	packwiz, err := s.findPackwiz()
+	if err != nil {
+		return RefreshResult{OK: false, Output: err.Error()}, nil
+	}
+	args := []string{"update"}
+	if modName != "" {
+		args = append(args, modName)
+	} else {
+		args = append(args, "--all", "-y")
+	}
+	cmd := exec.Command(packwiz, args...)
+	cmd.Dir = proj.Path
+	out, err := cmd.CombinedOutput()
+	return RefreshResult{OK: err == nil, Output: strings.TrimSpace(string(out))}, nil
 }
