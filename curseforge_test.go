@@ -128,17 +128,17 @@ func TestFetchModVersionEndToEnd(t *testing.T) {
 		t.Errorf("返回的 ModInfo 未回填缓存字段: %+v", updated)
 	}
 
-	// 缓存已写入项目目录的 .cache/<项目名>.cache，并可从磁盘读回
+	// 缓存已写入项目目录的 .cache/modversion.cache，并可从磁盘读回
 	key := cfCacheKey(328085, 7178761)
 	store := NewCfCacheStore(filepath.Join(dir, ".cache"))
-	cache, err := store.Load("CF Test")
+	cache, err := store.Load()
 	if err != nil {
 		t.Fatalf("读取缓存失败: %v", err)
 	}
 	if entry, ok := cache[key]; !ok || entry.DisplayName != "Mekanism-1.20.1-10.4.16.80.jar" {
 		t.Errorf("缓存未写入: %+v", cache)
 	}
-	if _, err := os.Stat(filepath.Join(dir, ".cache", "CF Test.cache")); err != nil {
+	if _, err := os.Stat(filepath.Join(dir, ".cache", "modversion.cache")); err != nil {
 		t.Errorf("缓存文件不存在: %v", err)
 	}
 
@@ -201,7 +201,7 @@ func TestApplyCfCache(t *testing.T) {
 	if err := m.AddProject(ProjectEntry{Name: "CF Test", Path: dir}); err != nil {
 		t.Fatal(err)
 	}
-	if err := NewCfCacheStore(filepath.Join(dir, ".cache")).Save("CF Test", map[string]CfFileCache{
+	if err := NewCfCacheStore(filepath.Join(dir, ".cache")).Save(map[string]CfFileCache{
 		cfCacheKey(328085, 7178761): {
 			DisplayName: "create-1.20.1-6.0.8.jar",
 			FileDate:    "2025-06-12T00:00:00Z",
@@ -283,49 +283,50 @@ func TestParseUpdateOutputNoUpdates(t *testing.T) {
 	}
 }
 
-// CfCacheStore：Load/Save/Upsert 与按项目隔离
+// CfCacheStore：Load/Save/Upsert 与不同存储（目录）间的隔离
 func TestCfCacheStore(t *testing.T) {
 	root := filepath.Join(t.TempDir(), ".cache")
 	store := NewCfCacheStore(root)
 
-	// 不存在的项目缓存返回空 map
-	if cache, err := store.Load("Project A"); err != nil || len(cache) != 0 {
+	// 不存在的缓存文件返回空 map
+	if cache, err := store.Load(); err != nil || len(cache) != 0 {
 		t.Fatalf("空缓存应返回空 map: %v %v", cache, err)
 	}
 
 	// 写入并读回
 	entry := CfFileCache{DisplayName: "create-1.20.1-6.0.8.jar", ReleaseType: 1}
-	if err := store.Save("Project A", map[string]CfFileCache{"1:2": entry}); err != nil {
+	if err := store.Save(map[string]CfFileCache{"1:2": entry}); err != nil {
 		t.Fatal(err)
 	}
-	cache1, _ := store.Load("Project A")
+	cache1, _ := store.Load()
 	if got := cache1["1:2"]; got.DisplayName != "create-1.20.1-6.0.8.jar" {
 		t.Errorf("读回不正确: %+v", got)
 	}
-	if _, err := os.Stat(filepath.Join(root, "Project A.cache")); err != nil {
+	if _, err := os.Stat(filepath.Join(root, "modversion.cache")); err != nil {
 		t.Errorf("缓存文件不存在: %v", err)
 	}
 
 	// Upsert 追加条目，不影响已有条目
-	if err := store.Upsert("Project A", "3:4", CfFileCache{DisplayName: "other.jar"}); err != nil {
+	if err := store.Upsert("3:4", CfFileCache{DisplayName: "other.jar"}); err != nil {
 		t.Fatal(err)
 	}
-	cache, _ := store.Load("Project A")
+	cache, _ := store.Load()
 	if len(cache) != 2 || cache["1:2"].DisplayName == "" || cache["3:4"].DisplayName != "other.jar" {
 		t.Errorf("Upsert 后缓存不正确: %+v", cache)
 	}
 
-	// 项目间隔离
-	if err := store.Save("Project B", map[string]CfFileCache{"9:9": entry}); err != nil {
+	// 不同存储（目录）之间互不影响
+	store2 := NewCfCacheStore(filepath.Join(t.TempDir(), ".cache"))
+	if err := store2.Save(map[string]CfFileCache{"9:9": entry}); err != nil {
 		t.Fatal(err)
 	}
-	cacheA, _ := store.Load("Project A")
+	cacheA, _ := store.Load()
 	if len(cacheA) != 2 {
-		t.Errorf("项目 A 缓存应不受项目 B 影响: %+v", cacheA)
+		t.Errorf("store 缓存应不受 store2 影响: %+v", cacheA)
 	}
 
 	// 不残留临时文件
-	if _, err := os.Stat(filepath.Join(root, "Project A.cache.tmp")); !os.IsNotExist(err) {
+	if _, err := os.Stat(filepath.Join(root, "modversion.cache.tmp")); !os.IsNotExist(err) {
 		t.Errorf("不应残留临时文件: %v", err)
 	}
 }

@@ -237,7 +237,7 @@ func (s *PackwizService) cfCacheStore(proj PackProject) *CfCacheStore {
 
 // applyCfCache 将项目缓存的 CurseForge 文件信息回填到 mod 列表
 func (s *PackwizService) applyCfCache(proj *PackProject) {
-	cache, err := s.cfCacheStore(*proj).Load(proj.Name)
+	cache, err := s.cfCacheStore(*proj).Load()
 	if err != nil {
 		return // 缓存不可读时静默（仅影响版本显示）
 	}
