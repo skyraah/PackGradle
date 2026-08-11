@@ -102,6 +102,8 @@ function loaderChip(loader: string) {
 // —— CurseForge 版本获取 ——
 const fetching = ref<string | null>(null) // 单行获取中的 mod id
 const fetchingAll = ref<string | null>(null) // 批量获取中的项目名
+const checking = ref<string | null>(null) // 单行更新检查中的 mod id
+const checkingAll = ref<string | null>(null) // 批量更新检查中的项目名
 
 function isCfMod(mod: ModInfo): boolean {
     return (mod.cf_project_id ?? 0) > 0 && (mod.cf_file_id ?? 0) > 0
@@ -147,6 +149,54 @@ async function fetchAllVersions(proj: PackProject) {
         snackbar.value = true
     } finally {
         fetchingAll.value = null
+    }
+}
+
+// —— CurseForge 更新检查 ——
+function hasCfUpdate(mod: ModInfo): boolean {
+    return (mod.cf_latest_file_id ?? 0) > 0 && mod.cf_latest_file_id !== mod.cf_file_id
+}
+
+async function checkModUpdate(proj: PackProject, mod: ModInfo) {
+    checking.value = mod.id
+    try {
+        const info = await PackwizService.CheckModUpdate(proj.name, mod.id)
+        const target = proj.mods?.find(m => m.id === mod.id)
+        if (target && info) {
+            Object.assign(target, {
+                cf_latest_file_id: info.latest_file_id,
+                cf_latest_file_name: info.latest_file,
+                cf_latest_release: info.latest_release,
+            })
+        }
+        snackbarMsg.value = info?.error
+            ? `「${info.name}」检查失败: ${info.error}`
+            : info?.has_update
+                ? `「${info.name}」有更新：${info.current_file} → ${info.latest_file}`
+                : `「${info.name}」已是最新`
+        snackbar.value = true
+    } catch (e) {
+        snackbarMsg.value = String(e)
+        snackbar.value = true
+    } finally {
+        checking.value = null
+    }
+}
+
+async function checkAllUpdates(proj: PackProject) {
+    checkingAll.value = proj.name
+    try {
+        const results = (await PackwizService.CheckAllModUpdates(proj.name)) ?? []
+        const upd = results.filter(r => r.has_update).length
+        const err = results.filter(r => r.error).length
+        snackbarMsg.value = `检查完成：${upd} 个有更新，${results.length - upd - err} 个已最新${err ? `，${err} 个失败` : ''}`
+        snackbar.value = true
+        await load()
+    } catch (e) {
+        snackbarMsg.value = String(e)
+        snackbar.value = true
+    } finally {
+        checkingAll.value = null
     }
 }
 
@@ -216,6 +266,15 @@ onMounted(load)
                 <template #append>
                     <v-btn
                         v-if="!proj.error"
+                        icon="mdi-update"
+                        variant="text"
+                        size="small"
+                        title="检查全部 mod 更新（CurseForge）"
+                        :loading="checkingAll === proj.name"
+                        @click.stop="checkAllUpdates(proj)"
+                    />
+                    <v-btn
+                        v-if="!proj.error"
                         icon="mdi-cloud-download"
                         variant="text"
                         size="small"
@@ -277,15 +336,35 @@ onMounted(load)
                                     <div v-if="mod.cf_version" class="text-medium-emphasis">
                                         {{ cfReleaseLabel(mod.cf_release_type) }} · {{ cfDateText(mod.cf_file_date) }}
                                     </div>
+                                    <v-chip
+                                        v-if="hasCfUpdate(mod)"
+                                        size="x-small"
+                                        color="warning"
+                                        variant="tonal"
+                                        class="mt-1"
+                                        :title="'最新: ' + (mod.cf_latest_file_name || '')"
+                                    >
+                                        有更新
+                                    </v-chip>
                                 </td>
                                 <td class="text-right">
+                                    <v-btn
+                                        v-if="isCfMod(mod)"
+                                        icon="mdi-update"
+                                        size="x-small"
+                                        variant="text"
+                                        :loading="checking === mod.id"
+                                        :disabled="checkingAll !== null || fetchingAll !== null"
+                                        title="检查更新"
+                                        @click="checkModUpdate(proj, mod)"
+                                    />
                                     <v-btn
                                         v-if="isCfMod(mod)"
                                         icon="mdi-cloud-download-outline"
                                         size="x-small"
                                         variant="text"
                                         :loading="fetching === mod.id"
-                                        :disabled="fetchingAll !== null"
+                                        :disabled="checkingAll !== null || fetchingAll !== null"
                                         :title="mod.cf_version ? '重新获取版本' : '从 CurseForge 获取版本'"
                                         @click="fetchModVersion(proj, mod)"
                                     />

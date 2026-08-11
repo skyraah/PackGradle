@@ -10,7 +10,10 @@ import (
 	"github.com/BurntSushi/toml"
 )
 
-// fakeCfServer 模拟 CurseForge 官方 Get Mod File 接口
+// fakeCfServer 模拟 CurseForge 官方 API：
+//   - Get Mod（/v1/mods/{id}）：create 有更新（最新 7178800 > 已装 7178761，含 fabric/其他 MC 版本干扰项），
+//     mekanism 无更新（最新 == 已装）
+//   - Get Mod File（/v1/mods/{id}/files/{fid}）：返回固定文件详情
 func fakeCfServer(t *testing.T) *httptest.Server {
 	t.Helper()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -18,16 +21,19 @@ func fakeCfServer(t *testing.T) *httptest.Server {
 			w.WriteHeader(http.StatusUnauthorized)
 			return
 		}
-		if r.URL.Path == "/v1/mods/404/files/404" {
-			w.WriteHeader(http.StatusNotFound)
-			return
-		}
-		if !strings.HasPrefix(r.URL.Path, "/v1/mods/") || !strings.Contains(r.URL.Path, "/files/") {
-			w.WriteHeader(http.StatusNotFound)
-			return
-		}
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"data":{"id":6552911,"displayName":"Mekanism-1.20.1-10.4.16.80.jar","fileName":"Mekanism-1.20.1-10.4.16.80.jar","releaseType":1,"fileDate":"2025-06-12T00:00:00Z","gameVersions":["1.20.1"]}}`))
+		switch {
+		case r.URL.Path == "/v1/mods/404/files/404":
+			w.WriteHeader(http.StatusNotFound)
+		case r.URL.Path == "/v1/mods/328085": // create
+			_, _ = w.Write([]byte(`{"data":{"id":328085,"name":"Create","latestFiles":[{"id":7178800,"fileName":"create-1.20.1-6.0.9.jar","displayName":"create-1.20.1-6.0.9.jar","releaseType":1,"fileDate":"2025-07-01T00:00:00Z","gameVersions":["1.20.1","Forge"]}],"latestFilesIndexes":[{"gameVersion":"1.20.1","fileId":7178800,"filename":"create-1.20.1-6.0.9.jar","releaseType":1,"modLoader":1},{"gameVersion":"1.20.1","fileId":7178900,"filename":"create-fabric-1.20.1-6.0.8.jar","releaseType":1,"modLoader":4},{"gameVersion":"1.21.1","fileId":9999000,"filename":"create-1.21.1-7.0.0.jar","releaseType":1,"modLoader":1}]}}`))
+		case r.URL.Path == "/v1/mods/268560": // mekanism：无更新
+			_, _ = w.Write([]byte(`{"data":{"id":268560,"name":"Mekanism","latestFilesIndexes":[{"gameVersion":"1.20.1","fileId":6552911,"filename":"Mekanism-1.20.1-10.4.16.80.jar","releaseType":1,"modLoader":1}]}}`))
+		case strings.HasPrefix(r.URL.Path, "/v1/mods/") && strings.Contains(r.URL.Path, "/files/"): // Get Mod File
+			_, _ = w.Write([]byte(`{"data":{"id":6552911,"displayName":"Mekanism-1.20.1-10.4.16.80.jar","fileName":"Mekanism-1.20.1-10.4.16.80.jar","releaseType":1,"fileDate":"2025-06-12T00:00:00Z","gameVersions":["1.20.1"]}}`))
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
 	}))
 	t.Cleanup(srv.Close)
 	return srv
@@ -223,5 +229,169 @@ func TestApplyCfCache(t *testing.T) {
 	mek := findMod(t, mods, "mekanism")
 	if mek.CfVersion != "" || mek.CfProjectID != 0 {
 		t.Errorf("非 CurseForge 源不应有缓存字段: %+v", mek)
+	}
+}
+
+// cfUpdateTestProject 构造一个含两个 CurseForge 源 mod 的项目：
+// create 有更新（最新 7178800 > 已装 7178761），mekanism 无更新
+func cfUpdateTestProject(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	mustWriteFile(t, filepath.Join(dir, "pack.toml"), `name = "Update Test"
+version = "1.0.0"
+pack-format = "packwiz:1.1.0"
+
+[index]
+file = "index.toml"
+
+[versions]
+minecraft = "1.20.1"
+forge = "47.4.10"
+`)
+	mustWriteFile(t, filepath.Join(dir, "index.toml"), `hash-format = "sha256"
+
+[[files]]
+file = "mods/create.pw.toml"
+hash = "h1"
+metafile = true
+
+[[files]]
+file = "mods/mekanism.pw.toml"
+hash = "h2"
+metafile = true
+`)
+	mustWriteFile(t, filepath.Join(dir, "mods", "create.pw.toml"), `name = "Create"
+filename = "create-1.20.1-6.0.8.jar"
+side = "both"
+
+[update]
+[update.curseforge]
+file-id = 7178761
+project-id = 328085
+`)
+	mustWriteFile(t, filepath.Join(dir, "mods", "mekanism.pw.toml"), `name = "Mekanism"
+filename = "Mekanism-1.20.1-10.4.16.80.jar"
+side = "both"
+
+[update]
+[update.curseforge]
+file-id = 6552911
+project-id = 268560
+`)
+	return dir
+}
+
+// findLatestCfFile 的匹配逻辑：MC 版本优先、加载器其次、file-id 最大（与 packwiz 一致）
+func TestFindLatestCfFile(t *testing.T) {
+	mod := cfMod{
+		ID: 328085,
+		LatestFilesIndexes: []cfModLatestIndex{
+			{GameVersion: "1.20.1", FileID: 7178800, Name: "create-1.20.1-6.0.9.jar", ReleaseType: 1, Modloader: 1},        // forge
+			{GameVersion: "1.20.1", FileID: 7178900, Name: "create-fabric-1.20.1-6.0.8.jar", ReleaseType: 1, Modloader: 4}, // fabric（ID 更大，应被加载器过滤）
+			{GameVersion: "1.21.1", FileID: 9999000, Name: "create-1.21.1-7.0.0.jar", ReleaseType: 1, Modloader: 1},        // 其他 MC（ID 更大，应被版本过滤）
+		},
+		LatestFiles: []cfModLatestFile{
+			{ID: 7178600, FileName: "create-1.20.1-6.0.8.jar", ReleaseType: 1, GameVersions: []string{"1.20.1", "Forge"}},
+		},
+	}
+
+	if got := findLatestCfFile(mod, "1.20.1", "forge"); got.fileID != 7178800 {
+		t.Errorf("forge/1.20.1 应匹配 7178800，实际 %d（%s）", got.fileID, got.fileName)
+	}
+	if got := findLatestCfFile(mod, "1.21.1", "forge"); got.fileID != 9999000 {
+		t.Errorf("1.21.1 应匹配 9999000，实际 %d", got.fileID)
+	}
+	// 未知加载器：1.20.1 中按 file-id 取最大（fabric 7178900）
+	if got := findLatestCfFile(mod, "1.20.1", "unknown"); got.fileID != 7178900 {
+		t.Errorf("未知加载器应取 1.20.1 最大 file-id 7178900，实际 %d", got.fileID)
+	}
+	// latestFiles 中较旧的文件不应胜出
+	if got := findLatestCfFile(mod, "1.20.1", "forge"); got.fileID == 7178600 {
+		t.Error("不应匹配 latestFiles 中较旧的文件")
+	}
+}
+
+// 单个 mod 更新检查：有更新 / 无更新 / 缓存持久化 / 列表回填
+func TestCheckModUpdate(t *testing.T) {
+	srv := fakeCfServer(t)
+	withCfBaseURL(t, srv.URL)
+
+	dir := cfUpdateTestProject(t)
+	m := newTestConfig(t)
+	if err := m.AddProject(ProjectEntry{Name: "Update Test", Path: dir}); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.SetApiKey("test-key"); err != nil {
+		t.Fatal(err)
+	}
+	svc := NewPackwizService(m)
+
+	// create：有更新（file-id 7178800 > 已装 7178761）
+	info, err := svc.CheckModUpdate("Update Test", "create")
+	if err != nil {
+		t.Fatalf("CheckModUpdate: %v", err)
+	}
+	if !info.HasUpdate || info.LatestFileID != 7178800 || info.LatestFile != "create-1.20.1-6.0.9.jar" ||
+		info.CurrentFile != "create-1.20.1-6.0.8.jar" || info.LatestRelease != 1 || info.LatestDate == "" {
+		t.Errorf("create 更新检查结果不正确: %+v", info)
+	}
+
+	// mekanism：无更新（最新 file-id == 已装）
+	info2, err := svc.CheckModUpdate("Update Test", "mekanism")
+	if err != nil {
+		t.Fatalf("CheckModUpdate: %v", err)
+	}
+	if info2.HasUpdate {
+		t.Errorf("mekanism 不应有更新: %+v", info2)
+	}
+
+	// 最新文件信息已写入缓存
+	entry, ok := m.Get().CfCache[cfCacheKey(328085, 7178761)]
+	if !ok || entry.LatestFileID != 7178800 || entry.LatestFileName != "create-1.20.1-6.0.9.jar" || entry.CheckedAt == "" {
+		t.Errorf("更新检查结果未写入缓存: %+v", entry)
+	}
+
+	// ListProjects 回填最新文件信息
+	projects := svc.ListProjects()
+	if len(projects) != 1 {
+		t.Fatalf("应返回 1 个项目，实际 %d", len(projects))
+	}
+	create := findMod(t, projects[0].Mods, "create")
+	if create.CfLatestFileID != 7178800 || create.CfLatestFileName != "create-1.20.1-6.0.9.jar" {
+		t.Errorf("缓存未回填到 mod 列表: %+v", create)
+	}
+}
+
+// 批量更新检查：逐条返回结果
+func TestCheckAllModUpdates(t *testing.T) {
+	srv := fakeCfServer(t)
+	withCfBaseURL(t, srv.URL)
+
+	dir := cfUpdateTestProject(t)
+	m := newTestConfig(t)
+	if err := m.AddProject(ProjectEntry{Name: "Update Test", Path: dir}); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.SetApiKey("test-key"); err != nil {
+		t.Fatal(err)
+	}
+	svc := NewPackwizService(m)
+
+	results, err := svc.CheckAllModUpdates("Update Test")
+	if err != nil {
+		t.Fatalf("CheckAllModUpdates: %v", err)
+	}
+	if len(results) != 2 {
+		t.Fatalf("应返回 2 个结果，实际 %d: %+v", len(results), results)
+	}
+	byID := map[string]ModUpdateInfo{}
+	for _, r := range results {
+		byID[r.ID] = r
+	}
+	if !byID["create"].HasUpdate || byID["create"].LatestFileID != 7178800 {
+		t.Errorf("create 应有更新: %+v", byID["create"])
+	}
+	if byID["mekanism"].HasUpdate || byID["mekanism"].Error != "" {
+		t.Errorf("mekanism 应无更新: %+v", byID["mekanism"])
 	}
 }

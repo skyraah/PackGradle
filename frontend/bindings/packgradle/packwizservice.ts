@@ -15,6 +15,21 @@ import { Call as $Call, CancellablePromise as $CancellablePromise } from "@wails
 import * as $models from "./models.js";
 
 /**
+ * CheckAllModUpdates 检查项目中所有 CurseForge 源 mod 的更新（并发上限 8），
+ * 结果写入本地缓存并逐条返回
+ */
+export function CheckAllModUpdates(projectName: string): $CancellablePromise<$models.ModUpdateInfo[] | null> {
+    return $Call.ByID(3904345613, projectName);
+}
+
+/**
+ * CheckModUpdate 检查单个 mod 是否有更新（写入本地缓存并返回结果）
+ */
+export function CheckModUpdate(projectName: string, modID: string): $CancellablePromise<$models.ModUpdateInfo> {
+    return $Call.ByID(2080554025, projectName, modID);
+}
+
+/**
  * FetchAllModVersions 批量获取项目中所有 CurseForge 源 mod 的版本（并发上限 8），
  * 结果写入本地缓存并逐条返回
  */

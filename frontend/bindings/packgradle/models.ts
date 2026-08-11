@@ -54,6 +54,49 @@ export interface ModInfo {
      * 1=正式版 2=测试版 3=Alpha
      */
     "cf_release_type": number;
+
+    /**
+     * 本地缓存的更新检查结果（检查更新后填充）
+     * 匹配到的最新文件 file-id
+     */
+    "cf_latest_file_id": number;
+
+    /**
+     * 最新文件名
+     */
+    "cf_latest_file_name": string;
+
+    /**
+     * 最新文件 releaseType
+     */
+    "cf_latest_release": number;
+}
+
+/**
+ * ModUpdateInfo 是单个 mod 的更新检查结果
+ */
+export interface ModUpdateInfo {
+    "id": string;
+    "name": string;
+    "has_update": boolean;
+
+    /**
+     * 当前已安装文件名
+     */
+    "current_file": string;
+
+    /**
+     * 最新文件名
+     */
+    "latest_file": string;
+    "latest_file_id": number;
+
+    /**
+     * 1=正式版 2=测试版 3=Alpha
+     */
+    "latest_release": number;
+    "latest_date": string;
+    "error": string;
 }
 
 /**
