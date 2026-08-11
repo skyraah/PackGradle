@@ -107,6 +107,10 @@ version = "mc1.20.1-0.5.8"
 		create.File != "create-1.20.1-6.0.8.jar" || filepath.Base(create.Path) != "create.pw.toml" {
 		t.Errorf("mod 元数据解析不正确: %+v", create)
 	}
+	// curseforge 源应提取 project-id / file-id
+	if create.CfProjectID != 328085 || create.CfFileID != 7178761 {
+		t.Errorf("curseforge 源 ID 提取不正确: %+v", create)
+	}
 	// curseforge 源没有版本信息
 	if create.Version != "" {
 		t.Errorf("curseforge 源不应有本地版本号: %+v", create)
@@ -121,6 +125,10 @@ version = "mc1.20.1-0.5.8"
 	sodium := findMod(t, proj.Mods, "sodium")
 	if sodium.Version != "mc1.20.1-0.5.8" || sodium.Side != "client" || sodium.SideCN != "客户端" {
 		t.Errorf("[update.modrinth] 版本提取不正确: %+v", sodium)
+	}
+	// 非 curseforge 源不应有 CF ID
+	if sodium.CfProjectID != 0 || sodium.CfFileID != 0 {
+		t.Errorf("非 curseforge 源不应有 CF ID: %+v", sodium)
 	}
 
 	jar := findMod(t, proj.Mods, "mcrd-cn.ksmcbrigade-1.20.1-4")

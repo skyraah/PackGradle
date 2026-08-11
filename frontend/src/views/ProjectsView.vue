@@ -2,7 +2,7 @@
 import { onMounted, ref } from 'vue'
 import { Dialogs } from '@wailsio/runtime'
 import { PackwizService } from '../../bindings/packgradle'
-import type { PackProject } from '../../bindings/packgradle/models'
+import type { PackProject, ModInfo } from '../../bindings/packgradle/models'
 
 const projects = ref<PackProject[]>([])
 const loading = ref(false)
@@ -99,6 +99,57 @@ function loaderChip(loader: string) {
     return loaderChips[loader] ?? { label: loader, color: 'grey' }
 }
 
+// —— CurseForge 版本获取 ——
+const fetching = ref<string | null>(null) // 单行获取中的 mod id
+const fetchingAll = ref<string | null>(null) // 批量获取中的项目名
+
+function isCfMod(mod: ModInfo): boolean {
+    return (mod.cf_project_id ?? 0) > 0 && (mod.cf_file_id ?? 0) > 0
+}
+
+function cfReleaseLabel(t: number): string {
+    return t === 1 ? '正式版' : t === 2 ? '测试版' : t === 3 ? 'Alpha' : ''
+}
+
+function cfDateText(iso: string): string {
+    if (!iso) return ''
+    const d = new Date(iso)
+    if (isNaN(d.getTime())) return ''
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+}
+
+async function fetchModVersion(proj: PackProject, mod: ModInfo) {
+    fetching.value = mod.id
+    try {
+        const updated = await PackwizService.FetchModVersion(proj.name, mod.id)
+        const target = proj.mods?.find(m => m.id === mod.id)
+        if (target && updated) Object.assign(target, updated)
+        snackbarMsg.value = `已获取「${updated?.name ?? mod.name}」版本`
+        snackbar.value = true
+    } catch (e) {
+        snackbarMsg.value = String(e)
+        snackbar.value = true
+    } finally {
+        fetching.value = null
+    }
+}
+
+async function fetchAllVersions(proj: PackProject) {
+    fetchingAll.value = proj.name
+    try {
+        const results = (await PackwizService.FetchAllModVersions(proj.name)) ?? []
+        const ok = results.filter(r => r.ok).length
+        snackbarMsg.value = `已获取 ${ok}/${results.length} 个 mod 版本`
+        snackbar.value = true
+        await load()
+    } catch (e) {
+        snackbarMsg.value = String(e)
+        snackbar.value = true
+    } finally {
+        fetchingAll.value = null
+    }
+}
+
 onMounted(load)
 </script>
 
@@ -165,6 +216,15 @@ onMounted(load)
                 <template #append>
                     <v-btn
                         v-if="!proj.error"
+                        icon="mdi-cloud-download"
+                        variant="text"
+                        size="small"
+                        title="获取全部 mod 版本（CurseForge）"
+                        :loading="fetchingAll === proj.name"
+                        @click.stop="fetchAllVersions(proj)"
+                    />
+                    <v-btn
+                        v-if="!proj.error"
                         icon="mdi-refresh"
                         variant="text"
                         size="small"
@@ -193,6 +253,7 @@ onMounted(load)
                                 <th class="w-25">side</th>
                                 <th class="w-30">文件</th>
                                 <th class="w-25">版本</th>
+                                <th class="text-right">操作</th>
                             </tr>
                         </thead>
                         <tbody>
@@ -211,10 +272,27 @@ onMounted(load)
                                     </v-chip>
                                 </td>
                                 <td class="text-caption">{{ mod.file || '—' }}</td>
-                                <td class="text-caption">{{ mod.version || '—' }}</td>
+                                <td class="text-caption">
+                                    <span>{{ mod.version || mod.cf_version || '—' }}</span>
+                                    <div v-if="mod.cf_version" class="text-medium-emphasis">
+                                        {{ cfReleaseLabel(mod.cf_release_type) }} · {{ cfDateText(mod.cf_file_date) }}
+                                    </div>
+                                </td>
+                                <td class="text-right">
+                                    <v-btn
+                                        v-if="isCfMod(mod)"
+                                        icon="mdi-cloud-download-outline"
+                                        size="x-small"
+                                        variant="text"
+                                        :loading="fetching === mod.id"
+                                        :disabled="fetchingAll !== null"
+                                        :title="mod.cf_version ? '重新获取版本' : '从 CurseForge 获取版本'"
+                                        @click="fetchModVersion(proj, mod)"
+                                    />
+                                </td>
                             </tr>
                             <tr v-if="(proj.mods ?? []).length === 0">
-                                <td colspan="4" class="text-center text-medium-emphasis">未检测到 mod</td>
+                                <td colspan="5" class="text-center text-medium-emphasis">未检测到 mod</td>
                             </tr>
                         </tbody>
                     </v-table>

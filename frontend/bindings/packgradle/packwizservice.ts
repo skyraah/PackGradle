@@ -15,6 +15,22 @@ import { Call as $Call, CancellablePromise as $CancellablePromise } from "@wails
 import * as $models from "./models.js";
 
 /**
+ * FetchAllModVersions 批量获取项目中所有 CurseForge 源 mod 的版本（并发上限 8），
+ * 结果写入本地缓存并逐条返回
+ */
+export function FetchAllModVersions(projectName: string): $CancellablePromise<$models.ModVersionResult[] | null> {
+    return $Call.ByID(3715337844, projectName);
+}
+
+/**
+ * FetchModVersion 获取单个 mod 的 CurseForge 版本信息，写入本地缓存，
+ * 返回带缓存字段的 ModInfo
+ */
+export function FetchModVersion(projectName: string, modID: string): $CancellablePromise<$models.ModInfo> {
+    return $Call.ByID(980627508, projectName, modID);
+}
+
+/**
  * ImportProject 导入一个 pack.toml 并返回解析结果（同名项目会覆盖路径）
  */
 export function ImportProject(packTomlPath: string): $CancellablePromise<$models.PackProject> {

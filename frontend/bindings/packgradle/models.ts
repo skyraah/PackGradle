@@ -32,6 +32,43 @@ export interface ModInfo {
      * pw.toml 完整路径
      */
     "path": string;
+
+    /**
+     * CurseForge 源信息（0 表示非 CurseForge 源）
+     */
+    "cf_project_id": number;
+    "cf_file_id": number;
+
+    /**
+     * 本地缓存的 CurseForge 文件信息（获取后填充）
+     * displayName（版本）
+     */
+    "cf_version": string;
+
+    /**
+     * 发布日期
+     */
+    "cf_file_date": string;
+
+    /**
+     * 1=正式版 2=测试版 3=Alpha
+     */
+    "cf_release_type": number;
+}
+
+/**
+ * ModVersionResult 是一次批量获取中单个 mod 的结果
+ */
+export interface ModVersionResult {
+    "id": string;
+    "name": string;
+
+    /**
+     * displayName
+     */
+    "version": string;
+    "ok": boolean;
+    "error": string;
 }
 
 /**

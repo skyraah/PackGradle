@@ -15,6 +15,14 @@ type ProjectEntry struct {
 	Path string `toml:"path"` // pack.toml 所在目录
 }
 
+// CfFileCache 是 CurseForge 文件信息的本地缓存条目（键为 "projectID:fileID"）
+type CfFileCache struct {
+	DisplayName string `toml:"display_name"` // 版本显示名（文件名，通常含版本号）
+	FileDate    string `toml:"file_date"`    // 发布日期（RFC3339）
+	ReleaseType int    `toml:"release_type"` // 1=正式版 2=测试版 3=Alpha
+	FetchedAt   string `toml:"fetched_at"`   // 获取时间（RFC3339）
+}
+
 // appConfig 持久化在 %AppData%\PackGradle\config.toml
 type appConfig struct {
 	// 用户手动指定的工具路径（覆盖自动检测）
@@ -23,6 +31,8 @@ type appConfig struct {
 	Projects    []ProjectEntry `toml:"projects"`
 	// 用户自行填写的 CurseForge API Key（用于按需查询 mod 版本等）
 	CurseforgeApiKey string `toml:"curseforge_api_key"`
+	// CurseForge 文件信息本地缓存（键为 "projectID:fileID"）
+	CfCache map[string]CfFileCache `toml:"curseforge_cache"`
 }
 
 // ConfigManager 负责配置文件的读写，所有服务共享同一实例
@@ -117,5 +127,16 @@ func (m *ConfigManager) SetApiKey(key string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.cfg.CurseforgeApiKey = key
+	return m.save()
+}
+
+// SetCurseforgeCache 写入一条 CurseForge 文件信息缓存
+func (m *ConfigManager) SetCurseforgeCache(key string, entry CfFileCache) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.cfg.CfCache == nil {
+		m.cfg.CfCache = map[string]CfFileCache{}
+	}
+	m.cfg.CfCache[key] = entry
 	return m.save()
 }

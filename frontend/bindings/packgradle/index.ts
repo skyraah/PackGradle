@@ -10,6 +10,7 @@ export {
 
 export type {
     ModInfo,
+    ModVersionResult,
     PackProject,
     RefreshResult,
     ToolInfo

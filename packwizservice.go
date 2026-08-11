@@ -20,6 +20,13 @@ type ModInfo struct {
 	Version string `json:"version"`  // pw.toml 中的 version（不一定存在）
 	File    string `json:"file"`     // 下载文件名
 	Path    string `json:"path"`     // pw.toml 完整路径
+	// CurseForge 源信息（0 表示非 CurseForge 源）
+	CfProjectID int64 `json:"cf_project_id"`
+	CfFileID    int64 `json:"cf_file_id"`
+	// 本地缓存的 CurseForge 文件信息（获取后填充）
+	CfVersion     string `json:"cf_version"`      // displayName（版本）
+	CfFileDate    string `json:"cf_file_date"`    // 发布日期
+	CfReleaseType int    `json:"cf_release_type"` // 1=正式版 2=测试版 3=Alpha
 }
 
 // PackProject 描述一个已导入的 packwiz 项目
@@ -62,6 +69,7 @@ func (s *PackwizService) ImportProject(packTomlPath string) (PackProject, error)
 	if err != nil {
 		return PackProject{}, err
 	}
+	s.applyCfCache(&proj)
 	if err := s.config.AddProject(ProjectEntry{Name: proj.Name, Path: proj.Path}); err != nil {
 		return PackProject{}, err
 	}
@@ -82,6 +90,7 @@ func (s *PackwizService) ListProjects() []PackProject {
 			})
 			continue
 		}
+		s.applyCfCache(&proj)
 		projects = append(projects, proj)
 	}
 	return projects
@@ -200,6 +209,45 @@ func updateVersion(update map[string]map[string]any) string {
 	return ""
 }
 
+// cfIDsFromUpdate 从 [update.curseforge] 表提取 project-id / file-id
+func cfIDsFromUpdate(update map[string]map[string]any) (int64, int64) {
+	cf, ok := update["curseforge"]
+	if !ok {
+		return 0, 0
+	}
+	var projectID, fileID int64
+	if v, ok := cf["project-id"].(int64); ok {
+		projectID = v
+	}
+	if v, ok := cf["file-id"].(int64); ok {
+		fileID = v
+	}
+	return projectID, fileID
+}
+
+// cfCacheKey 生成 CurseForge 文件缓存键
+func cfCacheKey(projectID, fileID int64) string {
+	return fmt.Sprintf("%d:%d", projectID, fileID)
+}
+
+// applyCfCache 将本地缓存的 CurseForge 文件信息回填到项目的 mod 列表
+func (s *PackwizService) applyCfCache(proj *PackProject) {
+	cache := s.config.Get().CfCache
+	for i := range proj.Mods {
+		m := &proj.Mods[i]
+		if m.CfProjectID == 0 || m.CfFileID == 0 {
+			continue
+		}
+		entry, ok := cache[cfCacheKey(m.CfProjectID, m.CfFileID)]
+		if !ok {
+			continue
+		}
+		m.CfVersion = entry.DisplayName
+		m.CfFileDate = entry.FileDate
+		m.CfReleaseType = entry.ReleaseType
+	}
+}
+
 // scanMods 扫描项目的 mod 列表：优先以 pack 根目录的 index.toml（meta 文件索引）
 // 为权威来源，按其 [[files]] 中 mods/ 前缀的条目在 mods 目录下找到对应文件解析；
 // 无 index.toml 时回退到旧式目录扫描
@@ -262,14 +310,17 @@ func scanIndexEntry(projectDir, relPath string) ModInfo {
 			version = updateVersion(raw.Update)
 		}
 		side, sideCN := normalizeSide(raw.Side)
+		cfProjectID, cfFileID := cfIDsFromUpdate(raw.Update)
 		return ModInfo{
-			ID:      id,
-			Name:    name,
-			Side:    side,
-			SideCN:  sideCN,
-			Version: version,
-			File:    raw.Filename,
-			Path:    absPath,
+			ID:          id,
+			Name:        name,
+			Side:        side,
+			SideCN:      sideCN,
+			Version:     version,
+			File:        raw.Filename,
+			Path:        absPath,
+			CfProjectID: cfProjectID,
+			CfFileID:    cfFileID,
 		}
 	}
 
