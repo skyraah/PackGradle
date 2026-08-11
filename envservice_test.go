@@ -221,6 +221,46 @@ func TestNormalizePathEntry(t *testing.T) {
 	}
 }
 
+// mergePathDirs 应识别 %VAR% 形式的 PATH 条目并去重
+func TestMergePathDirs(t *testing.T) {
+	prismDir := `C:\Users\test\AppData\Local\Programs\PrismLauncher`
+	withEnv(t, "TESTPRISM", prismDir)
+
+	cur := `C:\Windows;%TESTPRISM%;C:\MC\packwiz`
+	newCur, added := mergePathDirs(cur, []string{prismDir, `D:\new\tool`})
+
+	if len(added) != 1 || added[0] != `D:\new\tool` {
+		t.Fatalf("只应新增 D:\\new\\tool，实际 added=%v", added)
+	}
+	want := cur + `;D:\new\tool`
+	if newCur != want {
+		t.Errorf("新 PATH = %q, 期望 %q", newCur, want)
+	}
+}
+
+// mergePathDirs 处理空 PATH（全部新增）
+func TestMergePathDirsEmpty(t *testing.T) {
+	newCur, added := mergePathDirs("", []string{`C:\A`, `C:\B`})
+	if len(added) != 2 {
+		t.Fatalf("空 PATH 应新增全部，实际 added=%v", added)
+	}
+	if newCur != `C:\A;C:\B` {
+		t.Errorf("新 PATH = %q, 期望 C:\\A;C:\\B", newCur)
+	}
+}
+
+// mergePathDirs 大小写不敏感去重（无新增时返回原样）
+func TestMergePathDirsCaseInsensitive(t *testing.T) {
+	cur := `c:\windows`
+	newCur, added := mergePathDirs(cur, []string{`C:\Windows`})
+	if len(added) != 0 {
+		t.Fatalf("大小写不同也应去重，实际 added=%v", added)
+	}
+	if newCur != cur {
+		t.Errorf("无新增时应原样返回，实际 %q", newCur)
+	}
+}
+
 // 完全找不到时返回 Found=false 且不写 config
 func TestDetectNotFound(t *testing.T) {
 	withEnv(t, "PATH", t.TempDir())

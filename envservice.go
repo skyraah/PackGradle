@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -297,17 +298,38 @@ func addDirsToUserPath(dirs []string) ([]string, error) {
 	}
 	defer k.Close()
 
+	// 读取现有用户级 PATH。REG_SZ / REG_EXPAND_SZ 由 GetStringValue
+	// 正确解码 UTF-16；PATH 不存在时按可展开字符串创建。
 	cur := ""
-	vtype := uint32(registry.EXPAND_SZ) // 默认按可展开字符串处理
-	if n, t, err := k.GetValue("Path", nil); err == nil && n > 0 {
-		buf := make([]byte, n)
-		if _, _, err := k.GetValue("Path", buf); err == nil {
-			cur = strings.TrimSpace(string(buf))
-		}
+	vtype := uint32(registry.EXPAND_SZ)
+	if v, t, err := k.GetStringValue("Path"); err == nil {
+		cur = v
 		vtype = t
+	} else if !errors.Is(err, registry.ErrNotExist) {
+		return nil, fmt.Errorf("读取用户 PATH 失败: %w", err)
 	}
 
-	// 去重（大小写不敏感，%VAR% 条目先展开再比较）
+	newCur, added := mergePathDirs(cur, dirs)
+	if len(added) == 0 {
+		return nil, nil
+	}
+
+	if vtype == registry.EXPAND_SZ {
+		err = k.SetExpandStringValue("Path", newCur)
+	} else {
+		err = k.SetStringValue("Path", newCur)
+	}
+	if err != nil {
+		return nil, err
+	}
+
+	broadcastEnvironmentChange()
+	return added, nil
+}
+
+// mergePathDirs 将目录去重合并进 PATH 字符串，返回新 PATH 与新增目录列表。
+// 去重前展开 %VAR% 条目（如 %PRISM%），大小写不敏感。
+func mergePathDirs(cur string, dirs []string) (string, []string) {
 	existing := map[string]bool{}
 	for _, p := range strings.Split(cur, ";") {
 		if p = normalizePathEntry(expandEnv(p)); p != "" {
@@ -328,22 +350,7 @@ func addDirsToUserPath(dirs []string) ([]string, error) {
 		existing[key] = true
 		added = append(added, d)
 	}
-
-	if len(added) == 0 {
-		return nil, nil
-	}
-
-	if vtype == registry.EXPAND_SZ {
-		err = k.SetExpandStringValue("Path", cur)
-	} else {
-		err = k.SetStringValue("Path", cur)
-	}
-	if err != nil {
-		return nil, err
-	}
-
-	broadcastEnvironmentChange()
-	return added, nil
+	return cur, added
 }
 
 // joinPathWith 将新增目录合并进现有 PATH 字符串
