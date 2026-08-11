@@ -1,31 +1,16 @@
-### IntelliJ IDEA ###
-out/
-!**/src/main/**/out/
-!**/src/test/**/out/
-.kotlin
-
-### Eclipse ###
-.apt_generated
-.classpath
-.factorypath
-.project
-.settings
-.springBeans
-.sts4-cache
-bin/
-!**/src/main/**/bin/
-!**/src/test/**/bin/
-
-### NetBeans ###
-/nbproject/private/
-/nbbuild/
-/dist/
-/nbdist/
-/.nb-gradle/
-
-### VS Code ###
-.vscode/
-
-### Mac OS ###
-.DS_Store
-/lib
+.task
+.zcode
+bin
+frontend/dist
+frontend/node_modules
+build/linux/appimage/build
+build/windows/nsis/MicrosoftEdgeWebview2Setup.exe
+# Mobile generated (per-machine; overlays hold absolute paths)
+build/ios/xcode/overlay.json
+build/ios/xcode/gen/
+build/android/overlay.json
+build/android/gen/
+# Gradle build caches (generated when building the Android target)
+build/android/.gradle/
+build/android/app/build/
+build/android/build/
