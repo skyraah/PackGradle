@@ -11,7 +11,7 @@ import (
 	"github.com/BurntSushi/toml"
 )
 
-// ModInfo 描述 packwiz 项目中的一个 mod（对应 mods/<id>/pw.toml）
+// ModInfo 描述 packwiz 项目中的一个 mod（对应 index.toml 中 mods/ 条目指向的文件）
 type ModInfo struct {
 	ID      string `json:"id"`
 	Name    string `json:"name"`
@@ -137,6 +137,9 @@ func parsePackToml(packToml string) (PackProject, error) {
 		Version    string            `toml:"version"`
 		PackFormat string            `toml:"pack-format"`
 		Versions   map[string]string `toml:"versions"`
+		Index      struct {
+			File string `toml:"file"` // meta 文件索引（index.toml）文件名，默认 index.toml
+		} `toml:"index"`
 	}
 	if _, err := toml.DecodeFile(packToml, &raw); err != nil {
 		return PackProject{}, fmt.Errorf("解析 %s 失败: %w", packToml, err)
@@ -163,7 +166,11 @@ func parsePackToml(packToml string) (PackProject, error) {
 		}
 	}
 
-	mods, err := scanMods(proj.Path)
+	indexName := raw.Index.File
+	if indexName == "" {
+		indexName = "index.toml"
+	}
+	mods, err := scanMods(proj.Path, indexName)
 	if err != nil {
 		proj.Error = err.Error()
 	} else {
@@ -172,8 +179,86 @@ func parsePackToml(packToml string) (PackProject, error) {
 	return proj, nil
 }
 
-// scanMods 扫描项目 mods/ 目录下每个 mod 的 pw.toml
-func scanMods(projectDir string) ([]ModInfo, error) {
+// scanMods 扫描项目的 mod 列表：优先以 pack 根目录的 index.toml（meta 文件索引）
+// 为权威来源，按其 [[files]] 中 mods/ 前缀的条目在 mods 目录下找到对应文件解析；
+// 无 index.toml 时回退到旧式目录扫描
+func scanMods(projectDir, indexName string) ([]ModInfo, error) {
+	indexPath := filepath.Join(projectDir, filepath.FromSlash(indexName))
+	if _, err := os.Stat(indexPath); err != nil {
+		if os.IsNotExist(err) {
+			return scanModsLegacy(projectDir) // 旧式结构：mods/<name>/pw.toml
+		}
+		return nil, fmt.Errorf("读取 %s 失败: %w", indexName, err)
+	}
+
+	var idx struct {
+		Files []struct {
+			File string `toml:"file"`
+		} `toml:"files"`
+	}
+	if _, err := toml.DecodeFile(indexPath, &idx); err != nil {
+		return nil, fmt.Errorf("解析 %s 失败: %w", indexName, err)
+	}
+
+	mods := []ModInfo{}
+	for _, f := range idx.Files {
+		if !strings.HasPrefix(f.File, "mods/") {
+			continue // 只关注 mods 目录下的条目
+		}
+		mods = append(mods, scanIndexEntry(projectDir, f.File))
+	}
+	sortMods(mods)
+	return mods, nil
+}
+
+// scanIndexEntry 按 index.toml 中的一条 mods/ 条目解析对应文件为 ModInfo。
+// 条目中的文件缺失或解析失败时保留条目并以文件名展示，保证列表完整。
+func scanIndexEntry(projectDir, relPath string) ModInfo {
+	absPath := filepath.Join(projectDir, filepath.FromSlash(relPath))
+	relName := filepath.Base(relPath)
+	// packwiz 的 mod 元数据约定为 <id>.pw.toml，ID 取去掉后缀的文件名
+	id := relName
+	if strings.HasSuffix(strings.ToLower(id), ".pw.toml") {
+		id = strings.TrimSuffix(id, ".pw.toml")
+	} else {
+		id = strings.TrimSuffix(id, filepath.Ext(id))
+	}
+
+	content, err := os.ReadFile(absPath)
+	if err != nil {
+		// 索引有条目但文件缺失：保留条目，提示元数据文件丢失
+		return ModInfo{ID: id, Name: id, File: relName}
+	}
+
+	var raw struct {
+		Name     string `toml:"name"`
+		Filename string `toml:"filename"`
+		Side     string `toml:"side"`
+		Version  string `toml:"version"`
+	}
+	if err := toml.Unmarshal(content, &raw); err == nil {
+		name := raw.Name
+		if name == "" {
+			name = id
+		}
+		side, sideCN := normalizeSide(raw.Side)
+		return ModInfo{
+			ID:      id,
+			Name:    name,
+			Side:    side,
+			SideCN:  sideCN,
+			Version: raw.Version,
+			File:    raw.Filename,
+			Path:    absPath,
+		}
+	}
+
+	// 非 TOML 文件（如直接放入的 jar）或元数据解析失败：以文件名展示
+	return ModInfo{ID: id, Name: id, File: relName}
+}
+
+// scanModsLegacy 扫描旧式项目结构 mods/<name>/pw.toml（无 index.toml 时回退）
+func scanModsLegacy(projectDir string) ([]ModInfo, error) {
 	modsDir := filepath.Join(projectDir, "mods")
 	entries, err := os.ReadDir(modsDir)
 	if err != nil {
@@ -209,10 +294,15 @@ func scanMods(projectDir string) ([]ModInfo, error) {
 			Path:    pw,
 		})
 	}
+	sortMods(mods)
+	return mods, nil
+}
+
+// sortMods 按名称不区分大小写排序 mod 列表
+func sortMods(mods []ModInfo) {
 	sort.Slice(mods, func(i, j int) bool {
 		return strings.ToLower(mods[i].Name) < strings.ToLower(mods[j].Name)
 	})
-	return mods, nil
 }
 
 // normalizeSide 将 packwiz 的 side 值归一化为中文标签

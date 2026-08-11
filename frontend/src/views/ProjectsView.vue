@@ -207,14 +207,14 @@ onMounted(load)
                                         :color="sideColors[mod.side] ?? 'grey'"
                                         variant="tonal"
                                     >
-                                        {{ mod.side_cn }}
+                                        {{ mod.side_cn || '未知' }}
                                     </v-chip>
                                 </td>
                                 <td class="text-caption">{{ mod.file || '—' }}</td>
                                 <td class="text-caption">{{ mod.version || '—' }}</td>
                             </tr>
                             <tr v-if="(proj.mods ?? []).length === 0">
-                                <td colspan="4" class="text-center text-medium-emphasis">项目还没有 mods 目录</td>
+                                <td colspan="4" class="text-center text-medium-emphasis">未检测到 mod</td>
                             </tr>
                         </tbody>
                     </v-table>
