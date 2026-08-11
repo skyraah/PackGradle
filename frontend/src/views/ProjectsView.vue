@@ -331,9 +331,17 @@ onMounted(load)
                                 </td>
                                 <td class="text-caption">{{ mod.file || '—' }}</td>
                                 <td class="text-caption">
-                                    <span>{{ mod.version || mod.cf_version || '—' }}</span>
-                                    <div v-if="mod.cf_version" class="text-medium-emphasis">
-                                        {{ cfReleaseLabel(mod.cf_release_type) }} · {{ cfDateText(mod.cf_file_date) }}
+                                    <!-- 本地版本优先；CurseForge displayName 与文件名一致时不再重复显示，改为发布日期 -->
+                                    <span v-if="mod.version" :title="mod.cf_version || ''">{{ mod.version }}</span>
+                                    <span v-else-if="mod.cf_version && mod.cf_version !== mod.file">{{ mod.cf_version }}</span>
+                                    <span v-else-if="mod.cf_version">发布 {{ cfDateText(mod.cf_file_date) || '—' }}</span>
+                                    <span v-else>—</span>
+                                    <div v-if="mod.cf_version && mod.cf_version !== mod.file" class="text-medium-emphasis">
+                                        {{ cfReleaseLabel(mod.cf_release_type) }}
+                                        <template v-if="mod.cf_release_type && mod.cf_file_date"> · </template>{{ cfDateText(mod.cf_file_date) }}
+                                    </div>
+                                    <div v-else-if="mod.cf_version && cfReleaseLabel(mod.cf_release_type)" class="text-medium-emphasis">
+                                        {{ cfReleaseLabel(mod.cf_release_type) }}
                                     </div>
                                 </td>
                                 <td class="text-right">
