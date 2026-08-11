@@ -95,7 +95,7 @@ export interface ToolInfo {
     "path": string;
 
     /**
-     * 发现来源: custom / path / registry / config-dir
+     * 发现来源: config / path / default-dir
      */
     "source": string;
 

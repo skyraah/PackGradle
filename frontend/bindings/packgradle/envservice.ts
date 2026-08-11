@@ -4,6 +4,10 @@
 /**
  * EnvService 负责检测 packwiz / Prism Launcher 的装载状态，
  * 并将工具所在目录写入用户级 PATH。
+ * 
+ * config.toml 是工具路径的唯一持久化来源：无论是用户手动输入
+ * 还是程序自动检测到的路径，都会写入 config.toml，方便用户
+ * 随时查看与修改。
  * @module
  */
 

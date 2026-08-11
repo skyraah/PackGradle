@@ -15,17 +15,21 @@ import (
 
 // ToolInfo 描述一个工具的检测结果
 type ToolInfo struct {
-	Name    string `json:"name"`     // packwiz / prism-launcher
-	Found   bool   `json:"found"`    // 是否已安装
-	Path    string `json:"path"`     // 可执行文件或配置目录的完整路径
-	Source  string `json:"source"`   // 发现来源: custom / path / registry / config-dir
-	Message string `json:"message"`  // 对用户的中文说明
-	EnvDir  string `json:"env_dir"`  // 需要加入 PATH 的目录（无可加目录时为空）
-	EnvOK   bool   `json:"env_ok"`   // 该目录是否已在用户 PATH 中
+	Name    string `json:"name"`    // packwiz / prism-launcher
+	Found   bool   `json:"found"`   // 是否已安装
+	Path    string `json:"path"`    // 可执行文件或配置目录的完整路径
+	Source  string `json:"source"`  // 发现来源: config / path / default-dir
+	Message string `json:"message"` // 对用户的中文说明
+	EnvDir  string `json:"env_dir"` // 需要加入 PATH 的目录（无可加目录时为空）
+	EnvOK   bool   `json:"env_ok"`  // 该目录是否已在用户 PATH 中
 }
 
 // EnvService 负责检测 packwiz / Prism Launcher 的装载状态，
 // 并将工具所在目录写入用户级 PATH。
+//
+// config.toml 是工具路径的唯一持久化来源：无论是用户手动输入
+// 还是程序自动检测到的路径，都会写入 config.toml，方便用户
+// 随时查看与修改。
 type EnvService struct {
 	config *ConfigManager
 }
@@ -41,19 +45,21 @@ func (s *EnvService) Detect() []ToolInfo {
 	return []ToolInfo{packwiz, prism}
 }
 
-// detectPackwiz 依次尝试：自定义路径 → PATH → 常见安装位置
+// detectPackwiz 检测顺序：config 中保存的路径 → 环境变量(PATH) →
+// 默认目录 %USERPROFILE%\go\bin；找不到则提示用户键入安装路径。
 func (s *EnvService) detectPackwiz() ToolInfo {
 	info := ToolInfo{Name: "packwiz"}
+	cfg := s.config.Get()
 
-	// 1. 用户自定义路径（可为文件或目录）
-	if p := strings.TrimSpace(s.config.Get().PackwizPath); p != "" {
+	// 0. config.toml 中保存的路径（用户输入或之前检测到的）
+	if p := strings.TrimSpace(cfg.PackwizPath); p != "" {
 		if resolved, ok := resolveToolPath(p, "packwiz"); ok {
 			info.Path = resolved
-			info.Source = "custom"
+			info.Source = "config"
 		}
 	}
 
-	// 2. PATH 中查找
+	// 1. 环境变量 PATH
 	if info.Path == "" {
 		if p, err := exec.LookPath("packwiz"); err == nil {
 			info.Path = p
@@ -61,89 +67,94 @@ func (s *EnvService) detectPackwiz() ToolInfo {
 		}
 	}
 
-	// 3. 常见安装位置
+	// 2. 默认目录 %USERPROFILE%\go\bin（go install 的默认安装位置）
 	if info.Path == "" {
-		for _, dir := range []string{
-			filepath.Join(os.Getenv("LOCALAPPDATA"), "Programs", "packwiz"),
-			filepath.Join(os.Getenv("LOCALAPPDATA"), "packwiz"),
-		} {
-			for _, name := range []string{"packwiz.exe", "packwiz"} {
-				p := filepath.Join(dir, name)
-				if st, err := os.Stat(p); err == nil && !st.IsDir() {
-					info.Path = p
-					info.Source = "common"
-					break
-				}
-			}
-			if info.Path != "" {
-				break
-			}
+		dir := filepath.Join(os.Getenv("USERPROFILE"), "go", "bin")
+		if resolved, ok := resolveToolPath(dir, "packwiz"); ok {
+			info.Path = resolved
+			info.Source = "default-dir"
 		}
 	}
 
-	if info.Path != "" {
-		info.Found = true
-		info.Message = toolMessage(info.Source, info.Path)
-		info.EnvDir = filepath.Dir(info.Path)
-		info.EnvOK = inUserPath(info.EnvDir)
-	} else {
-		info.Message = "未检测到 packwiz。可手动指定路径，或先安装 packwiz 并加入 PATH"
-	}
+	s.finishDetection(&info, cfg.PackwizPath)
 	return info
 }
 
-// detectPrism 依次尝试：自定义路径 → PATH → 注册表卸载信息 → 默认配置目录
+// detectPrism 检测顺序：config 中保存的路径 → 默认路径
+// %LOCALAPPDATA%\Programs\PrismLauncher → Program Files / Program Files (x86)
+// （含这两个目录下的子目录浅层扫描）；找不到则提示用户键入安装路径。
 func (s *EnvService) detectPrism() ToolInfo {
 	info := ToolInfo{Name: "prism-launcher"}
+	cfg := s.config.Get()
 
-	// 1. 用户自定义路径
-	if p := strings.TrimSpace(s.config.Get().PrismPath); p != "" {
+	// 0. config.toml 中保存的路径（用户输入或之前检测到的）
+	if p := strings.TrimSpace(cfg.PrismPath); p != "" {
 		if resolved, ok := resolveToolPath(p, "prismlauncher"); ok {
 			info.Path = resolved
-			info.Source = "custom"
+			info.Source = "config"
 		}
 	}
 
-	// 2. PATH 中查找
+	// 1. 默认安装路径
 	if info.Path == "" {
-		for _, name := range []string{"prismlauncher", "PrismLauncher"} {
-			if p, err := exec.LookPath(name); err == nil {
-				info.Path = p
-				info.Source = "path"
-				break
-			}
+		if p, source := detectPrismDefaultDirs(); p != "" {
+			info.Path = p
+			info.Source = source
 		}
 	}
 
-	// 3. 注册表卸载信息（参考旧版 PrismLauncherDetector.java）
-	if info.Path == "" {
-		if loc, err := findPrismInstallLocation(); err == nil && loc != "" {
-			if resolved, ok := resolveToolPath(loc, "prismlauncher"); ok {
-				info.Path = resolved
-				info.Source = "registry"
-			}
-		}
-	}
+	s.finishDetection(&info, cfg.PrismPath)
+	return info
+}
 
+// finishDetection 处理检测结果：将找到的路径写入 config.toml、
+// 填充提示信息。config 中已保存的有效路径不会被覆盖。
+func (s *EnvService) finishDetection(info *ToolInfo, savedPath string) {
 	if info.Path != "" {
 		info.Found = true
 		info.Message = toolMessage(info.Source, info.Path)
 		info.EnvDir = filepath.Dir(info.Path)
 		info.EnvOK = inUserPath(info.EnvDir)
-		return info
+		// 程序检测到的路径同样持久化，方便用户查看/修改；
+		// 值未变化时跳过写入。
+		if strings.TrimSpace(savedPath) != info.Path {
+			_ = s.config.SetToolPath(info.Name, info.Path)
+		}
+		return
+	}
+	info.Message = "未检测到该工具，请键入安装路径"
+}
+
+// detectPrismDefaultDirs 在 Prism Launcher 的默认安装位置中查找
+func detectPrismDefaultDirs() (string, string) {
+	// 精确候选目录
+	exact := []string{
+		filepath.Join(os.Getenv("LOCALAPPDATA"), "Programs", "PrismLauncher"),
+		filepath.Join(os.Getenv("ProgramFiles"), "PrismLauncher"),
+		filepath.Join(os.Getenv("ProgramFiles(x86)"), "PrismLauncher"),
+	}
+	for _, dir := range exact {
+		if resolved, ok := resolveToolPath(dir, "prismlauncher"); ok {
+			return resolved, "default-dir"
+		}
 	}
 
-	// 4. 默认配置目录存在（如 %AppData%\PrismLauncher），说明已运行过
-	configDir := filepath.Join(os.Getenv("APPDATA"), "PrismLauncher")
-	if st, err := os.Stat(configDir); err == nil && st.IsDir() {
-		info.Found = true
-		info.Path = configDir
-		info.Source = "config-dir"
-		info.Message = "在配置目录检测到 Prism Launcher（未找到启动器本体）"
-	} else {
-		info.Message = "未检测到 Prism Launcher。可手动指定路径，或先安装 Prism Launcher"
+	// Program Files 下浅层扫描：目录名可能带空格或大小写不同
+	for _, root := range []string{os.Getenv("ProgramFiles"), os.Getenv("ProgramFiles(x86)")} {
+		entries, err := os.ReadDir(root)
+		if err != nil {
+			continue
+		}
+		for _, e := range entries {
+			if !e.IsDir() || !strings.Contains(strings.ToLower(e.Name()), "prism") {
+				continue
+			}
+			if resolved, ok := resolveToolPath(filepath.Join(root, e.Name()), "prismlauncher"); ok {
+				return resolved, "default-dir"
+			}
+		}
 	}
-	return info
+	return "", ""
 }
 
 // resolveToolPath 将用户给出的路径解析为工具可执行文件：
@@ -165,52 +176,15 @@ func resolveToolPath(p, exeName string) (string, bool) {
 
 func toolMessage(source, path string) string {
 	switch source {
-	case "custom":
-		return "使用自定义路径: " + path
+	case "config":
+		return "使用 config.toml 中保存的路径: " + path
 	case "path":
-		return "已存在于 PATH: " + path
-	case "registry":
-		return "从注册表安装信息找到: " + path
-	case "common":
-		return "常见安装位置找到: " + path
+		return "已存在于环境变量 PATH: " + path
+	case "default-dir":
+		return "在默认安装目录找到: " + path
 	default:
 		return path
 	}
-}
-
-// findPrismInstallLocation 在注册表卸载信息中查找 Prism Launcher 的安装位置
-func findPrismInstallLocation() (string, error) {
-	roots := []registry.Key{registry.CURRENT_USER, registry.LOCAL_MACHINE, registry.LOCAL_MACHINE}
-	paths := []string{
-		`SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall`,
-		`SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall`,
-		`SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall`,
-	}
-	for i, root := range roots {
-		base := paths[i]
-		k, err := registry.OpenKey(root, base, registry.ENUMERATE_SUB_KEYS|registry.QUERY_VALUE)
-		if err != nil {
-			continue
-		}
-		subs, err := k.ReadSubKeyNames(-1)
-		k.Close()
-		if err != nil {
-			continue
-		}
-		for _, sub := range subs {
-			sk, err := registry.OpenKey(root, base+`\`+sub, registry.QUERY_VALUE)
-			if err != nil {
-				continue
-			}
-			name, _, _ := sk.GetStringValue("DisplayName")
-			loc, _, _ := sk.GetStringValue("InstallLocation")
-			sk.Close()
-			if loc != "" && strings.Contains(strings.ToLower(name), "prism") {
-				return loc, nil
-			}
-		}
-	}
-	return "", fmt.Errorf("注册表中未找到 Prism Launcher")
 }
 
 // inUserPath 判断目录是否已存在于用户级 PATH（忽略大小写）

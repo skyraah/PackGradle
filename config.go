@@ -46,10 +46,9 @@ func NewConfigManager() (*ConfigManager, error) {
 	return m, nil
 }
 
-// save 将当前配置写回磁盘
+// save 将当前配置写回磁盘。
+// 注意：内部不加锁，调用方（SetToolPath/AddProject/RemoveProject）须已持有 m.mu。
 func (m *ConfigManager) save() error {
-	m.mu.Lock()
-	defer m.mu.Unlock()
 	f, err := os.Create(m.path)
 	if err != nil {
 		return fmt.Errorf("无法写入配置文件: %w", err)

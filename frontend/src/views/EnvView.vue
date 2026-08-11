@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { onMounted, ref } from 'vue'
+import { computed, onMounted, ref } from 'vue'
+import { Dialogs } from '@wailsio/runtime'
 import { EnvService } from '../../bindings/packgradle'
 import type { ToolInfo } from '../../bindings/packgradle/models'
 
@@ -8,6 +9,9 @@ const loading = ref(false)
 const configuring = ref(false)
 const snackbar = ref(false)
 const snackbarMsg = ref('')
+// 弹窗引导：检测完成后若有工具未找到则提示键入安装路径
+const missingDialog = ref(false)
+const dismissed = ref(false)
 
 const toolMeta: Record<string, { title: string; icon: string; hint: string; placeholder: string }> = {
     'packwiz': {
@@ -24,6 +28,8 @@ const toolMeta: Record<string, { title: string; icon: string; hint: string; plac
     },
 }
 
+const missingTools = computed(() => tools.value.filter(t => !t.found))
+
 async function load() {
     loading.value = true
     try {
@@ -31,6 +37,29 @@ async function load() {
     } finally {
         loading.value = false
     }
+    maybePromptMissing()
+}
+
+// 未找到工具时弹出引导框；用户主动关闭后本次会话不再打扰
+function maybePromptMissing() {
+    if (dismissed.value) return
+    if (missingTools.value.length > 0) {
+        missingDialog.value = true
+    }
+}
+
+function closeMissingDialog() {
+    missingDialog.value = false
+    dismissed.value = true
+}
+
+async function browse(tool: ToolInfo) {
+    const picked = await Dialogs.OpenFile({
+        Title: `选择 ${toolMeta[tool.name]?.title} 路径（可选手柄或所在目录）`,
+        CanChooseFiles: true,
+        CanChooseDirectories: true,
+    })
+    if (picked) tool.path = String(picked)
 }
 
 async function configure() {
@@ -48,15 +77,28 @@ async function configure() {
     }
 }
 
-async function savePath(tool: ToolInfo) {
+async function savePath(tool: ToolInfo, closeDialog = false) {
     try {
         tools.value = (await EnvService.SetToolPath(tool.name, tool.path)) ?? []
         snackbarMsg.value = '已保存 ' + (toolMeta[tool.name]?.title ?? tool.name) + ' 路径'
         snackbar.value = true
+        if (closeDialog) {
+            missingDialog.value = false
+            dismissed.value = true
+        }
     } catch (e) {
         snackbarMsg.value = String(e)
         snackbar.value = true
     }
+}
+
+// 弹窗底部「保存」：逐个保存所有缺失工具的路径后关闭
+async function saveAllMissing() {
+    for (const tool of [...missingTools.value]) {
+        await savePath(tool)
+    }
+    missingDialog.value = false
+    dismissed.value = true
 }
 
 onMounted(load)
@@ -123,6 +165,7 @@ onMounted(load)
                             @keyup.enter="savePath(tool)"
                         >
                             <template #append>
+                                <v-btn size="small" variant="text" icon="mdi-folder-search" title="浏览" @click="browse(tool)" />
                                 <v-btn size="small" variant="tonal" @click="savePath(tool)">保存</v-btn>
                             </template>
                         </v-text-field>
@@ -130,6 +173,49 @@ onMounted(load)
                 </v-card>
             </v-col>
         </v-row>
+
+        <!-- 未找到工具时的引导弹窗 -->
+        <v-dialog
+            v-model="missingDialog"
+            max-width="560"
+            persistent
+            @click:outside="closeMissingDialog"
+            @keydown.esc="closeMissingDialog"
+        >
+            <v-card>
+                <v-card-title class="d-flex align-center">
+                    <v-icon icon="mdi-help-circle-outline" color="warning" class="mr-2" />
+                    未找到工具，请输入安装路径
+                </v-card-title>
+                <v-card-text>
+                    <div v-for="tool in missingTools" :key="tool.name" class="mb-4">
+                        <div class="text-subtitle-2 mb-1">
+                            <v-icon :icon="toolMeta[tool.name]?.icon" size="small" class="mr-1" />
+                            {{ toolMeta[tool.name]?.title ?? tool.name }}
+                        </div>
+                        <v-text-field
+                            v-model="tool.path"
+                            :placeholder="toolMeta[tool.name]?.placeholder"
+                            variant="outlined"
+                            density="compact"
+                            hide-details="auto"
+                            @keyup.enter="savePath(tool, true)"
+                        >
+                            <template #append>
+                                <v-btn size="small" variant="text" icon="mdi-folder-search" title="浏览" @click="browse(tool)" />
+                            </template>
+                        </v-text-field>
+                    </div>
+                </v-card-text>
+                <v-card-actions>
+                    <v-spacer />
+                    <v-btn variant="text" @click="closeMissingDialog">取消</v-btn>
+                    <v-btn color="primary" variant="tonal" @click="saveAllMissing">
+                        保存
+                    </v-btn>
+                </v-card-actions>
+            </v-card>
+        </v-dialog>
 
         <v-snackbar v-model="snackbar" timeout="4000" location="bottom">
             {{ snackbarMsg }}
