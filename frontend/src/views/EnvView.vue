@@ -54,12 +54,16 @@ function closeMissingDialog() {
 }
 
 async function browse(tool: ToolInfo) {
-    const picked = await Dialogs.OpenFile({
-        Title: `选择 ${toolMeta[tool.name]?.title} 路径（可选手柄或所在目录）`,
-        CanChooseFiles: true,
-        CanChooseDirectories: true,
-    })
-    if (picked) tool.path = String(picked)
+    try {
+        const picked = await Dialogs.OpenFile({
+            Title: `选择 ${toolMeta[tool.name]?.title} 路径（可选手柄或所在目录）`,
+            CanChooseFiles: true,
+            CanChooseDirectories: true,
+        })
+        if (picked) tool.path = String(picked)
+    } catch {
+        // 用户取消选择时 Wails 会以错误形式返回，静默忽略即可
+    }
 }
 
 async function configure() {

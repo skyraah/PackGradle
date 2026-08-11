@@ -38,11 +38,16 @@ async function load() {
 }
 
 async function importProject() {
-    const picked = await Dialogs.OpenFile({
-        Title: '选择 pack.toml',
-        CanChooseFiles: true,
-        Filters: [{ DisplayName: 'pack.toml', Pattern: 'pack.toml' }],
-    })
+    let picked: string | string[]
+    try {
+        picked = await Dialogs.OpenFile({
+            Title: '选择 pack.toml',
+            CanChooseFiles: true,
+            Filters: [{ DisplayName: 'pack.toml', Pattern: 'pack.toml' }],
+        })
+    } catch {
+        return // 用户取消选择，静默忽略
+    }
     if (!picked) return
     importing.value = true
     try {
@@ -60,14 +65,19 @@ async function importProject() {
 }
 
 async function removeProject(proj: PackProject) {
-    const confirmed = await Dialogs.Question({
-        Title: '确认移除',
-        Message: `确定从列表中移除项目「${proj.name}」吗？（不会删除磁盘上的文件）`,
-        Buttons: [
-            { Label: '移除' },
-            { Label: '取消', IsCancel: true },
-        ],
-    })
+    let confirmed: string
+    try {
+        confirmed = await Dialogs.Question({
+            Title: '确认移除',
+            Message: `确定从列表中移除项目「${proj.name}」吗？（不会删除磁盘上的文件）`,
+            Buttons: [
+                { Label: '移除' },
+                { Label: '取消', IsCancel: true },
+            ],
+        })
+    } catch {
+        return // 用户取消对话框，静默忽略
+    }
     if (confirmed !== 'Yes' && confirmed !== '移除') return
     projects.value = (await PackwizService.RemoveProject(proj.name)) ?? []
     if (expanded.value === proj.name) expanded.value = null
