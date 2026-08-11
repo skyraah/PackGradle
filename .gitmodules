@@ -1,0 +1,3 @@
+[submodule "lib/packwiz"]
+	path = lib/packwiz
+	url = https://github.com/PickAID/packwiz
