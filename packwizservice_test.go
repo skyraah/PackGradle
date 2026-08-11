@@ -46,6 +46,11 @@ hash = "h4"
 metafile = true
 
 [[files]]
+file = "mods/sodium.pw.toml"
+hash = "h6"
+metafile = true
+
+[[files]]
 file = "config/foo.toml"
 hash = "h5"
 `)
@@ -67,6 +72,21 @@ project-id = 328085
 filename = "Mekanism-1.20.1-10.4.16.80.jar"
 side = "both"
 `)
+	// modrinth 源的 mod：版本号存在 [update.modrinth] 表中
+	mustWriteFile(t, filepath.Join(dir, "mods", "sodium.pw.toml"), `name = "Sodium"
+filename = "sodium-fabric-0.5.8.jar"
+side = "client"
+
+[download]
+hash-format = "sha1"
+hash = "d3"
+mode = "metadata:modrinth"
+
+[update]
+[update.modrinth]
+mod-id = "AANobbMI"
+version = "mc1.20.1-0.5.8"
+`)
 	// 直接放入的 jar（index 有记录、无元数据文件）
 	mustWriteFile(t, filepath.Join(dir, "mods", "mcrd-cn.ksmcbrigade-1.20.1-4.jar"), "jar-bytes")
 	// 注意：mods/ghost.pw.toml 不写入磁盘，模拟索引存在但文件缺失
@@ -78,8 +98,8 @@ side = "both"
 	if proj.Name != "Collapse" || proj.Minecraft != "1.20.1" || proj.Modloader != "forge" || proj.ModloaderVersion != "47.4.10" {
 		t.Errorf("元信息解析不正确: %+v", proj)
 	}
-	if len(proj.Mods) != 4 {
-		t.Fatalf("应扫描到 4 个 mod，实际 %d: %+v", len(proj.Mods), proj.Mods)
+	if len(proj.Mods) != 5 {
+		t.Fatalf("应扫描到 5 个 mod，实际 %d: %+v", len(proj.Mods), proj.Mods)
 	}
 
 	create := findMod(t, proj.Mods, "create")
@@ -87,10 +107,20 @@ side = "both"
 		create.File != "create-1.20.1-6.0.8.jar" || filepath.Base(create.Path) != "create.pw.toml" {
 		t.Errorf("mod 元数据解析不正确: %+v", create)
 	}
+	// curseforge 源没有版本信息
+	if create.Version != "" {
+		t.Errorf("curseforge 源不应有本地版本号: %+v", create)
+	}
 
 	mek := findMod(t, proj.Mods, "mekanism")
 	if mek.Name != "Mekanism" || mek.File != "Mekanism-1.20.1-10.4.16.80.jar" {
 		t.Errorf("mod 元数据解析不正确: %+v", mek)
+	}
+
+	// modrinth 源：版本应从 [update.modrinth] 表提取
+	sodium := findMod(t, proj.Mods, "sodium")
+	if sodium.Version != "mc1.20.1-0.5.8" || sodium.Side != "client" || sodium.SideCN != "客户端" {
+		t.Errorf("[update.modrinth] 版本提取不正确: %+v", sodium)
 	}
 
 	jar := findMod(t, proj.Mods, "mcrd-cn.ksmcbrigade-1.20.1-4")
@@ -159,6 +189,10 @@ version = "0.5.8"
 	m := proj.Mods[0]
 	if m.Name != "Sodium" || m.Side != "both" || m.SideCN != "通用" || m.File != "sodium-fabric-0.5.8.jar" {
 		t.Errorf("mod 解析不正确: %+v", m)
+	}
+	// 顶层无 version，应从 [update.fabric] 表回退提取
+	if m.Version != "0.5.8" {
+		t.Errorf("[update.fabric] 版本提取不正确: %+v", m)
 	}
 }
 

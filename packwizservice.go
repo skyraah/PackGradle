@@ -179,6 +179,27 @@ func parsePackToml(packToml string) (PackProject, error) {
 	return proj, nil
 }
 
+// modTomlFields 是单个 mod 元数据文件（.pw.toml / pw.toml）中的公共字段。
+// packwiz 通常不把版本写在顶层，而是存在 [update.<来源>] 表中
+type modTomlFields struct {
+	Name     string                    `toml:"name"`
+	Filename string                    `toml:"filename"`
+	Side     string                    `toml:"side"`
+	Version  string                    `toml:"version"`
+	Update   map[string]map[string]any `toml:"update"`
+}
+
+// updateVersion 从 [update.<来源>] 表中提取 mod 版本号。
+// 按来源优先级取第一个非空 version；curseforge 表只有 file-id/project-id，没有版本
+func updateVersion(update map[string]map[string]any) string {
+	for _, src := range []string{"modrinth", "fabric", "forge", "neoforge", "quilt", "liteloader", "curseforge"} {
+		if v, ok := update[src]["version"].(string); ok && v != "" {
+			return v
+		}
+	}
+	return ""
+}
+
 // scanMods 扫描项目的 mod 列表：优先以 pack 根目录的 index.toml（meta 文件索引）
 // 为权威来源，按其 [[files]] 中 mods/ 前缀的条目在 mods 目录下找到对应文件解析；
 // 无 index.toml 时回退到旧式目录扫描
@@ -230,16 +251,15 @@ func scanIndexEntry(projectDir, relPath string) ModInfo {
 		return ModInfo{ID: id, Name: id, File: relName}
 	}
 
-	var raw struct {
-		Name     string `toml:"name"`
-		Filename string `toml:"filename"`
-		Side     string `toml:"side"`
-		Version  string `toml:"version"`
-	}
+	var raw modTomlFields
 	if err := toml.Unmarshal(content, &raw); err == nil {
 		name := raw.Name
 		if name == "" {
 			name = id
+		}
+		version := raw.Version
+		if version == "" {
+			version = updateVersion(raw.Update)
 		}
 		side, sideCN := normalizeSide(raw.Side)
 		return ModInfo{
@@ -247,7 +267,7 @@ func scanIndexEntry(projectDir, relPath string) ModInfo {
 			Name:    name,
 			Side:    side,
 			SideCN:  sideCN,
-			Version: raw.Version,
+			Version: version,
 			File:    raw.Filename,
 			Path:    absPath,
 		}
@@ -274,14 +294,13 @@ func scanModsLegacy(projectDir string) ([]ModInfo, error) {
 			continue
 		}
 		pw := filepath.Join(modsDir, e.Name(), "pw.toml")
-		var raw struct {
-			Name     string `toml:"name"`
-			Filename string `toml:"filename"`
-			Side     string `toml:"side"`
-			Version  string `toml:"version"`
-		}
+		var raw modTomlFields
 		if _, err := toml.DecodeFile(pw, &raw); err != nil {
 			continue // 非 packwiz mod 目录，跳过
+		}
+		version := raw.Version
+		if version == "" {
+			version = updateVersion(raw.Update)
 		}
 		side, sideCN := normalizeSide(raw.Side)
 		mods = append(mods, ModInfo{
@@ -289,7 +308,7 @@ func scanModsLegacy(projectDir string) ([]ModInfo, error) {
 			Name:    raw.Name,
 			Side:    side,
 			SideCN:  sideCN,
-			Version: raw.Version,
+			Version: version,
 			File:    raw.Filename,
 			Path:    pw,
 		})
