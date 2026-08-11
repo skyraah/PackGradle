@@ -386,3 +386,13 @@ func (s *EnvService) SetToolPath(name, path string) ([]ToolInfo, error) {
 	}
 	return s.Detect(), nil
 }
+
+// GetApiKey 返回已保存的 CurseForge API Key（未配置时为空串）
+func (s *EnvService) GetApiKey() string {
+	return s.config.Get().CurseforgeApiKey
+}
+
+// SetApiKey 保存用户填写的 CurseForge API Key（空串清除）
+func (s *EnvService) SetApiKey(key string) error {
+	return s.config.SetApiKey(strings.TrimSpace(key))
+}

@@ -4,6 +4,8 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/BurntSushi/toml"
 )
 
 // newTestConfig 用临时目录构造 ConfigManager，避免污染真实用户配置
@@ -277,5 +279,39 @@ func TestDetectNotFound(t *testing.T) {
 	}
 	if info := svc.detectPrism(); info.Found {
 		t.Error("prism 不应被检测到")
+	}
+}
+
+// CurseForge API Key 的保存、读取与清除
+func TestApiKeySetGetClear(t *testing.T) {
+	m := newTestConfig(t)
+	svc := NewEnvService(m)
+
+	if got := svc.GetApiKey(); got != "" {
+		t.Fatalf("初始应为空，实际 %q", got)
+	}
+
+	if err := svc.SetApiKey("  abc-123-xyz  "); err != nil {
+		t.Fatalf("SetApiKey: %v", err)
+	}
+	if got := svc.GetApiKey(); got != "abc-123-xyz" {
+		t.Errorf("应保存去除首尾空白后的 key，实际 %q", got)
+	}
+
+	// 重新从磁盘加载，验证持久化
+	m2 := &ConfigManager{path: m.path}
+	if _, err := toml.DecodeFile(m2.path, &m2.cfg); err != nil {
+		t.Fatalf("重新读取配置失败: %v", err)
+	}
+	if m2.cfg.CurseforgeApiKey != "abc-123-xyz" {
+		t.Errorf("配置文件应包含 key，实际 %q", m2.cfg.CurseforgeApiKey)
+	}
+
+	// 空串清除
+	if err := svc.SetApiKey(""); err != nil {
+		t.Fatalf("SetApiKey(\"\"): %v", err)
+	}
+	if got := svc.GetApiKey(); got != "" {
+		t.Errorf("清除后应为空，实际 %q", got)
 	}
 }

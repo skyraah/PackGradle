@@ -35,6 +35,20 @@ export function Detect(): $CancellablePromise<$models.ToolInfo[] | null> {
 }
 
 /**
+ * GetApiKey 返回已保存的 CurseForge API Key（未配置时为空串）
+ */
+export function GetApiKey(): $CancellablePromise<string> {
+    return $Call.ByID(75487941);
+}
+
+/**
+ * SetApiKey 保存用户填写的 CurseForge API Key（空串清除）
+ */
+export function SetApiKey(key: string): $CancellablePromise<void> {
+    return $Call.ByID(2903942985, key);
+}
+
+/**
  * SetToolPath 保存用户手动指定的工具路径（空串清除），返回最新检测结果
  */
 export function SetToolPath(name: string, path: string): $CancellablePromise<$models.ToolInfo[] | null> {

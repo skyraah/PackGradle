@@ -105,7 +105,29 @@ async function saveAllMissing() {
     dismissed.value = true
 }
 
-onMounted(load)
+// CurseForge API Key 配置
+const apiKey = ref('')
+const apiKeyVisible = ref(false)
+const savingKey = ref(false)
+
+async function saveApiKey() {
+    savingKey.value = true
+    try {
+        await EnvService.SetApiKey(apiKey.value)
+        snackbarMsg.value = apiKey.value ? '已保存 CurseForge API Key' : '已清除 CurseForge API Key'
+        snackbar.value = true
+    } catch (e) {
+        snackbarMsg.value = String(e)
+        snackbar.value = true
+    } finally {
+        savingKey.value = false
+    }
+}
+
+onMounted(async () => {
+    await load()
+    apiKey.value = (await EnvService.GetApiKey()) ?? ''
+})
 </script>
 
 <template>
@@ -177,6 +199,42 @@ onMounted(load)
                 </v-card>
             </v-col>
         </v-row>
+
+        <v-card class="mt-4">
+            <v-card-title class="d-flex align-center">
+                <v-icon icon="mdi-key-outline" color="amber" class="mr-2" />
+                CurseForge API Key
+                <v-chip v-if="apiKey" size="x-small" color="success" class="ml-3">已配置</v-chip>
+                <v-chip v-else size="x-small" color="grey" class="ml-3">未配置</v-chip>
+            </v-card-title>
+            <v-card-text>
+                <div class="text-body-2 text-medium-emphasis mb-2">
+                    用于按需查询 mod 版本与更新信息（如获取 mod 版本号），可在 CurseForge 开发者后台免费申请。
+                </div>
+                <v-text-field
+                    v-model="apiKey"
+                    :type="apiKeyVisible ? 'text' : 'password'"
+                    label="CurseForge API Key（留空并保存可清除）"
+                    placeholder="粘贴你的 API Key"
+                    variant="outlined"
+                    density="compact"
+                    hide-details="auto"
+                    clearable
+                    @keyup.enter="saveApiKey"
+                >
+                    <template #append>
+                        <v-btn
+                            size="small"
+                            variant="text"
+                            :icon="apiKeyVisible ? 'mdi-eye-off-outline' : 'mdi-eye-outline'"
+                            title="显示/隐藏"
+                            @click="apiKeyVisible = !apiKeyVisible"
+                        />
+                        <v-btn size="small" variant="tonal" :loading="savingKey" @click="saveApiKey">保存</v-btn>
+                    </template>
+                </v-text-field>
+            </v-card-text>
+        </v-card>
 
         <!-- 未找到工具时的引导弹窗 -->
         <v-dialog
