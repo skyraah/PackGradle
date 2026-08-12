@@ -183,9 +183,13 @@ func TestLinkProject(t *testing.T) {
 	if err := svc.LinkProject(proj, "Collapse"); err != nil {
 		t.Fatal(err)
 	}
-	link, ok := cm.FindLink(proj)
-	if !ok || link.Instance != "Collapse" {
-		t.Fatalf("关联应持久化，实际 %+v ok=%v", link, ok)
+	// 关联应持久化在项目目录下的 packgradle.toml（而非全局 config）
+	pc, err := appconfig.LoadProjectConfig(cm.Get().Projects[0].Path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if pc.Instance != "Collapse" {
+		t.Fatalf("关联应持久化到项目 packgradle.toml，实际 %+v", pc)
 	}
 	views := svc.GetLinks()
 	if len(views) != 1 || views[0].InstanceName != "Collapse" || !views[0].InstanceValid {
@@ -228,11 +232,15 @@ func TestUnlinkProject(t *testing.T) {
 	if err := svc.UnlinkProject(proj); err != nil {
 		t.Fatal(err)
 	}
-	if _, ok := cm.FindLink(proj); ok {
-		t.Error("解除后关联不应存在")
+	pc, err := appconfig.LoadProjectConfig(cm.Get().Projects[0].Path)
+	if err != nil {
+		t.Fatal(err)
 	}
-	if got := cm.FindDirLinks(proj); len(got) != 0 {
-		t.Errorf("解除后目录关联应清空，实际 %+v", got)
+	if pc.Instance != "" {
+		t.Error("解除后关联应清除")
+	}
+	if len(pc.DirLinks) != 0 {
+		t.Errorf("解除后目录关联应清空，实际 %+v", pc.DirLinks)
 	}
 	// 未关联时解除报错
 	if err := svc.UnlinkProject(proj); errs.CodeOf(err) != "err.link.not_found" {
@@ -245,8 +253,9 @@ func TestGetLinksInstanceInvalid(t *testing.T) {
 	cm := newTestConfig(t)
 	svc := NewPrismService(cm)
 	proj := makeProject(t, cm, "Proj")
-	// 直接写 config 关联一个不存在的实例
-	if err := cm.SetLink(appconfig.ProjectLink{Project: proj, Instance: "gone"}); err != nil {
+	// 直接写项目 packgradle.toml 关联一个不存在的实例
+	entry, _ := cm.FindProject(proj)
+	if err := appconfig.SaveProjectConfig(entry.Path, appconfig.ProjectConfig{Instance: "gone"}); err != nil {
 		t.Fatal(err)
 	}
 	views := svc.GetLinks()

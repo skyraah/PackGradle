@@ -1,6 +1,7 @@
 package appconfig
 
 import (
+	"os"
 	"path/filepath"
 	"testing"
 )
@@ -104,60 +105,76 @@ func TestConfigSetToolPath(t *testing.T) {
 	}
 }
 
-// 项目 ↔ 实例关联的增改查删与磁盘持久化
-func TestConfigLinks(t *testing.T) {
-	m := newTestConfig(t)
-	if err := m.SetLink(ProjectLink{Project: "A", Instance: "inst-a"}); err != nil {
+// 项目级配置（packgradle.toml）的读写与磁盘持久化
+func TestProjectConfigReadWrite(t *testing.T) {
+	dir := t.TempDir()
+	pc := ProjectConfig{Instance: "inst-a"}
+	pc.DirLinks = append(pc.DirLinks, ProjectDirLink{ProjectDir: "config", InstanceDir: "config"})
+	if err := SaveProjectConfig(dir, pc); err != nil {
 		t.Fatal(err)
 	}
-	if err := m.SetLink(ProjectLink{Project: "B", Instance: "inst-b"}); err != nil {
+	// 文件应位于项目根目录，与 pack.toml 同层
+	if _, err := os.Stat(filepath.Join(dir, "packgradle.toml")); err != nil {
+		t.Error("packgradle.toml 应位于项目根目录")
+	}
+	got, err := LoadProjectConfig(dir)
+	if err != nil {
 		t.Fatal(err)
 	}
-	// 同名项目覆盖
-	if err := m.SetLink(ProjectLink{Project: "A", Instance: "inst-a2"}); err != nil {
-		t.Fatal(err)
-	}
-	if got := m.Get().Links; len(got) != 2 {
-		t.Fatalf("应有 2 条关联，实际 %d: %+v", len(got), got)
-	}
-	link, ok := m.FindLink("A")
-	if !ok || link.Instance != "inst-a2" {
-		t.Errorf("A 应关联 inst-a2，实际 %+v ok=%v", link, ok)
-	}
-	if err := m.RemoveLink("A"); err != nil {
-		t.Fatal(err)
-	}
-	if _, ok := m.FindLink("A"); ok {
-		t.Error("移除后 A 不应存在")
+	if got.Instance != "inst-a" || len(got.DirLinks) != 1 || got.DirLinks[0].ProjectDir != "config" {
+		t.Errorf("读取结果错误: %+v", got)
 	}
 }
 
-// 目录关联对的增删查
-func TestConfigDirLinks(t *testing.T) {
+// 项目级配置：文件不存在时返回零值（未关联）
+func TestProjectConfigMissing(t *testing.T) {
+	got, err := LoadProjectConfig(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Instance != "" || len(got.DirLinks) != 0 {
+		t.Errorf("缺失文件应返回零值，实际 %+v", got)
+	}
+}
+
+// 旧版全局 [[links]]/[[dir_links]] 一次性迁移到项目级 packgradle.toml
+func TestMigrateLegacyProjectConfigs(t *testing.T) {
 	m := newTestConfig(t)
-	if err := m.AddDirLink(DirLink{Project: "A", Instance: "inst-a", ProjectDir: "config", InstanceDir: "config"}); err != nil {
+	projDir := t.TempDir()
+	m.cfg.Projects = []ProjectEntry{{Name: "A", Path: projDir}}
+	m.cfg.LegacyLinks = []legacyLink{{Project: "A", Instance: "inst-a"}}
+	m.cfg.LegacyDirLinks = []legacyDirLink{
+		{Project: "A", Instance: "inst-a", ProjectDir: "config", InstanceDir: "config"},
+		{Project: "A", Instance: "inst-a", ProjectDir: "kubejs", InstanceDir: "kubejs"},
+	}
+	if err := m.MigrateLegacyProjectConfigs(); err != nil {
 		t.Fatal(err)
 	}
-	if err := m.AddDirLink(DirLink{Project: "A", Instance: "inst-a", ProjectDir: "kubejs", InstanceDir: "kubejs"}); err != nil {
+	pc, err := LoadProjectConfig(projDir)
+	if err != nil {
 		t.Fatal(err)
 	}
-	// 同项目同目录覆盖
-	if err := m.AddDirLink(DirLink{Project: "A", Instance: "inst-a", ProjectDir: "config", InstanceDir: "configs"}); err != nil {
+	if pc.Instance != "inst-a" || len(pc.DirLinks) != 2 {
+		t.Errorf("项目级配置应包含迁移数据，实际 %+v", pc)
+	}
+	// 全局旧字段应清空并落盘
+	if len(m.cfg.LegacyLinks) != 0 || len(m.cfg.LegacyDirLinks) != 0 {
+		t.Errorf("迁移后全局旧字段应清空: %+v", m.cfg)
+	}
+	// 幂等：再次执行无副作用
+	if err := m.MigrateLegacyProjectConfigs(); err != nil {
 		t.Fatal(err)
 	}
-	got := m.FindDirLinks("A")
-	if len(got) != 2 {
-		t.Fatalf("应有 2 条目录关联，实际 %d: %+v", len(got), got)
-	}
-	for _, l := range got {
-		if l.ProjectDir == "config" && l.InstanceDir != "configs" {
-			t.Errorf("config 应覆盖为 configs: %+v", l)
-		}
-	}
-	if err := m.RemoveDirLink("A", "config"); err != nil {
+}
+
+// 迁移时项目已不存在则跳过
+func TestMigrateLegacySkipsMissingProject(t *testing.T) {
+	m := newTestConfig(t)
+	m.cfg.LegacyLinks = []legacyLink{{Project: "Gone", Instance: "inst-a"}}
+	if err := m.MigrateLegacyProjectConfigs(); err != nil {
 		t.Fatal(err)
 	}
-	if got := m.FindDirLinks("A"); len(got) != 1 {
-		t.Errorf("移除后应剩 1 条，实际 %d", len(got))
+	if len(m.cfg.LegacyLinks) != 0 {
+		t.Error("不存在的项目应跳过且清空旧字段")
 	}
 }

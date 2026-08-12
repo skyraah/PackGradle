@@ -37,6 +37,10 @@ func main() {
 	if err != nil {
 		log.Fatalf("初始化配置失败: %v", err)
 	}
+	// 旧版全局 [[links]]/[[dir_links]] 一次性迁移到项目级 packgradle.toml
+	if err := config.MigrateLegacyProjectConfigs(); err != nil {
+		log.Printf("迁移旧版项目关联配置失败: %v", err)
+	}
 
 	// 创建 Wails 应用。'Bind' 中注册的 Go 服务方法可供前端直接调用。
 	app := application.New(application.Options{

@@ -14,21 +14,24 @@ type ProjectEntry struct {
 	Path string `toml:"path"` // pack.toml 所在目录
 }
 
-// ProjectLink 是「packwiz 项目 → Prism 实例」的对应关系（一项目一实例）
-type ProjectLink struct {
-	Project  string `toml:"project"`  // packwiz 项目名
-	Instance string `toml:"instance"` // Prism 实例 ID（实例目录名）
+// legacyLink 是旧版全局 config.toml 中的项目 ↔ 实例关联（已迁移至项目级 packgradle.toml，
+// 此处仅用于一次性迁移读取）
+type legacyLink struct {
+	Project  string `toml:"project"`
+	Instance string `toml:"instance"`
 }
 
-// DirLink 是一个「项目目录 ↔ 实例目录」的同步关联对（junction 目标，如 config/kubejs）
-type DirLink struct {
-	Project     string `toml:"project"`     // packwiz 项目名
-	Instance    string `toml:"instance"`    // Prism 实例 ID
-	ProjectDir  string `toml:"project_dir"` // 项目根下目录名（如 config）
-	InstanceDir string `toml:"instance_dir"` // 实例游戏目录（minecraft/）下相对路径（默认与 ProjectDir 同名）
+// legacyDirLink 是旧版全局 config.toml 中的目录同步关联（同上一并迁移）
+type legacyDirLink struct {
+	Project     string `toml:"project"`
+	Instance    string `toml:"instance"`
+	ProjectDir  string `toml:"project_dir"`
+	InstanceDir string `toml:"instance_dir"`
 }
 
-// Config 是持久化在 %AppData%\PackGradle\config.toml 中的应用配置
+// Config 是持久化在 %AppData%\PackGradle\config.toml 中的应用全局配置。
+// 项目相关的配置（实例关联、目录同步关联）存放于各项目目录下的 packgradle.toml，
+// 不进入全局配置。
 type Config struct {
 	// 用户手动指定的工具路径（覆盖自动检测）
 	PackwizPath string         `toml:"packwiz_path"`
@@ -38,12 +41,11 @@ type Config struct {
 	PrismInstancesPath string `toml:"prism_instances_path"`
 	// 程序自动检测到的 Prism 实例根目录（回写持久化，供查看/修改）
 	PrismInstancesDir string `toml:"prism_instances_dir"`
-	// packwiz 项目 ↔ Prism 实例 关联
-	Links []ProjectLink `toml:"links"`
-	// 项目目录 ↔ 实例目录 同步关联对（junction）
-	DirLinks []DirLink `toml:"dir_links"`
 	// 用户自行填写的 CurseForge API Key（用于按需查询 mod 版本等）
 	CurseforgeApiKey string `toml:"curseforge_api_key"`
+	// 旧版字段（v1）：项目 ↔ 实例关联与目录同步关联，启动时一次性迁移到项目级配置后清空
+	LegacyLinks    []legacyLink    `toml:"links"`
+	LegacyDirLinks []legacyDirLink `toml:"dir_links"`
 }
 
 // ConfigManager 负责配置文件的读写，所有服务共享同一实例
@@ -168,80 +170,50 @@ func (m *ConfigManager) SetPrismInstancesDir(dir string) error {
 	return m.save()
 }
 
-// SetLink 保存项目 → 实例关联（同名项目覆盖，一项目一实例）
-func (m *ConfigManager) SetLink(link ProjectLink) error {
+// MigrateLegacyProjectConfigs 将旧版全局 config.toml 中的 [[links]] / [[dir_links]]
+// 一次性迁移到各项目目录下的 packgradle.toml，随后清空全局旧字段。
+// 幂等：无旧数据时直接返回 nil。
+func (m *ConfigManager) MigrateLegacyProjectConfigs() error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	for i := range m.cfg.Links {
-		if m.cfg.Links[i].Project == link.Project {
-			m.cfg.Links[i] = link
-			return m.save()
+	if len(m.cfg.LegacyLinks) == 0 && len(m.cfg.LegacyDirLinks) == 0 {
+		return nil
+	}
+	for _, l := range m.cfg.LegacyLinks {
+		entry, ok := findProjectEntry(m.cfg.Projects, l.Project)
+		if !ok {
+			continue // 项目已不存在，跳过
+		}
+		pc, err := LoadProjectConfig(entry.Path)
+		if err != nil {
+			return err
+		}
+		if pc.Instance == "" {
+			pc.Instance = l.Instance
+		}
+		for _, dl := range m.cfg.LegacyDirLinks {
+			if dl.Project == l.Project {
+				pc.DirLinks = append(pc.DirLinks, ProjectDirLink{
+					ProjectDir:  dl.ProjectDir,
+					InstanceDir: dl.InstanceDir,
+				})
+			}
+		}
+		if err := SaveProjectConfig(entry.Path, pc); err != nil {
+			return err
 		}
 	}
-	m.cfg.Links = append(m.cfg.Links, link)
+	m.cfg.LegacyLinks = nil
+	m.cfg.LegacyDirLinks = nil
 	return m.save()
 }
 
-// RemoveLink 按项目名解除关联（不存在时静默成功）
-func (m *ConfigManager) RemoveLink(project string) error {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	out := m.cfg.Links[:0]
-	for _, l := range m.cfg.Links {
-		if l.Project != project {
-			out = append(out, l)
+// findProjectEntry 在项目列表中按名称查找
+func findProjectEntry(projects []ProjectEntry, name string) (ProjectEntry, bool) {
+	for _, p := range projects {
+		if p.Name == name {
+			return p, true
 		}
 	}
-	m.cfg.Links = out
-	return m.save()
-}
-
-// FindLink 按项目名查找关联
-func (m *ConfigManager) FindLink(project string) (ProjectLink, bool) {
-	for _, l := range m.Get().Links {
-		if l.Project == project {
-			return l, true
-		}
-	}
-	return ProjectLink{}, false
-}
-
-// AddDirLink 添加目录关联对（同项目同目录名时覆盖）
-func (m *ConfigManager) AddDirLink(link DirLink) error {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	for i := range m.cfg.DirLinks {
-		if m.cfg.DirLinks[i].Project == link.Project && m.cfg.DirLinks[i].ProjectDir == link.ProjectDir {
-			m.cfg.DirLinks[i] = link
-			return m.save()
-		}
-	}
-	m.cfg.DirLinks = append(m.cfg.DirLinks, link)
-	return m.save()
-}
-
-// RemoveDirLink 移除目录关联对
-func (m *ConfigManager) RemoveDirLink(project, projectDir string) error {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	out := m.cfg.DirLinks[:0]
-	for _, l := range m.cfg.DirLinks {
-		if l.Project == project && l.ProjectDir == projectDir {
-			continue
-		}
-		out = append(out, l)
-	}
-	m.cfg.DirLinks = out
-	return m.save()
-}
-
-// FindDirLinks 返回某项目的全部目录关联对
-func (m *ConfigManager) FindDirLinks(project string) []DirLink {
-	var out []DirLink
-	for _, l := range m.Get().DirLinks {
-		if l.Project == project {
-			out = append(out, l)
-		}
-	}
-	return out
+	return ProjectEntry{}, false
 }

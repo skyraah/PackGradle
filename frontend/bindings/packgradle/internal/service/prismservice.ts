@@ -39,7 +39,8 @@ export function GetInstancesPath(): $CancellablePromise<string> {
 }
 
 /**
- * GetLinks 返回全部项目 ↔ 实例关联的组装视图（实时扫描实例，实例被删时标记失效）
+ * GetLinks 返回全部项目 ↔ 实例关联的组装视图（读取各项目 packgradle.toml，
+ * 实时扫描实例，实例被删时标记失效）
  */
 export function GetLinks(): $CancellablePromise<prism$0.LinkView[] | null> {
     return $Call.ByID(1627354796);
@@ -54,7 +55,7 @@ export function InstancesDir(): $CancellablePromise<string> {
 
 /**
  * LinkProject 关联 packwiz 项目到 Prism 实例（一项目一实例，重复关联覆盖）。
- * 实例须存在于当前实例目录（关联目录地址持久化在 config.toml 的 [[links]]）。
+ * 实例须存在于当前实例目录；关联持久化在项目目录下的 packgradle.toml。
  */
 export function LinkProject(projectName: string, instanceID: string): $CancellablePromise<void> {
     return $Call.ByID(968070894, projectName, instanceID);
