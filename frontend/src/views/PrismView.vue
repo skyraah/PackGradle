@@ -410,6 +410,7 @@ async function confirmPullMeta() {
     try {
         const count = await PrismService.PullMeta(link.project, '')
         show(t('prism.metaPulled', [count ?? 0]))
+        await load() // 刷新当前页（实例/关联列表）
         bumpProjectsVersion() // 拉取改变了项目 mods，通知项目列表刷新
     } catch (e) {
         show(errText(e))
@@ -451,6 +452,7 @@ async function confirmPullOne() {
     try {
         await PrismService.PullMeta(diffProject.value, id)
         show(t('prism.metaOneDone', [t('prism.metaPullOne'), id]))
+        await load() // 刷新当前页（实例/关联列表）
         bumpProjectsVersion() // 拉取改变了项目 mods，通知项目列表刷新
         await refreshDiff()
     } catch (e) {
