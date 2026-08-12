@@ -102,6 +102,15 @@ export function ListDirLinks(projectName: string): $CancellablePromise<prism$0.D
 }
 
 /**
+ * ListInstanceDirFiles 递归列出实例侧游戏目录 <dir> 下的文件（相对 dir，排除隐藏项），
+ * 供文件级同步从目标侧选择要纳入同步的文件。
+ * 实例侧目录是 junction（整目录模式）时返回空列表——此时两侧为同一物理目录，无需选择。
+ */
+export function ListInstanceDirFiles(projectName: string, dir: string): $CancellablePromise<string[] | null> {
+    return $Call.ByID(2111168812, projectName, dir);
+}
+
+/**
  * ListInstances 返回 Prism 实例列表。
  * 定位链：%APPDATA%\PrismLauncher（配置文件所在）→ prismlauncher.cfg 的 InstanceDir
  * → 扫描实例目录。单个实例解析失败不中断列表（错误落入 Instance.Error），
@@ -136,6 +145,18 @@ export function ManualLinkDir(projectName: string, dir: string): $CancellablePro
  */
 export function RemoveDirLink(projectName: string, projectDir: string): $CancellablePromise<void> {
     return $Call.ByID(2816067440, projectName, projectDir);
+}
+
+/**
+ * SelectInstanceFiles 将实例侧选中的文件纳入文件级同步：
+ *  1. 从实例侧移动到项目目录（成为项目权威内容；项目侧已有同名文件时跳过不覆盖）
+ *  2. 移动后从项目目录建硬链接回实例侧（同步生效）
+ *  3. 记录到文件清单（mode=files）
+ * 
+ * 实例侧目录为 junction（整目录模式）时拒绝——需先切换为文件级同步。
+ */
+export function SelectInstanceFiles(projectName: string, dir: string, files: string[] | null): $CancellablePromise<prism$0.LinkResult[] | null> {
+    return $Call.ByID(3318395977, projectName, dir, files);
 }
 
 /**

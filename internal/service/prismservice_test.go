@@ -850,3 +850,131 @@ func TestSetDirLinkModeSwitch(t *testing.T) {
 		t.Errorf("非法模式应报错，实际 %v", err)
 	}
 }
+
+// 从实例侧选择文件纳入文件级同步：移动 → 硬链接 → 清单记录
+func TestSelectInstanceFiles(t *testing.T) {
+	_, _ = makePrismFixture(t)
+	cm := newTestConfig(t)
+	svc := newPrismServiceWithMemory(cm)
+	proj, _ := makeLinkProject(t, cm, "Collapse")
+	entry, _ := cm.FindProject(proj)
+	// 项目侧 config 只有 a.cfg
+	mustWriteFile(t, filepath.Join(entry.Path, "config", "a.cfg"), "project-a")
+	if err := svc.LinkProject(proj, "Collapse"); err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.AddDirLink(proj, "config"); err != nil {
+		t.Fatal(err)
+	}
+	// 实例侧 config 有游戏生成内容
+	instancesDir, _ := svc.InstancesDir()
+	gameDir := filepath.Join(instancesDir, "Collapse", "minecraft")
+	mustWriteFile(t, filepath.Join(gameDir, "config", "game.cfg"), "game-data")
+	mustWriteFile(t, filepath.Join(gameDir, "config", "local.cfg"), "local-data")
+
+	// 实例侧列表
+	files, err := svc.ListInstanceDirFiles(proj, "config")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(files) != 2 || files[0] != "game.cfg" || files[1] != "local.cfg" {
+		t.Errorf("实例侧列表错误: %v", files)
+	}
+
+	// 选择 game.cfg 纳入同步（local.cfg 保持实例侧独立）
+	results, err := svc.SelectInstanceFiles(proj, "config", []string{"game.cfg"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(results) != 1 || results[0].Status != "linked" {
+		t.Fatalf("选择结果错误: %+v", results)
+	}
+	// 文件已移动到项目目录
+	if data, _ := os.ReadFile(filepath.Join(entry.Path, "config", "game.cfg")); string(data) != "game-data" {
+		t.Error("game.cfg 应移动到项目目录")
+	}
+	// 实例侧仍是可读（硬链接）
+	fi1, _ := os.Stat(filepath.Join(entry.Path, "config", "game.cfg"))
+	fi2, _ := os.Stat(filepath.Join(gameDir, "config", "game.cfg"))
+	if !os.SameFile(fi1, fi2) {
+		t.Error("game.cfg 应为硬链接（同一文件）")
+	}
+	// 未选择的 local.cfg 保留在实例侧独立
+	if _, err := os.Stat(filepath.Join(gameDir, "config", "local.cfg")); err != nil {
+		t.Error("local.cfg 应保留在实例侧")
+	}
+	// 配置：files 模式 + 清单
+	pc, _ := appconfig.LoadProjectConfig(entry.Path)
+	if pc.DirLinks[0].Mode != "files" || len(pc.DirLinks[0].Files) != 1 {
+		t.Errorf("配置错误: %+v", pc.DirLinks[0])
+	}
+}
+
+// 选择文件时的冲突与校验
+func TestSelectInstanceFilesValidation(t *testing.T) {
+	_, _ = makePrismFixture(t)
+	cm := newTestConfig(t)
+	svc := newPrismServiceWithMemory(cm)
+	proj, _ := makeLinkProject(t, cm, "Collapse")
+	entry, _ := cm.FindProject(proj)
+	mustWriteFile(t, filepath.Join(entry.Path, "config", "dup.cfg"), "project-dup")
+	if err := svc.LinkProject(proj, "Collapse"); err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.AddDirLink(proj, "config"); err != nil {
+		t.Fatal(err)
+	}
+	instancesDir, _ := svc.InstancesDir()
+	gameDir := filepath.Join(instancesDir, "Collapse", "minecraft")
+	mustWriteFile(t, filepath.Join(gameDir, "config", "dup.cfg"), "instance-dup")
+	mustWriteFile(t, filepath.Join(gameDir, "config", "new.cfg"), "new")
+
+	// 项目侧已有同名 → 跳过（保留项目侧）
+	results, err := svc.SelectInstanceFiles(proj, "config", []string{"dup.cfg", "new.cfg"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	byName := map[string]prism.LinkResult{}
+	for _, r := range results {
+		byName[r.Name] = r
+	}
+	if byName["config/dup.cfg"].Status != "skipped" {
+		t.Errorf("同名冲突应跳过: %+v", byName["config/dup.cfg"])
+	}
+	if byName["config/new.cfg"].Status != "linked" {
+		t.Errorf("新文件应纳入: %+v", byName["config/new.cfg"])
+	}
+	if data, _ := os.ReadFile(filepath.Join(entry.Path, "config", "dup.cfg")); string(data) != "project-dup" {
+		t.Error("项目侧同名文件不应被覆盖")
+	}
+}
+
+// 实例侧目录是 junction（整目录模式）时拒绝文件选择
+func TestSelectInstanceFilesJunctionRejected(t *testing.T) {
+	_, _ = makePrismFixture(t)
+	cm := newTestConfig(t)
+	mem := junction.NewMemoryManager()
+	svc := &PrismService{config: cm, junctions: mem}
+	proj, _ := makeLinkProject(t, cm, "Collapse")
+	entry, _ := cm.FindProject(proj)
+	mustWriteFile(t, filepath.Join(entry.Path, "config", "a.cfg"), "a")
+	if err := svc.LinkProject(proj, "Collapse"); err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.AddDirLink(proj, "config"); err != nil {
+		t.Fatal(err)
+	}
+	// 建整目录 junction
+	if _, err := svc.CreateAllLinks(proj); err != nil {
+		t.Fatal(err)
+	}
+	// 此时实例侧 config 是 junction：选择文件应被拒绝
+	if _, err := svc.SelectInstanceFiles(proj, "config", []string{"a.cfg"}); errs.CodeOf(err) != "err.sync.dir_is_junction" {
+		t.Errorf("junction 模式应拒绝选择，实际 %v", err)
+	}
+	// 实例侧列表也应返回空
+	files, _ := svc.ListInstanceDirFiles(proj, "config")
+	if len(files) != 0 {
+		t.Errorf("junction 模式实例侧列表应为空，实际 %v", files)
+	}
+}

@@ -313,27 +313,40 @@ async function confirmManualLink() {
     }
 }
 
-// 文件级同步：打开文件选择对话框（加载项目目录全部文件 + 当前勾选）
+// 文件级同步：打开文件选择对话框（从实例侧读取文件列表 + 当前勾选）
 async function openFileSelect(dl: DirLinkView) {
     fileSelectProject.value = dl.project
     fileSelectDir.value = dl.project_dir
-    allFiles.value = (await PrismService.ListDirFiles(dl.project, dl.project_dir)) ?? []
+    allFiles.value = (await PrismService.ListInstanceDirFiles(dl.project, dl.project_dir)) ?? []
     selectedFiles.value = [...(dl.files ?? [])]
     fileSelectDialog.value = true
 }
 
-// 保存文件清单（自动切换为文件级同步并重建链接）
+// 保存：勾选文件移动到项目目录并硬链接同步
 async function saveFileSelect() {
     savingFiles.value = true
     try {
-        await PrismService.SetDirLinkFiles(fileSelectProject.value, fileSelectDir.value, selectedFiles.value)
-        show(t('prism.dirLinkFilesSaved', [fileSelectDir.value]))
+        const results = (await PrismService.SelectInstanceFiles(fileSelectProject.value, fileSelectDir.value, selectedFiles.value)) ?? []
+        const ok = results.filter(r => r.status === 'linked').length
+        const skipped = results.filter(r => r.status === 'skipped').length
+        show(t('prism.dirLinkSelectDone', [ok, skipped]))
         fileSelectDialog.value = false
         await refreshDirLinks()
     } catch (e) {
         show(errText(e))
     } finally {
         savingFiles.value = false
+    }
+}
+
+// 从整目录切到文件级同步
+async function switchToFiles(dl: DirLinkView) {
+    try {
+        await PrismService.SetDirLinkMode(dl.project, dl.project_dir, 'files')
+        show(t('prism.dirLinkModeFiles'))
+        await refreshDirLinks()
+    } catch (e) {
+        show(errText(e))
     }
 }
 
@@ -682,12 +695,22 @@ onMounted(async () => {
                                     {{ t('prism.parseFailed') }}
                                 </v-chip>
                                 <v-btn
+                                    v-if="dl.mode === 'files'"
                                     size="small"
                                     variant="text"
                                     class="mr-1"
                                     @click="openFileSelect(dl)"
                                 >
                                     {{ t('prism.dirLinkFilesBtn') }}
+                                </v-btn>
+                                <v-btn
+                                    v-if="dl.mode !== 'files'"
+                                    size="small"
+                                    variant="text"
+                                    class="mr-1"
+                                    @click="switchToFiles(dl)"
+                                >
+                                    {{ t('prism.dirLinkSwitchFiles') }}
                                 </v-btn>
                                 <v-btn
                                     v-if="dl.mode === 'files'"
