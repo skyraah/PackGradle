@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted, ref } from 'vue'
+import { onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { Dialogs } from '@wailsio/runtime'
 import { PackwizService } from '../../bindings/packgradle/internal/service'
@@ -8,6 +8,7 @@ import { useSnackbar } from '../composables/useSnackbar'
 import { useApiKeyGuide } from '../composables/useApiKeyGuide'
 import { errText, displayText } from '../utils/errors'
 import { isCfMod, cfReleaseKey, cfDateText, loaderChips, sideColors } from '../utils/cf'
+import { projectsVersion } from '../nav'
 
 const { t } = useI18n()
 
@@ -190,6 +191,11 @@ async function applyAllUpdates() {
 }
 
 onMounted(load)
+
+// 跨视图数据变更（如 Prism 联动页拉取 meta 改变项目 mods）后自动刷新列表
+watch(projectsVersion, () => {
+    void load()
+})
 </script>
 
 <template>

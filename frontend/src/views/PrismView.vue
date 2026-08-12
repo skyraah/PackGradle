@@ -8,7 +8,7 @@ import type { PackProject } from '../../bindings/packgradle/internal/packwiz'
 import { useSnackbar } from '../composables/useSnackbar'
 import { displayText, errText, errorCode } from '../utils/errors'
 import { loaderChips } from '../utils/cf'
-import { navigate } from '../nav'
+import { navigate, bumpProjectsVersion } from '../nav'
 
 const { t } = useI18n()
 
@@ -410,6 +410,7 @@ async function confirmPullMeta() {
     try {
         const count = await PrismService.PullMeta(link.project, '')
         show(t('prism.metaPulled', [count ?? 0]))
+        bumpProjectsVersion() // 拉取改变了项目 mods，通知项目列表刷新
     } catch (e) {
         show(errText(e))
     } finally {
@@ -450,6 +451,7 @@ async function confirmPullOne() {
     try {
         await PrismService.PullMeta(diffProject.value, id)
         show(t('prism.metaOneDone', [t('prism.metaPullOne'), id]))
+        bumpProjectsVersion() // 拉取改变了项目 mods，通知项目列表刷新
         await refreshDiff()
     } catch (e) {
         show(errText(e))
