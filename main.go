@@ -9,6 +9,7 @@ import (
 	"packgradle/internal/appconfig"
 	"packgradle/internal/errs"
 	"packgradle/internal/service"
+	"packgradle/internal/singleinstance"
 
 	"github.com/wailsapp/wails/v3/pkg/application"
 )
@@ -33,6 +34,12 @@ func marshalError(err error) []byte {
 }
 
 func main() {
+	// 单实例防护：多实例并存会各自持有 config 内存状态、写盘互相覆盖
+	// （表现为删除项目后配置复活），检测到已有实例时提示并退出
+	if !singleinstance.Acquire(`Local\PackGradle_SingleInstance`) {
+		singleinstance.NotifyAlreadyRunning()
+	}
+
 	config, err := appconfig.NewConfigManager()
 	if err != nil {
 		log.Fatalf("初始化配置失败: %v", err)
