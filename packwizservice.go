@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"syscall"
 
 	"github.com/BurntSushi/toml"
 )
@@ -121,6 +122,7 @@ func (s *PackwizService) RefreshProject(name string) RefreshResult {
 	}
 	cmd := exec.Command(packwiz, "refresh")
 	cmd.Dir = projectDir
+	cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true} // GUI 程序下隐藏子进程控制台窗口
 	out, err := cmd.CombinedOutput()
 	return RefreshResult{OK: err == nil, Output: strings.TrimSpace(string(out))}
 }

@@ -16,3 +16,4 @@ build/android/app/build/
 build/android/build/
 # Wails 构建产物
 *.syso
+/packgradle.exe

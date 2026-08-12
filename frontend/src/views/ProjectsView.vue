@@ -3,6 +3,7 @@ import { onMounted, ref } from 'vue'
 import { Dialogs } from '@wailsio/runtime'
 import { PackwizService } from '../../bindings/packgradle'
 import type { PackProject, ModInfo, UpdateCheckResult } from '../../bindings/packgradle/models'
+import { navigate } from '../nav'
 
 const projects = ref<PackProject[]>([])
 const loading = ref(false)
@@ -103,6 +104,31 @@ function loaderChip(loader: string) {
 // —— CurseForge 版本获取 ——
 const fetching = ref<string | null>(null) // 单行获取中的 mod id
 const fetchingAll = ref<string | null>(null) // 批量获取中的项目名
+const apiKeyDialog = ref(false) // 未配置/无效 API Key 的引导弹窗
+
+// 稳健提取 Wails 调用错误信息（兼容 Error / string / 对象等形态）
+function errText(e: unknown): string {
+    if (e instanceof Error) return e.message
+    if (typeof e === 'string') return e
+    if (e && typeof e === 'object' && 'message' in e) return String((e as { message: unknown }).message)
+    return String(e)
+}
+
+// 统一错误处理：涉及 API Key 的问题弹窗引导配置，其余用 snackbar 提示
+function handleError(e: unknown) {
+    const msg = errText(e)
+    if (msg.includes('API Key')) {
+        apiKeyDialog.value = true
+        return
+    }
+    snackbarMsg.value = msg
+    snackbar.value = true
+}
+
+function goConfigApiKey() {
+    apiKeyDialog.value = false
+    navigate('env')
+}
 
 function isCfMod(mod: ModInfo): boolean {
     return (mod.cf_project_id ?? 0) > 0 && (mod.cf_file_id ?? 0) > 0
@@ -128,8 +154,7 @@ async function fetchModVersion(proj: PackProject, mod: ModInfo) {
         snackbarMsg.value = `已获取「${updated?.name ?? mod.name}」版本`
         snackbar.value = true
     } catch (e) {
-        snackbarMsg.value = String(e)
-        snackbar.value = true
+        handleError(e)
     } finally {
         fetching.value = null
     }
@@ -144,8 +169,7 @@ async function fetchAllVersions(proj: PackProject) {
         snackbar.value = true
         await load()
     } catch (e) {
-        snackbarMsg.value = String(e)
-        snackbar.value = true
+        handleError(e)
     } finally {
         fetchingAll.value = null
     }
@@ -437,6 +461,24 @@ onMounted(load)
                     >
                         应用全部更新
                     </v-btn>
+                </v-card-actions>
+            </v-card>
+        </v-dialog>
+
+        <v-dialog v-model="apiKeyDialog" max-width="480">
+            <v-card>
+                <v-card-title class="d-flex align-center">
+                    <v-icon icon="mdi-key-alert-outline" color="warning" class="mr-2" />
+                    需要 CurseForge API Key
+                </v-card-title>
+                <v-card-text>
+                    获取 mod 版本信息需要有效的 CurseForge API Key。请前往「环境配置」页面填写你的
+                    API Key（可在 CurseForge 开发者后台免费申请）。
+                </v-card-text>
+                <v-card-actions>
+                    <v-spacer />
+                    <v-btn variant="text" @click="apiKeyDialog = false">关闭</v-btn>
+                    <v-btn color="primary" variant="tonal" @click="goConfigApiKey">去配置 API Key</v-btn>
                 </v-card-actions>
             </v-card>
         </v-dialog>

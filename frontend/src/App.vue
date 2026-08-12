@@ -1,10 +1,7 @@
 <script setup lang="ts">
-import { ref } from 'vue'
 import EnvView from './views/EnvView.vue'
 import ProjectsView from './views/ProjectsView.vue'
-
-type ViewKey = 'env' | 'projects'
-const current = ref<ViewKey>('env')
+import { currentView, type ViewKey } from './nav'
 
 const navItems = [
     { key: 'env' as ViewKey, title: '环境配置', icon: 'mdi-tune-variant' },
@@ -30,17 +27,17 @@ const navItems = [
                 <v-list-item
                     v-for="item in navItems"
                     :key="item.key"
-                    :active="current === item.key"
+                    :active="currentView === item.key"
                     :prepend-icon="item.icon"
                     :title="item.title"
-                    @click="current = item.key"
+                    @click="currentView = item.key"
                 />
             </v-list>
         </v-navigation-drawer>
 
         <v-main>
             <v-container fluid class="pa-6">
-                <EnvView v-if="current === 'env'" />
+                <EnvView v-if="currentView === 'env'" />
                 <ProjectsView v-else />
             </v-container>
         </v-main>
