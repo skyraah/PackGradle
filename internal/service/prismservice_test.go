@@ -1,6 +1,7 @@
 package service
 
 import (
+	"os"
 	"path/filepath"
 	"testing"
 
@@ -510,5 +511,46 @@ func TestUnlinkRemovesLinks(t *testing.T) {
 	pc, _ := appconfig.LoadProjectConfig(entry.Path)
 	if pc.Instance != "" || len(pc.DirLinks) != 0 || len(pc.FileLinks) != 0 {
 		t.Errorf("解除后配置应清空: %+v", pc)
+	}
+}
+
+// 删除项目联动清理：关联的 packgradle.toml 与已建链接一并清除
+func TestRemoveProjectCleansLinks(t *testing.T) {
+	_, _ = makePrismFixture(t)
+	cm := newTestConfig(t)
+	// 共享同一内存 junction 管理器（建链与清理须互见）
+	mem := junction.NewMemoryManager()
+	svc := &PrismService{config: cm, junctions: mem}
+	pw := &PackwizService{config: cm, junctions: mem}
+	proj, pcPath := makeLinkProject(t, cm, "Collapse")
+	if err := svc.LinkProject(proj, "Collapse"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.CreateAllLinks(proj); err != nil {
+		t.Fatal(err)
+	}
+	// 项目列表中删除
+	if got := pw.RemoveProject(proj); len(got) != 0 {
+		t.Errorf("移除后列表应为空，实际 %+v", got)
+	}
+	// 关联配置（packgradle.toml）应被删除
+	if _, err := os.Stat(pcPath); !os.IsNotExist(err) {
+		t.Errorf("packgradle.toml 应被清理: %v", err)
+	}
+	// 已建链接应被删除
+	instancesDir, _ := svc.InstancesDir()
+	gameDir := filepath.Join(instancesDir, "Collapse", "minecraft")
+	if isJ, _ := svc.junctions.IsJunction(filepath.Join(gameDir, "config")); isJ {
+		t.Error("链接应随项目删除被清理")
+	}
+}
+
+// 未关联项目删除：packgradle.toml 不存在时静默跳过
+func TestRemoveProjectNoLinks(t *testing.T) {
+	cm := newTestConfig(t)
+	proj, _ := makeLinkProject(t, cm, "Plain")
+	pw := NewPackwizService(cm)
+	if got := pw.RemoveProject(proj); len(got) != 0 {
+		t.Errorf("移除后列表应为空，实际 %+v", got)
 	}
 }

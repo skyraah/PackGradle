@@ -8,17 +8,20 @@ import (
 	"packgradle/internal/curseforge"
 	"packgradle/internal/envutil"
 	"packgradle/internal/errs"
+	"packgradle/internal/junction"
 	"packgradle/internal/packwiz"
 	"packgradle/internal/pgignore"
+	"packgradle/internal/prism"
 )
 
 // PackwizService 负责 packwiz 项目的导入、解析与管理
 type PackwizService struct {
-	config *appconfig.ConfigManager
+	config    *appconfig.ConfigManager
+	junctions junction.Manager
 }
 
 func NewPackwizService(config *appconfig.ConfigManager) *PackwizService {
-	return &PackwizService{config: config}
+	return &PackwizService{config: config, junctions: junction.NewWindowsManager()}
 }
 
 // ImportProject 导入一个 pack.toml 并返回解析结果（同名项目会覆盖路径）。
@@ -62,10 +65,55 @@ func (s *PackwizService) ListProjects() []packwiz.PackProject {
 	return projects
 }
 
-// RemoveProject 按名称移除项目，返回剩余项目列表
+// RemoveProject 按名称移除项目，返回剩余项目列表。
+// 联动清理：若项目有关联 Prism 实例（项目级 packgradle.toml），
+// 删除已建链接（junction/硬链接）并移除 packgradle.toml，
+// 避免删除后 Prism 联动残留（重新导入时关联意外复活）。
+// 项目目录内的用户文件（mods/config 等）不受影响。
 func (s *PackwizService) RemoveProject(name string) []packwiz.PackProject {
+	if entry, ok := s.config.FindProject(name); ok {
+		s.cleanupProjectLinks(entry.Path)
+	}
 	_ = s.config.RemoveProject(name)
 	return s.ListProjects()
+}
+
+// cleanupProjectLinks 清理项目的 Prism 联动配置：
+// 删除已建链接（目录 junction + 文件硬链接），随后移除 packgradle.toml。
+// 实例已被删除时跳过链接删除（残留链接由用户手动处理，不阻塞移除）。
+func (s *PackwizService) cleanupProjectLinks(projectPath string) {
+	pc, err := appconfig.LoadProjectConfig(projectPath)
+	if err != nil || pc.Instance == "" {
+		return // 未关联，无需清理
+	}
+	// 定位实例根目录（手动路径优先，同 PrismService 定位链）
+	instDir := s.config.Get().PrismInstancesPath
+	if !isDir(instDir) {
+		if dataDir := prism.DataDir(); isDir(dataDir) {
+			if d, err := prism.InstancesDir(dataDir); err == nil && isDir(d) {
+				instDir = d
+			}
+		}
+	}
+	if instDir == "" {
+		_ = os.Remove(appconfig.ProjectConfigPath(projectPath))
+		return
+	}
+	for _, inst := range prism.ScanInstances(instDir) {
+		if inst.ID != pc.Instance {
+			continue
+		}
+		for _, dl := range pc.DirLinks {
+			link := filepath.Join(inst.GameDir, filepath.FromSlash(dl.InstanceDir))
+			if isJ, _ := s.junctions.IsJunction(link); isJ {
+				_ = s.junctions.Remove(link) // 仅删链接，目标内容不动
+			}
+		}
+		for _, f := range pc.FileLinks {
+			_ = os.Remove(filepath.Join(inst.GameDir, filepath.FromSlash(f))) // 硬链接删除只减引用
+		}
+	}
+	_ = os.Remove(appconfig.ProjectConfigPath(projectPath))
 }
 
 // RefreshProject 在项目目录执行 `packwiz refresh` 并返回输出

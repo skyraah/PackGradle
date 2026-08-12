@@ -94,8 +94,12 @@ async function removeProject(proj: PackProject) {
         return // 用户取消对话框，静默忽略
     }
     if (confirmed !== 'Yes' && confirmed !== t('projects.removeBtn')) return
-    projects.value = (await PackwizService.RemoveProject(proj.name)) ?? []
-    if (expanded.value === proj.name) expanded.value = null
+    try {
+        projects.value = (await PackwizService.RemoveProject(proj.name)) ?? []
+        if (expanded.value === proj.name) expanded.value = null
+    } catch (e) {
+        show(t('projects.removeFailed', [errText(e)]))
+    }
 }
 
 async function refreshProject(proj: PackProject) {

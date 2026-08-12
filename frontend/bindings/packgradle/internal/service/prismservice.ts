@@ -42,6 +42,14 @@ export function CreateInstance(projectName: string): $CancellablePromise<prism$0
 }
 
 /**
+ * EnsurePGIgnore 确保项目存在 .pgignore（已存在不覆盖），返回是否新建。
+ * 一键关联前前端据此询问用户是否生成默认忽略规则。
+ */
+export function EnsurePGIgnore(projectName: string): $CancellablePromise<boolean> {
+    return $Call.ByID(1191577420, projectName);
+}
+
+/**
  * GetInstancesPath 返回用户手动指定的实例根目录（空串 = 未指定，走自动定位）
  */
 export function GetInstancesPath(): $CancellablePromise<string> {
@@ -54,6 +62,13 @@ export function GetInstancesPath(): $CancellablePromise<string> {
  */
 export function GetLinks(): $CancellablePromise<prism$0.LinkView[] | null> {
     return $Call.ByID(1627354796);
+}
+
+/**
+ * HasPGIgnore 检查项目是否已有 .pgignore 文件（一键关联前询问用）
+ */
+export function HasPGIgnore(projectName: string): $CancellablePromise<boolean> {
+    return $Call.ByID(1444343784, projectName);
 }
 
 /**

@@ -220,8 +220,43 @@ async function removeDirLink(dl: DirLinkView) {
     }
 }
 
-// 一键关联：项目根下全部未被 .pgignore 忽略的条目建链
+// 一键关联：项目根下全部未被 .pgignore 忽略的条目建链。
+// 未检测到 .pgignore 时先询问用户是否生成默认忽略规则。
 async function doLinkAll() {
+    if (!dirLinkProject.value) return
+    const exists = await PrismService.HasPGIgnore(dirLinkProject.value)
+    if (!exists) {
+        let choice: string
+        try {
+            choice = await Dialogs.Question({
+                Title: t('prism.pgignoreMissingTitle'),
+                Message: t('prism.pgignoreMissingText'),
+                Buttons: [
+                    { Label: t('prism.pgignoreCreateAndLink') },
+                    { Label: t('prism.pgignoreSkipAndLink') },
+                    { Label: t('prism.linkCancel'), IsCancel: true },
+                ],
+            })
+        } catch {
+            return // 用户取消
+        }
+        if (choice === t('prism.linkCancel')) return
+        if (choice === t('prism.pgignoreCreateAndLink')) {
+            try {
+                await PrismService.EnsurePGIgnore(dirLinkProject.value)
+                show(t('prism.pgignoreCreated'))
+            } catch (e) {
+                show(errText(e))
+                return
+            }
+        }
+        // 不生成直接关联：跳过生成步骤
+    }
+    await executeLinkAll()
+}
+
+// executeLinkAll 执行一键关联并展示结果
+async function executeLinkAll() {
     linkAlling.value = true
     try {
         linkAllResults.value = (await PrismService.CreateAllLinks(dirLinkProject.value)) ?? []

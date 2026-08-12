@@ -272,6 +272,36 @@ func (s *PrismService) RemoveDirLink(projectName, projectDir string) error {
 	return appconfig.SaveProjectConfig(entry.Path, pc)
 }
 
+// HasPGIgnore 检查项目是否已有 .pgignore 文件（一键关联前询问用）
+func (s *PrismService) HasPGIgnore(projectName string) (bool, error) {
+	entry, ok := s.config.FindProject(projectName)
+	if !ok {
+		return false, errs.New("err.proj.not_found", projectName)
+	}
+	_, err := os.Stat(filepath.Join(entry.Path, ".pgignore"))
+	if err != nil {
+		if os.IsNotExist(err) {
+			return false, nil
+		}
+		return false, errs.NewDetail("err.toml.read", err.Error(), ".pgignore")
+	}
+	return true, nil
+}
+
+// EnsurePGIgnore 确保项目存在 .pgignore（已存在不覆盖），返回是否新建。
+// 一键关联前前端据此询问用户是否生成默认忽略规则。
+func (s *PrismService) EnsurePGIgnore(projectName string) (bool, error) {
+	entry, ok := s.config.FindProject(projectName)
+	if !ok {
+		return false, errs.New("err.proj.not_found", projectName)
+	}
+	created, err := pgignore.Ensure(entry.Path)
+	if err != nil {
+		return false, errs.NewDetail("err.file.write", err.Error(), ".pgignore")
+	}
+	return created, nil
+}
+
 // CreateAllLinks 一键关联：将项目根下所有未被 .pgignore 忽略的顶层条目建链。
 // 目录 → junction（实例游戏目录/<name> 指向 项目/<name>）；文件 → 硬链接。
 // mods 目录始终排除（走 meta 推送机制）；实例侧已有真实内容时跳过并报告。
