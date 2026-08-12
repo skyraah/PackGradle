@@ -410,6 +410,7 @@ async function confirmPullMeta() {
     try {
         const count = await PrismService.PullMeta(link.project, '')
         show(t('prism.metaPulled', [count ?? 0]))
+        await refreshProjectIndex(link.project) // refresh 使 index.toml 收录新条目，差异才正确
         await load() // 刷新当前页（实例/关联列表）
         bumpProjectsVersion() // 拉取改变了项目 mods，通知项目列表刷新
     } catch (e) {
@@ -452,6 +453,7 @@ async function confirmPullOne() {
     try {
         await PrismService.PullMeta(diffProject.value, id)
         show(t('prism.metaOneDone', [t('prism.metaPullOne'), id]))
+        await refreshProjectIndex(diffProject.value) // refresh 使 index.toml 收录新条目，差异才正确
         await load() // 刷新当前页（实例/关联列表）
         bumpProjectsVersion() // 拉取改变了项目 mods，通知项目列表刷新
         await refreshDiff()
@@ -459,6 +461,19 @@ async function confirmPullOne() {
         show(errText(e))
     } finally {
         diffBusy.value = ''
+    }
+}
+
+// refreshProjectIndex 执行 packwiz refresh 收录新拉取的 pw.toml（差异以 index.toml 为权威）。
+// 失败时提示，不阻断主流程。
+async function refreshProjectIndex(project: string) {
+    try {
+        const result = await PackwizService.RefreshProject(project)
+        if (result && !result.ok) {
+            show(t('prism.metaRefreshFailed'))
+        }
+    } catch (e) {
+        show(t('prism.metaRefreshFailed') + ': ' + errText(e))
     }
 }
 

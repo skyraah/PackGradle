@@ -243,6 +243,7 @@
     "prism.metaOneDone": "已{0}「{1}」",
     "prism.metaPullOneConfirmTitle": "拉取确认",
     "prism.metaPullOneConfirmText": "将从实例拉取「{0}」的元数据覆盖项目 mods 下同名文件（移除 x-prismlauncher 字段与 [download].url）？",
+    "prism.metaRefreshFailed": "packwiz refresh 失败，差异可能未更新（可稍后手动刷新）",
     "prism.selectAll": "全选",
     "prism.clearAll": "清空",
     "prism.linkResult.linked": "已建链",
