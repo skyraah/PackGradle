@@ -65,7 +65,11 @@ export function RefreshProject(name: string): $CancellablePromise<packwiz$0.Refr
 }
 
 /**
- * RemoveProject 按名称移除项目，返回剩余项目列表
+ * RemoveProject 按名称移除项目，返回剩余项目列表。
+ * 联动清理：若项目有关联 Prism 实例（项目级 packgradle.toml），
+ * 删除已建链接（junction/硬链接）并移除 packgradle.toml，
+ * 避免删除后 Prism 联动残留（重新导入时关联意外复活）。
+ * 项目目录内的用户文件（mods/config 等）不受影响。
  */
 export function RemoveProject(name: string): $CancellablePromise<packwiz$0.PackProject[] | null> {
     return $Call.ByID(4224803538, name);

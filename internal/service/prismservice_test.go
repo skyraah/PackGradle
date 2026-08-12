@@ -530,7 +530,11 @@ func TestRemoveProjectCleansLinks(t *testing.T) {
 		t.Fatal(err)
 	}
 	// 项目列表中删除
-	if got := pw.RemoveProject(proj); len(got) != 0 {
+	got, err := pw.RemoveProject(proj)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 0 {
 		t.Errorf("移除后列表应为空，实际 %+v", got)
 	}
 	// 关联配置（packgradle.toml）应被删除
@@ -550,7 +554,11 @@ func TestRemoveProjectNoLinks(t *testing.T) {
 	cm := newTestConfig(t)
 	proj, _ := makeLinkProject(t, cm, "Plain")
 	pw := NewPackwizService(cm)
-	if got := pw.RemoveProject(proj); len(got) != 0 {
+	got, err := pw.RemoveProject(proj)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 0 {
 		t.Errorf("移除后列表应为空，实际 %+v", got)
 	}
 }

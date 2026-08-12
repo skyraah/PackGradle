@@ -70,12 +70,14 @@ func (s *PackwizService) ListProjects() []packwiz.PackProject {
 // 删除已建链接（junction/硬链接）并移除 packgradle.toml，
 // 避免删除后 Prism 联动残留（重新导入时关联意外复活）。
 // 项目目录内的用户文件（mods/config 等）不受影响。
-func (s *PackwizService) RemoveProject(name string) []packwiz.PackProject {
+func (s *PackwizService) RemoveProject(name string) ([]packwiz.PackProject, error) {
 	if entry, ok := s.config.FindProject(name); ok {
 		s.cleanupProjectLinks(entry.Path)
 	}
-	_ = s.config.RemoveProject(name)
-	return s.ListProjects()
+	if err := s.config.RemoveProject(name); err != nil {
+		return s.ListProjects(), err // 配置写盘失败不吞掉，前端可见
+	}
+	return s.ListProjects(), nil
 }
 
 // cleanupProjectLinks 清理项目的 Prism 联动配置：
