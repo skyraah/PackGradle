@@ -3,7 +3,7 @@ import { computed, onMounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { Dialogs } from '@wailsio/runtime'
 import { PrismService, PackwizService } from '../../bindings/packgradle/internal/service'
-import type { Instance, LinkView, DirLinkView } from '../../bindings/packgradle/internal/prism'
+import type { Instance, LinkView, DirLinkView, LinkResult } from '../../bindings/packgradle/internal/prism'
 import type { PackProject } from '../../bindings/packgradle/internal/packwiz'
 import { useSnackbar } from '../composables/useSnackbar'
 import { displayText, errText, errorCode } from '../utils/errors'
@@ -39,6 +39,9 @@ const dirLinkProject = ref('')
 const dirLinks = ref<DirLinkView[]>([])
 const candidates = ref<string[]>([])
 const selDir = ref('')
+// 一键关联结果
+const linkAllResults = ref<LinkResult[]>([])
+const linkAlling = ref(false)
 
 // 加载器 chip：已识别 → 颜色标签；空 → 原版；其余 → 原样文本
 function loaderInfo(inst: Instance): { label: string; color?: string } {
@@ -214,6 +217,37 @@ async function removeDirLink(dl: DirLinkView) {
         await refreshDirLinks()
     } catch (e) {
         show(errText(e))
+    }
+}
+
+// 一键关联：项目根下全部未被 .pgignore 忽略的条目建链
+async function doLinkAll() {
+    linkAlling.value = true
+    try {
+        linkAllResults.value = (await PrismService.CreateAllLinks(dirLinkProject.value)) ?? []
+        const ok = linkAllResults.value.filter(r => r.status === 'linked' || r.status === 'existing').length
+        const skipped = linkAllResults.value.filter(r => r.status === 'skipped').length
+        const failed = linkAllResults.value.filter(r => r.status === 'error').length
+        show(t('prism.linkAllDone', [ok, skipped, failed]))
+        await refreshDirLinks()
+    } catch (e) {
+        show(errText(e))
+    } finally {
+        linkAlling.value = false
+    }
+}
+
+// 一键关联结果的状态 chip 信息
+function resultChip(r: LinkResult): { color: string; label: string } {
+    switch (r.status) {
+        case 'linked':
+            return { color: 'success', label: t('prism.linkResult.linked') }
+        case 'existing':
+            return { color: 'info', label: t('prism.linkResult.existing') }
+        case 'skipped':
+            return { color: 'warning', label: t('prism.linkResult.skipped') }
+        default:
+            return { color: 'error', label: t('prism.linkResult.error') }
     }
 }
 
@@ -462,13 +496,44 @@ onMounted(async () => {
         </v-dialog>
 
         <!-- 目录同步关联对话框 -->
-        <v-dialog v-model="dirLinkDialog" max-width="560">
+        <v-dialog v-model="dirLinkDialog" max-width="640">
             <v-card>
                 <v-card-title class="d-flex align-center">
                     <v-icon icon="mdi-folder-sync-outline" color="primary" class="mr-2" />
                     {{ t('prism.dirLinksTitle') }} · {{ dirLinkProject }}
                 </v-card-title>
                 <v-card-text>
+                    <div class="d-flex align-center mb-3">
+                        <div class="text-body-2 text-medium-emphasis flex-grow-1">{{ t('prism.linkAllHint') }}</div>
+                        <v-btn
+                            color="primary"
+                            prepend-icon="mdi-link-variant-plus"
+                            :loading="linkAlling"
+                            @click="doLinkAll"
+                        >
+                            {{ t('prism.linkAllBtn') }}
+                        </v-btn>
+                    </div>
+
+                    <!-- 一键关联结果 -->
+                    <v-list v-if="linkAllResults.length > 0" density="compact" class="mb-3">
+                        <v-list-item
+                            v-for="r in linkAllResults"
+                            :key="r.name"
+                            :title="r.name"
+                            :subtitle="r.detail ? displayText(r.detail) : ''"
+                        >
+                            <template #prepend>
+                                <v-icon :icon="r.is_dir ? 'mdi-folder-outline' : 'mdi-file-outline'" class="mr-2" />
+                            </template>
+                            <template #append>
+                                <v-chip size="x-small" :color="resultChip(r).color" variant="tonal">
+                                    {{ resultChip(r).label }}
+                                </v-chip>
+                            </template>
+                        </v-list-item>
+                    </v-list>
+
                     <v-list v-if="dirLinks.length > 0" density="compact" class="mb-2">
                         <v-list-item
                             v-for="dl in dirLinks"

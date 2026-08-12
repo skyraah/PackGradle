@@ -43,7 +43,8 @@ export function FetchModVersion(projectName: string, modID: string): $Cancellabl
 }
 
 /**
- * ImportProject 导入一个 pack.toml 并返回解析结果（同名项目会覆盖路径）
+ * ImportProject 导入一个 pack.toml 并返回解析结果（同名项目会覆盖路径）。
+ * 首次导入时在项目根目录创建 .pgignore（一键关联忽略规则，已存在不覆盖）。
  */
 export function ImportProject(packTomlPath: string): $CancellablePromise<packwiz$0.PackProject> {
     return $Call.ByID(2671061045, packTomlPath);

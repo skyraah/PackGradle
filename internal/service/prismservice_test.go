@@ -6,6 +6,9 @@ import (
 
 	"packgradle/internal/appconfig"
 	"packgradle/internal/errs"
+	"packgradle/internal/junction"
+	"packgradle/internal/pgignore"
+	"packgradle/internal/prism"
 )
 
 // makePrismFixture 在临时 APPDATA 下构造 Prism 数据目录（标准安装布局）：
@@ -334,5 +337,178 @@ func TestDirLinks(t *testing.T) {
 	}
 	if got := svc.ListDirLinks(proj); len(got) != 1 {
 		t.Errorf("移除后应剩 1 条，实际 %d", len(got))
+	}
+}
+
+// makeLinkProject 构造「已关联实例」的项目：含 config/kubejs 目录与 modlist.txt 顶层文件，
+// 返回项目名与 packgradle.toml 路径
+func makeLinkProject(t *testing.T, cm *appconfig.ConfigManager, name string) (string, string) {
+	t.Helper()
+	dir := t.TempDir()
+	mustWriteFile(t, filepath.Join(dir, "pack.toml"),
+		"name = \""+name+"\"\n[versions]\nminecraft = \"1.20.1\"\nforge = \"47.4.10\"\n")
+	mustWriteFile(t, filepath.Join(dir, "config", "a.cfg"), "a")
+	mustWriteFile(t, filepath.Join(dir, "kubejs", "b.js"), "b")
+	mustWriteFile(t, filepath.Join(dir, "modlist.txt"), "mod list")
+	// 默认 .pgignore（模拟导入时创建）
+	if _, err := pgignore.Ensure(dir); err != nil {
+		t.Fatal(err)
+	}
+	// .pgignore 排除项
+	mustWriteFile(t, filepath.Join(dir, ".git", "keep"), "x")
+	mustWriteFile(t, filepath.Join(dir, "index.toml"), "x")
+	// mods 目录（内建排除）
+	mustWriteFile(t, filepath.Join(dir, "mods", "x.pw.toml"), "x")
+	if err := cm.AddProject(appconfig.ProjectEntry{Name: name, Path: dir}); err != nil {
+		t.Fatal(err)
+	}
+	return name, filepath.Join(dir, "packgradle.toml")
+}
+
+// newPrismServiceWithMemory 注入内存 junction 管理器（避免真实建链）
+func newPrismServiceWithMemory(cm *appconfig.ConfigManager) *PrismService {
+	return &PrismService{config: cm, junctions: junction.NewMemoryManager()}
+}
+
+// 一键关联：目录建 junction、文件建硬链接、mods/.pgignore 命中项排除
+func TestCreateAllLinks(t *testing.T) {
+	_, _ = makePrismFixture(t)
+	cm := newTestConfig(t)
+	svc := newPrismServiceWithMemory(cm)
+	proj, pcPath := makeLinkProject(t, cm, "Collapse")
+	if err := svc.LinkProject(proj, "Collapse"); err != nil {
+		t.Fatal(err)
+	}
+
+	results, err := svc.CreateAllLinks(proj)
+	if err != nil {
+		t.Fatal(err)
+	}
+	byName := map[string]prism.LinkResult{}
+	for _, r := range results {
+		byName[r.Name] = r
+	}
+	// 目录 junction
+	if r, ok := byName["config"]; !ok || r.Status != "linked" || !r.IsDir {
+		t.Errorf("config 应建链: %+v", results)
+	}
+	if r, ok := byName["kubejs"]; !ok || r.Status != "linked" {
+		t.Errorf("kubejs 应建链: %+v", results)
+	}
+	// 文件硬链接
+	if r, ok := byName["modlist.txt"]; !ok || r.Status != "linked" || r.IsDir {
+		t.Errorf("modlist.txt 应硬链接: %+v", results)
+	}
+	// 内建排除 mods 与 .pgignore 命中项
+	for _, excluded := range []string{"mods", ".git", "index.toml", "pack.toml", "packgradle.toml"} {
+		if _, ok := byName[excluded]; ok {
+			t.Errorf("%s 应被排除: %+v", excluded, results)
+		}
+	}
+	// 持久化到 packgradle.toml
+	pc, err := appconfig.LoadProjectConfig(filepath.Dir(pcPath))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(pc.DirLinks) != 2 || len(pc.FileLinks) != 1 {
+		t.Errorf("应持久化 2 目录 + 1 文件链接，实际 %+v", pc)
+	}
+}
+
+// 未关联项目拒绝一键关联
+func TestCreateAllLinksNotLinked(t *testing.T) {
+	cm := newTestConfig(t)
+	svc := newPrismServiceWithMemory(cm)
+	proj, _ := makeLinkProject(t, cm, "Proj")
+	if _, err := svc.CreateAllLinks(proj); errs.CodeOf(err) != "err.link.not_found" {
+		t.Errorf("未关联应报 err.link.not_found，实际 %v", err)
+	}
+}
+
+// 实例侧已有内容：跳过并报告（不合并）
+func TestCreateAllLinksInstanceSideOccupied(t *testing.T) {
+	_, _ = makePrismFixture(t)
+	cm := newTestConfig(t)
+	svc := newPrismServiceWithMemory(cm)
+	proj, _ := makeLinkProject(t, cm, "Collapse")
+	if err := svc.LinkProject(proj, "Collapse"); err != nil {
+		t.Fatal(err)
+	}
+	// 实例侧游戏目录已有 config 真实内容（模拟游戏生成）
+	instancesDir, _ := svc.InstancesDir()
+	gameDir := filepath.Join(instancesDir, "Collapse", "minecraft")
+	mustWriteFile(t, filepath.Join(gameDir, "config", "game.cfg"), "game")
+
+	results, err := svc.CreateAllLinks(proj)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, r := range results {
+		if r.Name == "config" {
+			if r.Status != "skipped" {
+				t.Errorf("实例侧已占用应跳过: %+v", r)
+			}
+			return
+		}
+	}
+	t.Error("未找到 config 条目")
+}
+
+// 幂等：已链目录再次一键关联返回 existing 且不重复持久化
+func TestCreateAllLinksIdempotent(t *testing.T) {
+	_, _ = makePrismFixture(t)
+	cm := newTestConfig(t)
+	svc := newPrismServiceWithMemory(cm)
+	proj, pcPath := makeLinkProject(t, cm, "Collapse")
+	if err := svc.LinkProject(proj, "Collapse"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.CreateAllLinks(proj); err != nil {
+		t.Fatal(err)
+	}
+	results, err := svc.CreateAllLinks(proj)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, r := range results {
+		if r.Status == "linked" {
+			t.Errorf("二次执行不应再 linked: %+v", r)
+		}
+	}
+	pc, _ := appconfig.LoadProjectConfig(filepath.Dir(pcPath))
+	if len(pc.DirLinks) != 2 {
+		t.Errorf("目录关联不应重复: %+v", pc)
+	}
+}
+
+// 解除关联：删除全部链接（junction + 硬链接）并清空配置
+func TestUnlinkRemovesLinks(t *testing.T) {
+	_, _ = makePrismFixture(t)
+	cm := newTestConfig(t)
+	svc := newPrismServiceWithMemory(cm)
+	proj, _ := makeLinkProject(t, cm, "Collapse")
+	if err := svc.LinkProject(proj, "Collapse"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.CreateAllLinks(proj); err != nil {
+		t.Fatal(err)
+	}
+	// 解除前链接存在
+	instancesDir, _ := svc.InstancesDir()
+	gameDir := filepath.Join(instancesDir, "Collapse", "minecraft")
+	if isJ, _ := svc.junctions.IsJunction(filepath.Join(gameDir, "config")); !isJ {
+		t.Error("解除前 config 应为 junction")
+	}
+	if err := svc.UnlinkProject(proj); err != nil {
+		t.Fatal(err)
+	}
+	if isJ, _ := svc.junctions.IsJunction(filepath.Join(gameDir, "config")); isJ {
+		t.Error("解除后 config 链接应删除")
+	}
+	// 配置应清空
+	entry, _ := cm.FindProject(proj)
+	pc, _ := appconfig.LoadProjectConfig(entry.Path)
+	if pc.Instance != "" || len(pc.DirLinks) != 0 || len(pc.FileLinks) != 0 {
+		t.Errorf("解除后配置应清空: %+v", pc)
 	}
 }

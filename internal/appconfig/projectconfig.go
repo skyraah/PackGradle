@@ -15,8 +15,10 @@ import (
 type ProjectConfig struct {
 	// 关联的 Prism 实例 ID（实例目录名；空串 = 未关联）
 	Instance string `toml:"instance"`
-	// 目录同步关联对（junction 目标，Phase 3 建链）
+	// 目录同步关联对（junction 目标）
 	DirLinks []ProjectDirLink `toml:"dir_links"`
+	// 一键关联建立的顶层文件硬链接（相对项目根，如 "modlist.txt"）
+	FileLinks []string `toml:"file_links"`
 }
 
 // ProjectDirLink 是一条「项目目录 ↔ 实例游戏目录」的同步关联

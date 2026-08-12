@@ -81,6 +81,31 @@ export interface Instance {
 }
 
 /**
+ * LinkResult 是一键关联中单个条目的建链结果
+ */
+export interface LinkResult {
+    /**
+     * 相对项目根的条目名
+     */
+    "name": string;
+
+    /**
+     * 目录（junction）/ 文件（硬链接）
+     */
+    "is_dir": boolean;
+
+    /**
+     * linked / existing / skipped / error
+     */
+    "status": string;
+
+    /**
+     * 跳过原因或错误文本
+     */
+    "detail": string;
+}
+
+/**
  * LinkView 是「项目 ↔ 实例」关联的组装视图（服务层实时扫描实例组装，前端渲染）
  */
 export interface LinkView {

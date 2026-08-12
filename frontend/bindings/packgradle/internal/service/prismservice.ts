@@ -3,7 +3,7 @@
 
 /**
  * PrismService 负责 Prism Launcher 实例的定位、扫描与管理。
- * 当前阶段：实例路径检测与实例列表（REQ-3.2）
+ * 当前阶段：实例路径检测与实例列表（REQ-3.2）+ 项目关联与一键建链
  * @module
  */
 
@@ -21,6 +21,16 @@ import * as prism$0 from "../prism/models.js";
  */
 export function AddDirLink(projectName: string, projectDir: string): $CancellablePromise<void> {
     return $Call.ByID(690626371, projectName, projectDir);
+}
+
+/**
+ * CreateAllLinks 一键关联：将项目根下所有未被 .pgignore 忽略的顶层条目建链。
+ * 目录 → junction（实例游戏目录/<name> 指向 项目/<name>）；文件 → 硬链接。
+ * mods 目录始终排除（走 meta 推送机制）；实例侧已有真实内容时跳过并报告。
+ * 返回逐条目结果，单条目失败不中断其余条目。
+ */
+export function CreateAllLinks(projectName: string): $CancellablePromise<prism$0.LinkResult[] | null> {
+    return $Call.ByID(843673841, projectName);
 }
 
 /**
@@ -87,7 +97,7 @@ export function ListProjectDirs(projectName: string): $CancellablePromise<string
 }
 
 /**
- * RemoveDirLink 移除目录关联对
+ * RemoveDirLink 移除目录关联对，并删除已建链接（仅链接本身，目标内容不动）
  */
 export function RemoveDirLink(projectName: string, projectDir: string): $CancellablePromise<void> {
     return $Call.ByID(2816067440, projectName, projectDir);
@@ -102,7 +112,7 @@ export function SetInstancesPath(path: string): $CancellablePromise<void> {
 }
 
 /**
- * UnlinkProject 解除项目关联（连同其目录关联）
+ * UnlinkProject 解除项目关联（连同其目录关联与已建链接）
  */
 export function UnlinkProject(projectName: string): $CancellablePromise<void> {
     return $Call.ByID(3915257647, projectName);

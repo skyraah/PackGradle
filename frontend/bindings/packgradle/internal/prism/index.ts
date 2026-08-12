@@ -4,5 +4,6 @@
 export type {
     DirLinkView,
     Instance,
+    LinkResult,
     LinkView
 } from "./models.js";

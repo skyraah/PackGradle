@@ -9,6 +9,7 @@ import (
 	"packgradle/internal/envutil"
 	"packgradle/internal/errs"
 	"packgradle/internal/packwiz"
+	"packgradle/internal/pgignore"
 )
 
 // PackwizService 负责 packwiz 项目的导入、解析与管理
@@ -20,7 +21,8 @@ func NewPackwizService(config *appconfig.ConfigManager) *PackwizService {
 	return &PackwizService{config: config}
 }
 
-// ImportProject 导入一个 pack.toml 并返回解析结果（同名项目会覆盖路径）
+// ImportProject 导入一个 pack.toml 并返回解析结果（同名项目会覆盖路径）。
+// 首次导入时在项目根目录创建 .pgignore（一键关联忽略规则，已存在不覆盖）。
 func (s *PackwizService) ImportProject(packTomlPath string) (packwiz.PackProject, error) {
 	abs, err := filepath.Abs(packTomlPath)
 	if err != nil {
@@ -29,6 +31,9 @@ func (s *PackwizService) ImportProject(packTomlPath string) (packwiz.PackProject
 	proj, err := packwiz.ParseProject(abs)
 	if err != nil {
 		return packwiz.PackProject{}, err
+	}
+	if _, err := pgignore.Ensure(proj.Path); err != nil {
+		return packwiz.PackProject{}, errs.NewDetail("err.file.write", err.Error(), ".pgignore")
 	}
 	s.applyCfCache(&proj)
 	if err := s.config.AddProject(appconfig.ProjectEntry{Name: proj.Name, Path: proj.Path}); err != nil {
