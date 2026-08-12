@@ -45,6 +45,7 @@ func main() {
 		Services: []application.Service{
 			application.NewService(service.NewEnvService(config)),
 			application.NewService(service.NewPackwizService(config)),
+			application.NewService(service.NewPrismService(config)),
 		},
 		MarshalError: marshalError,
 		Assets: application.AssetOptions{

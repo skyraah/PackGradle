@@ -2,6 +2,7 @@
 import { useI18n } from 'vue-i18n'
 import EnvView from './views/EnvView.vue'
 import ProjectsView from './views/ProjectsView.vue'
+import PrismView from './views/PrismView.vue'
 import { currentView, type ViewKey } from './nav'
 
 const { t } = useI18n()
@@ -9,6 +10,7 @@ const { t } = useI18n()
 const navItems = [
     { key: 'env' as ViewKey, titleKey: 'nav.env', icon: 'mdi-tune-variant' },
     { key: 'projects' as ViewKey, titleKey: 'nav.projects', icon: 'mdi-package-variant-closed' },
+    { key: 'prism' as ViewKey, titleKey: 'nav.prism', icon: 'mdi-prism' },
 ]
 </script>
 
@@ -41,7 +43,8 @@ const navItems = [
         <v-main>
             <v-container fluid class="pa-6">
                 <EnvView v-if="currentView === 'env'" />
-                <ProjectsView v-else />
+                <ProjectsView v-else-if="currentView === 'projects'" />
+                <PrismView v-else />
             </v-container>
         </v-main>
     </v-app>

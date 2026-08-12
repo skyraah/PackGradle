@@ -3,9 +3,11 @@
 
 import * as EnvService from "./envservice.js";
 import * as PackwizService from "./packwizservice.js";
+import * as PrismService from "./prismservice.js";
 export {
     EnvService,
-    PackwizService
+    PackwizService,
+    PrismService
 };
 
 export type {
