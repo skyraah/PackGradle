@@ -55,6 +55,10 @@ const fileSelectDir = ref('')
 const allFiles = ref<string[]>([])
 const selectedFiles = ref<string[]>([])
 const savingFiles = ref(false)
+// meta 推送/拉取
+const metaBusy = ref('') // 操作中的项目名（推送/拉取共用 loading）
+const pullConfirmDialog = ref(false)
+const pullConfirmTarget = ref<LinkView | null>(null)
 
 // 加载器 chip：已识别 → 颜色标签；空 → 原版；其余 → 原样文本
 function loaderInfo(inst: Instance): { label: string; color?: string } {
@@ -370,6 +374,41 @@ function toggleFile(f: string, checked: boolean | null) {
     }
 }
 
+// meta 推送：项目 mod 元数据 → 实例 mods/.index（Prism 兼容格式）
+async function pushMeta(link: LinkView) {
+    metaBusy.value = link.project
+    try {
+        const count = await PrismService.PushMeta(link.project)
+        show(t('prism.metaPushed', [count ?? 0]))
+    } catch (e) {
+        show(errText(e))
+    } finally {
+        metaBusy.value = ''
+    }
+}
+
+// meta 拉取：弹确认框（覆盖项目同名 pw.toml）后从实例 .index 拉回
+function askPullMeta(link: LinkView) {
+    pullConfirmTarget.value = link
+    pullConfirmDialog.value = true
+}
+
+async function confirmPullMeta() {
+    const link = pullConfirmTarget.value
+    if (!link) return
+    pullConfirmDialog.value = false
+    pullConfirmTarget.value = null
+    metaBusy.value = link.project
+    try {
+        const count = await PrismService.PullMeta(link.project)
+        show(t('prism.metaPulled', [count ?? 0]))
+    } catch (e) {
+        show(errText(e))
+    } finally {
+        metaBusy.value = ''
+    }
+}
+
 // 一键关联结果的状态 chip 信息
 function resultChip(r: LinkResult): { color: string; label: string } {
     switch (r.status) {
@@ -552,6 +591,26 @@ onMounted(async () => {
                         <v-chip v-if="!link.instance_valid" size="x-small" color="error" variant="outlined" class="mr-2">
                             {{ t('prism.instanceInvalidChip') }}
                         </v-chip>
+                        <v-btn
+                            size="small"
+                            variant="tonal"
+                            class="mr-1"
+                            :loading="metaBusy === link.project"
+                            :disabled="metaBusy !== ''"
+                            @click="pushMeta(link)"
+                        >
+                            {{ t('prism.metaPushBtn') }}
+                        </v-btn>
+                        <v-btn
+                            size="small"
+                            variant="tonal"
+                            class="mr-1"
+                            :loading="metaBusy === link.project"
+                            :disabled="metaBusy !== ''"
+                            @click="askPullMeta(link)"
+                        >
+                            {{ t('prism.metaPullBtn') }}
+                        </v-btn>
                         <v-btn size="small" variant="tonal" class="mr-1" @click="openDirLinks(link)">
                             {{ t('prism.dirLinkBtn') }}
                         </v-btn>
@@ -845,6 +904,24 @@ onMounted(async () => {
                     <v-btn variant="text" @click="fileSelectDialog = false">{{ t('prism.linkCancel') }}</v-btn>
                     <v-btn color="primary" variant="tonal" :loading="savingFiles" @click="saveFileSelect">
                         {{ t('prism.save') }}
+                    </v-btn>
+                </v-card-actions>
+            </v-card>
+        </v-dialog>
+
+        <!-- 拉取 meta 确认对话框：覆盖项目同名 pw.toml -->
+        <v-dialog v-model="pullConfirmDialog" max-width="520">
+            <v-card>
+                <v-card-title class="d-flex align-center">
+                    <v-icon icon="mdi-alert-outline" color="warning" class="mr-2" />
+                    {{ t('prism.metaPullConfirmTitle') }}
+                </v-card-title>
+                <v-card-text>{{ t('prism.metaPullConfirmText') }}</v-card-text>
+                <v-card-actions>
+                    <v-spacer />
+                    <v-btn variant="text" @click="pullConfirmDialog = false">{{ t('prism.linkCancel') }}</v-btn>
+                    <v-btn color="primary" variant="tonal" @click="confirmPullMeta">
+                        {{ t('prism.metaPullBtn') }}
                     </v-btn>
                 </v-card-actions>
             </v-card>
