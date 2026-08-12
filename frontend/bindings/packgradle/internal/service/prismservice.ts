@@ -112,6 +112,18 @@ export function ListProjectDirs(projectName: string): $CancellablePromise<string
 }
 
 /**
+ * ManualLinkDir 手动链接单个目录（前端二次确认后调用）：
+ *   - 实例侧已是 junction 指向项目侧 → existing（幂等）
+ *   - 实例侧为空目录 → 直接删除后建链
+ *   - 实例侧非空 → 先将内容复制到项目目录（同名文件跳过，项目侧权威），
+ *     再删除实例侧目录建立 junction
+ *   - 实例侧不存在 → 直接建链
+ */
+export function ManualLinkDir(projectName: string, dir: string): $CancellablePromise<prism$0.LinkResult> {
+    return $Call.ByID(535050274, projectName, dir);
+}
+
+/**
  * RemoveDirLink 移除目录关联对，并删除已建链接（仅链接本身，目标内容不动）
  */
 export function RemoveDirLink(projectName: string, projectDir: string): $CancellablePromise<void> {

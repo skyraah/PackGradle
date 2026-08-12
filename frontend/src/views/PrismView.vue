@@ -44,6 +44,10 @@ const linkAllResults = ref<LinkResult[]>([])
 const linkAlling = ref(false)
 // .pgignore 缺失询问对话框
 const pgignoreDialog = ref(false)
+// 手动链接确认对话框
+const manualLinkDialog = ref(false)
+const manualLinkTarget = ref<DirLinkView | null>(null)
+const manualLinking = ref(false)
 
 // 加载器 chip：已识别 → 颜色标签；空 → 原版；其余 → 原样文本
 function loaderInfo(inst: Instance): { label: string; color?: string } {
@@ -261,12 +265,44 @@ async function executeLinkAll() {
         const ok = linkAllResults.value.filter(r => r.status === 'linked' || r.status === 'existing').length
         const skipped = linkAllResults.value.filter(r => r.status === 'skipped').length
         const failed = linkAllResults.value.filter(r => r.status === 'error').length
-        show(t('prism.linkAllDone', [ok, skipped, failed]))
+        const manual = linkAllResults.value.filter(r => r.status === 'manual').length
+        if (manual > 0) {
+            show(t('prism.linkAllDoneWithManual', [ok, skipped, failed, manual]))
+        } else {
+            show(t('prism.linkAllDone', [ok, skipped, failed]))
+        }
         await refreshDirLinks()
     } catch (e) {
         show(errText(e))
     } finally {
         linkAlling.value = false
+    }
+}
+
+// 手动链接：实例侧已有内容时确认后复制并入并建链
+function askManualLink(dl: DirLinkView) {
+    manualLinkTarget.value = dl
+    manualLinkDialog.value = true
+}
+
+async function confirmManualLink() {
+    const dl = manualLinkTarget.value
+    if (!dl) return
+    manualLinkDialog.value = false
+    manualLinkTarget.value = null
+    manualLinking.value = true
+    try {
+        const res = await PrismService.ManualLinkDir(dl.project, dl.project_dir)
+        if (res.status === 'error') {
+            show(displayText(res.detail))
+        } else {
+            show(t('prism.manualLinkDone', [dl.project_dir]))
+        }
+        await refreshDirLinks()
+    } catch (e) {
+        show(errText(e))
+    } finally {
+        manualLinking.value = false
     }
 }
 
@@ -277,6 +313,8 @@ function resultChip(r: LinkResult): { color: string; label: string } {
             return { color: 'success', label: t('prism.linkResult.linked') }
         case 'existing':
             return { color: 'info', label: t('prism.linkResult.existing') }
+        case 'manual':
+            return { color: 'warning', label: t('prism.linkResult.manual') }
         case 'skipped':
             return { color: 'warning', label: t('prism.linkResult.skipped') }
         default:
@@ -584,6 +622,9 @@ onMounted(async () => {
                                 >
                                     {{ t('prism.parseFailed') }}
                                 </v-chip>
+                                <v-btn size="small" variant="text" class="mr-1" @click="askManualLink(dl)">
+                                    {{ t('prism.manualLinkBtn') }}
+                                </v-btn>
                                 <v-btn size="small" variant="text" @click="removeDirLink(dl)">
                                     {{ t('prism.dirLinkRemove') }}
                                 </v-btn>
@@ -635,6 +676,24 @@ onMounted(async () => {
                     <v-btn variant="tonal" @click="choosePGIgnore('skip')">{{ t('prism.pgignoreSkipAndLink') }}</v-btn>
                     <v-btn color="primary" variant="tonal" @click="choosePGIgnore('create')">
                         {{ t('prism.pgignoreCreateAndLink') }}
+                    </v-btn>
+                </v-card-actions>
+            </v-card>
+        </v-dialog>
+
+        <!-- 手动链接确认对话框：实例侧已有内容时确认复制并入后建链 -->
+        <v-dialog v-model="manualLinkDialog" max-width="520">
+            <v-card>
+                <v-card-title class="d-flex align-center">
+                    <v-icon icon="mdi-alert-outline" color="warning" class="mr-2" />
+                    {{ t('prism.manualLinkConfirmTitle') }}
+                </v-card-title>
+                <v-card-text>{{ t('prism.manualLinkConfirmText', [manualLinkTarget?.project_dir ?? '']) }}</v-card-text>
+                <v-card-actions>
+                    <v-spacer />
+                    <v-btn variant="text" @click="manualLinkDialog = false">{{ t('prism.linkCancel') }}</v-btn>
+                    <v-btn color="primary" variant="tonal" :loading="manualLinking" @click="confirmManualLink">
+                        {{ t('prism.manualLinkBtn') }}
                     </v-btn>
                 </v-card-actions>
             </v-card>

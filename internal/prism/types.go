@@ -56,6 +56,6 @@ type DirLinkView struct {
 type LinkResult struct {
 	Name   string `json:"name"`   // 相对项目根的条目名
 	IsDir  bool   `json:"is_dir"` // 目录（junction）/ 文件（硬链接）
-	Status string `json:"status"` // linked / existing / skipped / error
+	Status string `json:"status"` // linked / existing / skipped / manual / error
 	Detail string `json:"detail"` // 跳过原因或错误文本
 }

@@ -378,10 +378,11 @@ func (s *PrismService) linkDir(instSide, projSide, name string, newDirLinks *[]a
 		res.Detail = errs.New("err.junction.wrong_target", name).Error()
 		return res
 	}
-	// 实例侧已有真实内容：跳过（不自动合并，避免破坏游戏侧数据）
+	// 实例侧已有真实内容：不自动处理（避免破坏游戏侧数据），
+	// 标记为需手动链接——用户确认后由 ManualLinkDir 复制内容并建链
 	if _, err := os.Lstat(instSide); err == nil {
-		res.Status = "skipped"
-		res.Detail = errs.New("err.junction.link_occupied", name).Error()
+		res.Status = "manual"
+		res.Detail = errs.New("err.sync.manual_required", name).Error()
 		return res
 	}
 	if !isDir(projSide) {
@@ -397,6 +398,120 @@ func (s *PrismService) linkDir(instSide, projSide, name string, newDirLinks *[]a
 	res.Status = "linked"
 	appendDirLink(newDirLinks, name, name)
 	return res
+}
+
+// ManualLinkDir 手动链接单个目录（前端二次确认后调用）：
+//   - 实例侧已是 junction 指向项目侧 → existing（幂等）
+//   - 实例侧为空目录 → 直接删除后建链
+//   - 实例侧非空 → 先将内容复制到项目目录（同名文件跳过，项目侧权威），
+//     再删除实例侧目录建立 junction
+//   - 实例侧不存在 → 直接建链
+func (s *PrismService) ManualLinkDir(projectName, dir string) (prism.LinkResult, error) {
+	res := prism.LinkResult{Name: dir, IsDir: true}
+	entry, ok := s.config.FindProject(projectName)
+	if !ok {
+		return res, errs.New("err.proj.not_found", projectName)
+	}
+	pc, err := appconfig.LoadProjectConfig(entry.Path)
+	if err != nil {
+		return res, err
+	}
+	if pc.Instance == "" {
+		return res, errs.New("err.link.not_found", projectName)
+	}
+	inst, ok := s.scanInstancesSafe()[pc.Instance]
+	if !ok {
+		return res, errs.New("err.prism.instance_not_found", pc.Instance)
+	}
+	projSide := filepath.Join(entry.Path, dir)
+	instSide := filepath.Join(inst.GameDir, filepath.FromSlash(dir))
+
+	// 已是 junction：指向项目侧幂等返回，否则冲突
+	if isJ, _ := s.junctions.IsJunction(instSide); isJ {
+		if target, err := s.junctions.TargetOf(instSide); err == nil && samePath(target, projSide) {
+			res.Status = "existing"
+		} else {
+			res.Status = "error"
+			res.Detail = errs.New("err.junction.wrong_target", dir).Error()
+			return res, nil
+		}
+		appendDirLink(&pc.DirLinks, dir, dir)
+		return res, appconfig.SaveProjectConfig(entry.Path, pc)
+	}
+
+	// 实例侧已有内容：空目录直接删除；非空先复制到项目目录再删除
+	if _, err := os.Lstat(instSide); err == nil {
+		if !isDir(instSide) {
+			res.Status = "error"
+			res.Detail = errs.New("err.sync.dir_conflict", dir).Error()
+			return res, nil
+		}
+		entries, rerr := os.ReadDir(instSide)
+		if rerr != nil {
+			res.Status = "error"
+			res.Detail = errs.NewDetail("err.toml.read", rerr.Error(), instSide).Error()
+			return res, nil
+		}
+		if len(entries) > 0 {
+			if err := copyDirRecursive(instSide, projSide); err != nil {
+				res.Status = "error"
+				res.Detail = errs.NewDetail("err.sync.copy_failed", err.Error(), dir).Error()
+				return res, nil
+			}
+		}
+		if err := os.RemoveAll(instSide); err != nil {
+			res.Status = "error"
+			res.Detail = errs.NewDetail("err.sync.remove_failed", err.Error(), dir).Error()
+			return res, nil
+		}
+	}
+
+	if !isDir(projSide) {
+		res.Status = "error"
+		res.Detail = errs.New("err.junction.target_missing", dir).Error()
+		return res, nil
+	}
+	if err := s.junctions.Create(instSide, projSide); err != nil {
+		res.Status = "error"
+		res.Detail = errs.NewDetail("err.junction.create", err.Error(), dir).Error()
+		return res, nil
+	}
+	res.Status = "linked"
+	appendDirLink(&pc.DirLinks, dir, dir)
+	return res, appconfig.SaveProjectConfig(entry.Path, pc)
+}
+
+// copyDirRecursive 递归复制 src 目录内容到 dst（dst 不存在时自动创建）。
+// 同名文件跳过不覆盖——项目侧为权威，实例侧内容仅并入缺失部分。
+func copyDirRecursive(src, dst string) error {
+	if err := os.MkdirAll(dst, 0o755); err != nil {
+		return err
+	}
+	entries, err := os.ReadDir(src)
+	if err != nil {
+		return err
+	}
+	for _, e := range entries {
+		srcPath := filepath.Join(src, e.Name())
+		dstPath := filepath.Join(dst, e.Name())
+		if e.IsDir() {
+			if err := copyDirRecursive(srcPath, dstPath); err != nil {
+				return err
+			}
+			continue
+		}
+		if _, err := os.Lstat(dstPath); err == nil {
+			continue // 同名文件跳过，保留项目侧内容
+		}
+		data, err := os.ReadFile(srcPath)
+		if err != nil {
+			return err
+		}
+		if err := os.WriteFile(dstPath, data, 0o644); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // linkFile 为单个顶层文件建硬链接（同卷，无需管理员权限）

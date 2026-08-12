@@ -95,7 +95,7 @@ export interface LinkResult {
     "is_dir": boolean;
 
     /**
-     * linked / existing / skipped / error
+     * linked / existing / skipped / manual / error
      */
     "status": string;
 

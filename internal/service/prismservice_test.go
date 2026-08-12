@@ -426,7 +426,7 @@ func TestCreateAllLinksNotLinked(t *testing.T) {
 	}
 }
 
-// 实例侧已有内容：跳过并报告（不合并）
+// 实例侧已有内容：一键关联不自动处理，标记为需手动链接
 func TestCreateAllLinksInstanceSideOccupied(t *testing.T) {
 	_, _ = makePrismFixture(t)
 	cm := newTestConfig(t)
@@ -446,8 +446,8 @@ func TestCreateAllLinksInstanceSideOccupied(t *testing.T) {
 	}
 	for _, r := range results {
 		if r.Name == "config" {
-			if r.Status != "skipped" {
-				t.Errorf("实例侧已占用应跳过: %+v", r)
+			if r.Status != "manual" {
+				t.Errorf("实例侧已占用应标记需手动链接: %+v", r)
 			}
 			return
 		}
@@ -560,5 +560,140 @@ func TestRemoveProjectNoLinks(t *testing.T) {
 	}
 	if len(got) != 0 {
 		t.Errorf("移除后列表应为空，实际 %+v", got)
+	}
+}
+
+// makeInstanceGameDir 在 fixture 实例的游戏目录创建子目录
+func makeInstanceGameDir(t *testing.T, svc *PrismService, dir string) string {
+	t.Helper()
+	instancesDir, _ := svc.InstancesDir()
+	gameDir := filepath.Join(instancesDir, "Collapse", "minecraft")
+	mustWriteFile(t, filepath.Join(gameDir, dir, "keep.txt"), "keep")
+	return gameDir
+}
+
+// 手动链接：实例侧非空目录 → 复制到项目目录（同名跳过）→ 删原目录 → 建链
+func TestManualLinkDirCopiesContent(t *testing.T) {
+	_, _ = makePrismFixture(t)
+	cm := newTestConfig(t)
+	svc := newPrismServiceWithMemory(cm)
+	proj, _ := makeLinkProject(t, cm, "Collapse")
+	if err := svc.LinkProject(proj, "Collapse"); err != nil {
+		t.Fatal(err)
+	}
+	// 实例侧 config 已有内容：game.cfg + 子目录
+	instancesDir, _ := svc.InstancesDir()
+	gameDir := filepath.Join(instancesDir, "Collapse", "minecraft")
+	mustWriteFile(t, filepath.Join(gameDir, "config", "game.cfg"), "game-data")
+	mustWriteFile(t, filepath.Join(gameDir, "config", "sub", "inner.txt"), "inner")
+
+	res, err := svc.ManualLinkDir(proj, "config")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Status != "linked" {
+		t.Fatalf("应建链成功，实际 %+v", res)
+	}
+	// 实例侧 config 应为 junction（memory 管理器）
+	if isJ, _ := svc.junctions.IsJunction(filepath.Join(gameDir, "config")); !isJ {
+		t.Error("实例侧 config 应为 junction")
+	}
+	// 内容已复制到项目目录（项目侧权威保留 + 新增并入）
+	entry, _ := cm.FindProject(proj)
+	projConfig := filepath.Join(entry.Path, "config")
+	if _, err := os.Stat(filepath.Join(projConfig, "game.cfg")); err != nil {
+		t.Errorf("game.cfg 应复制到项目目录: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(projConfig, "sub", "inner.txt")); err != nil {
+		t.Errorf("子目录内容应递归复制: %v", err)
+	}
+	// 项目侧已有文件不被覆盖
+	mustWriteFile(t, filepath.Join(projConfig, "a.cfg"), "project-auth")
+	// 再次手动链接（此时实例侧已是 junction 指向项目）：existing 幂等
+	res2, err := svc.ManualLinkDir(proj, "config")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res2.Status != "existing" {
+		t.Errorf("已链应幂等返回 existing，实际 %+v", res2)
+	}
+}
+
+// 手动链接：实例侧空目录 → 直接删除后建链（无复制）
+func TestManualLinkDirEmptyDir(t *testing.T) {
+	_, _ = makePrismFixture(t)
+	cm := newTestConfig(t)
+	svc := newPrismServiceWithMemory(cm)
+	proj, _ := makeLinkProject(t, cm, "Collapse")
+	if err := svc.LinkProject(proj, "Collapse"); err != nil {
+		t.Fatal(err)
+	}
+	instancesDir, _ := svc.InstancesDir()
+	gameDir := filepath.Join(instancesDir, "Collapse", "minecraft")
+	if err := os.MkdirAll(filepath.Join(gameDir, "kubejs"), 0o755); err != nil {
+		t.Fatal(err) // 空目录
+	}
+
+	res, err := svc.ManualLinkDir(proj, "kubejs")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Status != "linked" {
+		t.Fatalf("空目录应直接删除后建链，实际 %+v", res)
+	}
+	if isJ, _ := svc.junctions.IsJunction(filepath.Join(gameDir, "kubejs")); !isJ {
+		t.Error("kubejs 应为 junction")
+	}
+}
+
+// 手动链接：实例侧目录不存在 → 直接建链
+func TestManualLinkDirNotExists(t *testing.T) {
+	_, _ = makePrismFixture(t)
+	cm := newTestConfig(t)
+	svc := newPrismServiceWithMemory(cm)
+	proj, _ := makeLinkProject(t, cm, "Collapse")
+	if err := svc.LinkProject(proj, "Collapse"); err != nil {
+		t.Fatal(err)
+	}
+	res, err := svc.ManualLinkDir(proj, "kubejs")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Status != "linked" {
+		t.Fatalf("实例侧不存在应直接建链，实际 %+v", res)
+	}
+	// 建链记录持久化（供解除时清理）
+	entry, _ := cm.FindProject(proj)
+	pc, _ := appconfig.LoadProjectConfig(entry.Path)
+	if len(pc.DirLinks) == 0 {
+		t.Error("建链记录应持久化")
+	}
+}
+
+// 手动链接：未关联 / 实例侧是文件
+func TestManualLinkDirValidation(t *testing.T) {
+	_, _ = makePrismFixture(t)
+	cm := newTestConfig(t)
+	svc := newPrismServiceWithMemory(cm)
+	proj, _ := makeLinkProject(t, cm, "Collapse")
+
+	// 未关联
+	if _, err := svc.ManualLinkDir(proj, "config"); errs.CodeOf(err) != "err.link.not_found" {
+		t.Errorf("未关联应报 err.link.not_found，实际 %v", err)
+	}
+	if err := svc.LinkProject(proj, "Collapse"); err != nil {
+		t.Fatal(err)
+	}
+	// 实例侧是文件
+	instancesDir, _ := svc.InstancesDir()
+	gameDir := filepath.Join(instancesDir, "Collapse", "minecraft")
+	mustWriteFile(t, filepath.Join(gameDir, "config"), "file-not-dir")
+
+	res, err := svc.ManualLinkDir(proj, "config")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Status != "error" {
+		t.Errorf("实例侧是文件应报错，实际 %+v", res)
 	}
 }
