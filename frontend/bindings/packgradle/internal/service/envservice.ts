@@ -21,36 +21,36 @@ import * as $models from "./models.js";
 
 /**
  * Configure 将检测到的工具所在目录写入用户级 PATH（幂等），
- * 并返回配置后的最新检测结果与操作说明。
+ * 返回配置后的最新检测结果与实际新增的目录列表（由前端渲染提示文案）
  */
-export function Configure(): $CancellablePromise<[$models.ToolInfo[] | null, string]> {
-    return $Call.ByID(561951086);
+export function Configure(): $CancellablePromise<[$models.ToolInfo[] | null, string[] | null]> {
+    return $Call.ByID(4158103609);
 }
 
 /**
  * Detect 检测两个工具的装载状态
  */
 export function Detect(): $CancellablePromise<$models.ToolInfo[] | null> {
-    return $Call.ByID(4189404009);
+    return $Call.ByID(2098789344);
 }
 
 /**
  * GetApiKey 返回已保存的 CurseForge API Key（未配置时为空串）
  */
 export function GetApiKey(): $CancellablePromise<string> {
-    return $Call.ByID(75487941);
+    return $Call.ByID(758417042);
 }
 
 /**
  * SetApiKey 保存用户填写的 CurseForge API Key（空串清除）
  */
 export function SetApiKey(key: string): $CancellablePromise<void> {
-    return $Call.ByID(2903942985, key);
+    return $Call.ByID(3983215750, key);
 }
 
 /**
  * SetToolPath 保存用户手动指定的工具路径（空串清除），返回最新检测结果
  */
 export function SetToolPath(name: string, path: string): $CancellablePromise<$models.ToolInfo[] | null> {
-    return $Call.ByID(3551435367, name, path);
+    return $Call.ByID(154116296, name, path);
 }

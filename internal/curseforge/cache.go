@@ -1,12 +1,10 @@
-package main
+package curseforge
 
 import (
-	"fmt"
-	"os"
 	"path/filepath"
 	"sync"
 
-	"github.com/BurntSushi/toml"
+	"packgradle/internal/appconfig"
 )
 
 // CfCacheStore 管理每个项目的 CurseForge 文件信息缓存。
@@ -36,11 +34,8 @@ func (c *CfCacheStore) Load() (map[string]CfFileCache, error) {
 
 func (c *CfCacheStore) loadLocked() (map[string]CfFileCache, error) {
 	var cache map[string]CfFileCache
-	if _, err := toml.DecodeFile(c.path(), &cache); err != nil {
-		if os.IsNotExist(err) {
-			return map[string]CfFileCache{}, nil
-		}
-		return nil, fmt.Errorf("读取缓存 %s 失败: %w", c.path(), err)
+	if err := appconfig.ReadToml(c.path(), &cache); err != nil {
+		return nil, err
 	}
 	if cache == nil {
 		cache = map[string]CfFileCache{}
@@ -67,29 +62,29 @@ func (c *CfCacheStore) Upsert(key string, entry CfFileCache) error {
 	return c.saveLocked(cache)
 }
 
-// saveLocked 原子写入：先写临时文件再重命名，避免中断导致缓存损坏
-func (c *CfCacheStore) saveLocked(cache map[string]CfFileCache) error {
-	if err := os.MkdirAll(c.root, 0o755); err != nil {
-		return fmt.Errorf("创建缓存目录 %s 失败: %w", c.root, err)
-	}
-	path := c.path()
-	tmp := path + ".tmp"
-	f, err := os.Create(tmp)
+// Prune 删除不满足 keep 条件的缓存条目（如更新后失效的旧 file-id 条目、
+// 已移除 mod 的孤儿条目），避免缓存堆积；仅在有删除时写盘
+func (c *CfCacheStore) Prune(keep func(key string) bool) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	cache, err := c.loadLocked()
 	if err != nil {
-		return fmt.Errorf("写入缓存 %s 失败: %w", path, err)
+		return err
 	}
-	if err := toml.NewEncoder(f).Encode(cache); err != nil {
-		f.Close()
-		os.Remove(tmp)
-		return fmt.Errorf("序列化缓存失败: %w", err)
+	changed := false
+	for key := range cache {
+		if !keep(key) {
+			delete(cache, key)
+			changed = true
+		}
 	}
-	if err := f.Close(); err != nil {
-		os.Remove(tmp)
-		return fmt.Errorf("写入缓存 %s 失败: %w", path, err)
+	if !changed {
+		return nil
 	}
-	if err := os.Rename(tmp, path); err != nil {
-		os.Remove(tmp)
-		return fmt.Errorf("保存缓存 %s 失败: %w", path, err)
-	}
-	return nil
+	return c.saveLocked(cache)
+}
+
+// saveLocked 原子写入（临时文件+重命名），避免中断导致缓存损坏
+func (c *CfCacheStore) saveLocked(cache map[string]CfFileCache) error {
+	return appconfig.WriteTomlAtomic(c.path(), cache)
 }

@@ -1,11 +1,14 @@
 <script setup lang="ts">
+import { useI18n } from 'vue-i18n'
 import EnvView from './views/EnvView.vue'
 import ProjectsView from './views/ProjectsView.vue'
 import { currentView, type ViewKey } from './nav'
 
+const { t } = useI18n()
+
 const navItems = [
-    { key: 'env' as ViewKey, title: '环境配置', icon: 'mdi-tune-variant' },
-    { key: 'projects' as ViewKey, title: '项目管理', icon: 'mdi-package-variant-closed' },
+    { key: 'env' as ViewKey, titleKey: 'nav.env', icon: 'mdi-tune-variant' },
+    { key: 'projects' as ViewKey, titleKey: 'nav.projects', icon: 'mdi-package-variant-closed' },
 ]
 </script>
 
@@ -29,7 +32,7 @@ const navItems = [
                     :key="item.key"
                     :active="currentView === item.key"
                     :prepend-icon="item.icon"
-                    :title="item.title"
+                    :title="t(item.titleKey)"
                     @click="currentView = item.key"
                 />
             </v-list>

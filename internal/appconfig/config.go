@@ -1,12 +1,11 @@
-package main
+package appconfig
 
 import (
-	"fmt"
 	"os"
 	"path/filepath"
 	"sync"
 
-	"github.com/BurntSushi/toml"
+	"packgradle/internal/errs"
 )
 
 // ProjectEntry 是持久化在配置文件中的一个 packwiz 项目
@@ -15,16 +14,8 @@ type ProjectEntry struct {
 	Path string `toml:"path"` // pack.toml 所在目录
 }
 
-// CfFileCache 是 CurseForge 文件信息的本地缓存条目（键为 "projectID:fileID"）
-type CfFileCache struct {
-	DisplayName string `toml:"display_name"` // 版本显示名（文件名，通常含版本号）
-	FileDate    string `toml:"file_date"`    // 发布日期（RFC3339）
-	ReleaseType int    `toml:"release_type"` // 1=正式版 2=测试版 3=Alpha
-	FetchedAt   string `toml:"fetched_at"`   // 获取时间（RFC3339）
-}
-
-// appConfig 持久化在 %AppData%\PackGradle\config.toml
-type appConfig struct {
+// Config 是持久化在 %AppData%\PackGradle\config.toml 中的应用配置
+type Config struct {
 	// 用户手动指定的工具路径（覆盖自动检测）
 	PackwizPath string         `toml:"packwiz_path"`
 	PrismPath   string         `toml:"prism_path"`
@@ -37,44 +28,42 @@ type appConfig struct {
 type ConfigManager struct {
 	mu   sync.Mutex
 	path string
-	cfg  appConfig
+	cfg  Config
 }
 
+// NewConfigManager 在用户配置目录（%AppData%\PackGradle）创建配置管理器并加载已有配置
 func NewConfigManager() (*ConfigManager, error) {
 	dir, err := os.UserConfigDir() // Windows 下为 %AppData%
 	if err != nil {
-		return nil, fmt.Errorf("无法获取用户配置目录: %w", err)
+		return nil, errs.NewDetail("err.config.user_dir", err.Error())
 	}
 	dir = filepath.Join(dir, "PackGradle")
 	if err := os.MkdirAll(dir, 0o755); err != nil {
-		return nil, fmt.Errorf("无法创建配置目录 %s: %w", dir, err)
+		return nil, errs.NewDetail("err.config.mkdir", err.Error(), dir)
 	}
 	m := &ConfigManager{path: filepath.Join(dir, "config.toml")}
-	if _, err := toml.DecodeFile(m.path, &m.cfg); err != nil && !os.IsNotExist(err) {
-		return nil, fmt.Errorf("读取配置文件失败: %w", err)
+	if err := ReadToml(m.path, &m.cfg); err != nil {
+		return nil, errs.NewDetail("err.config.read", err.Error())
 	}
 	return m, nil
+}
+
+// NewConfigManagerAt 用指定路径构造配置管理器（不读取磁盘），供测试注入
+func NewConfigManagerAt(path string) *ConfigManager {
+	return &ConfigManager{path: path}
+}
+
+// Get 返回当前配置的快照
+func (m *ConfigManager) Get() Config {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.cfg
 }
 
 // save 将当前配置写回磁盘。
 // 注意：内部不加锁，调用方（SetToolPath/AddProject/RemoveProject）须已持有 m.mu。
 func (m *ConfigManager) save() error {
-	f, err := os.Create(m.path)
-	if err != nil {
-		return fmt.Errorf("无法写入配置文件: %w", err)
-	}
-	defer f.Close()
-	if err := toml.NewEncoder(f).Encode(m.cfg); err != nil {
-		return fmt.Errorf("序列化配置失败: %w", err)
-	}
-	return nil
-}
-
-// Get 返回当前配置的快照
-func (m *ConfigManager) Get() appConfig {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	return m.cfg
+	return WriteTomlAtomic(m.path, m.cfg)
 }
 
 // SetToolPath 保存用户手动指定的工具路径；传空串则清除自定义路径
@@ -87,7 +76,7 @@ func (m *ConfigManager) SetToolPath(tool, path string) error {
 	case "prism-launcher":
 		m.cfg.PrismPath = path
 	default:
-		return fmt.Errorf("未知工具: %s", tool)
+		return errs.New("err.config.unknown_tool", tool)
 	}
 	return m.save()
 }
@@ -118,6 +107,16 @@ func (m *ConfigManager) RemoveProject(name string) error {
 	}
 	m.cfg.Projects = out
 	return m.save()
+}
+
+// FindProject 按名称查找项目，返回项目条目
+func (m *ConfigManager) FindProject(name string) (ProjectEntry, bool) {
+	for _, p := range m.Get().Projects {
+		if p.Name == name {
+			return p, true
+		}
+	}
+	return ProjectEntry{}, false
 }
 
 // SetApiKey 保存 CurseForge API Key；传空串则清除

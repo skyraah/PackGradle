@@ -9,14 +9,9 @@ export interface ModInfo {
     "name": string;
 
     /**
-     * client / server / both
+     * client / server / both（中文标签由前端按翻译键渲染）
      */
     "side": string;
-
-    /**
-     * 中文标签
-     */
-    "side_cn": string;
 
     /**
      * pw.toml 中的 version（不一定存在）
@@ -68,21 +63,6 @@ export interface ModUpdateInfo {
 }
 
 /**
- * ModVersionResult 是一次批量获取中单个 mod 的结果
- */
-export interface ModVersionResult {
-    "id": string;
-    "name": string;
-
-    /**
-     * displayName
-     */
-    "version": string;
-    "ok": boolean;
-    "error": string;
-}
-
-/**
  * PackProject 描述一个已导入的 packwiz 项目
  */
 export interface PackProject {
@@ -121,46 +101,6 @@ export interface PackProject {
 export interface RefreshResult {
     "ok": boolean;
     "output": string;
-}
-
-/**
- * ToolInfo 描述一个工具的检测结果
- */
-export interface ToolInfo {
-    /**
-     * packwiz / prism-launcher
-     */
-    "name": string;
-
-    /**
-     * 是否已安装
-     */
-    "found": boolean;
-
-    /**
-     * 可执行文件或配置目录的完整路径
-     */
-    "path": string;
-
-    /**
-     * 发现来源: config / path / default-dir
-     */
-    "source": string;
-
-    /**
-     * 对用户的中文说明
-     */
-    "message": string;
-
-    /**
-     * 需要加入 PATH 的目录（无可加目录时为空）
-     */
-    "env_dir": string;
-
-    /**
-     * 该目录是否已在用户 PATH 中
-     */
-    "env_ok": boolean;
 }
 
 /**

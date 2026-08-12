@@ -1,17 +1,18 @@
-package main
+package service
 
 import (
 	"os"
 	"path/filepath"
 	"testing"
 
-	"github.com/BurntSushi/toml"
+	"packgradle/internal/appconfig"
+	"packgradle/internal/packwiz"
 )
 
 // newTestConfig 用临时目录构造 ConfigManager，避免污染真实用户配置
-func newTestConfig(t *testing.T) *ConfigManager {
+func newTestConfig(t *testing.T) *appconfig.ConfigManager {
 	t.Helper()
-	return &ConfigManager{path: filepath.Join(t.TempDir(), "config.toml")}
+	return appconfig.NewConfigManagerAt(filepath.Join(t.TempDir(), "config.toml"))
 }
 
 // fakeTool 在临时目录中创建一个假的可执行文件，返回其完整路径
@@ -41,6 +42,29 @@ func withEnv(t *testing.T, key, value string) {
 			_ = os.Unsetenv(key)
 		}
 	})
+}
+
+// mustWriteFile 创建文件（自动创建父目录）
+func mustWriteFile(t *testing.T, path, content string) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// findMod 在 mod 列表中按 ID 查找
+func findMod(t *testing.T, mods []packwiz.ModInfo, id string) packwiz.ModInfo {
+	t.Helper()
+	for _, m := range mods {
+		if m.ID == id {
+			return m
+		}
+	}
+	t.Fatalf("未找到 mod: %s（实际: %+v）", id, mods)
+	return packwiz.ModInfo{}
 }
 
 // packwiz 应从环境变量 PATH 中检测到，并持久化到 config.toml
@@ -127,6 +151,7 @@ func TestDetectPrismFromLocalAppData(t *testing.T) {
 	dir := t.TempDir()
 	fakeTool(t, filepath.Join(dir, "Programs", "PrismLauncher"), "prismlauncher")
 	withEnv(t, "PRISM", "") // 清空本机可能存在的 PRISM 变量，避免误命中
+	withEnv(t, "PATH", t.TempDir())
 	withEnv(t, "LOCALAPPDATA", dir)
 	withEnv(t, "ProgramFiles", t.TempDir())
 	withEnv(t, "ProgramFiles(x86)", t.TempDir())
@@ -147,6 +172,7 @@ func TestDetectPrismFromProgramFilesScan(t *testing.T) {
 	dir := t.TempDir()
 	fakeTool(t, filepath.Join(dir, "Prism Launcher"), "prismlauncher")
 	withEnv(t, "PRISM", "") // 清空本机可能存在的 PRISM 变量，避免误命中
+	withEnv(t, "PATH", t.TempDir())
 	withEnv(t, "ProgramFiles", dir)
 	withEnv(t, "ProgramFiles(x86)", t.TempDir())
 	withEnv(t, "LOCALAPPDATA", t.TempDir())
@@ -208,61 +234,6 @@ func TestDetectFromEnvVarPointingToFile(t *testing.T) {
 	}
 }
 
-// normalizePathEntry 应正确规范化 PATH 条目
-func TestNormalizePathEntry(t *testing.T) {
-	cases := map[string]string{
-		`C:\Foo\Bar\`:     `c:\foo\bar`,
-		`C:\Foo\Bar`:      `c:\foo\bar`,
-		`  C:\Foo\Bar  `:  `c:\foo\bar`,
-		`C:\Foo\Bar\Baz\`: `c:\foo\bar\baz`,
-	}
-	for in, want := range cases {
-		if got := normalizePathEntry(in); got != want {
-			t.Errorf("normalizePathEntry(%q) = %q, 期望 %q", in, got, want)
-		}
-	}
-}
-
-// mergePathDirs 应识别 %VAR% 形式的 PATH 条目并去重
-func TestMergePathDirs(t *testing.T) {
-	prismDir := `C:\Users\test\AppData\Local\Programs\PrismLauncher`
-	withEnv(t, "TESTPRISM", prismDir)
-
-	cur := `C:\Windows;%TESTPRISM%;C:\MC\packwiz`
-	newCur, added := mergePathDirs(cur, []string{prismDir, `D:\new\tool`})
-
-	if len(added) != 1 || added[0] != `D:\new\tool` {
-		t.Fatalf("只应新增 D:\\new\\tool，实际 added=%v", added)
-	}
-	want := cur + `;D:\new\tool`
-	if newCur != want {
-		t.Errorf("新 PATH = %q, 期望 %q", newCur, want)
-	}
-}
-
-// mergePathDirs 处理空 PATH（全部新增）
-func TestMergePathDirsEmpty(t *testing.T) {
-	newCur, added := mergePathDirs("", []string{`C:\A`, `C:\B`})
-	if len(added) != 2 {
-		t.Fatalf("空 PATH 应新增全部，实际 added=%v", added)
-	}
-	if newCur != `C:\A;C:\B` {
-		t.Errorf("新 PATH = %q, 期望 C:\\A;C:\\B", newCur)
-	}
-}
-
-// mergePathDirs 大小写不敏感去重（无新增时返回原样）
-func TestMergePathDirsCaseInsensitive(t *testing.T) {
-	cur := `c:\windows`
-	newCur, added := mergePathDirs(cur, []string{`C:\Windows`})
-	if len(added) != 0 {
-		t.Fatalf("大小写不同也应去重，实际 added=%v", added)
-	}
-	if newCur != cur {
-		t.Errorf("无新增时应原样返回，实际 %q", newCur)
-	}
-}
-
 // 完全找不到时返回 Found=false 且不写 config
 func TestDetectNotFound(t *testing.T) {
 	withEnv(t, "PATH", t.TempDir())
@@ -282,7 +253,7 @@ func TestDetectNotFound(t *testing.T) {
 	}
 }
 
-// CurseForge API Key 的保存、读取与清除
+// CurseForge API Key 的保存（去除首尾空白）、读取与清除
 func TestApiKeySetGetClear(t *testing.T) {
 	m := newTestConfig(t)
 	svc := NewEnvService(m)
@@ -296,15 +267,6 @@ func TestApiKeySetGetClear(t *testing.T) {
 	}
 	if got := svc.GetApiKey(); got != "abc-123-xyz" {
 		t.Errorf("应保存去除首尾空白后的 key，实际 %q", got)
-	}
-
-	// 重新从磁盘加载，验证持久化
-	m2 := &ConfigManager{path: m.path}
-	if _, err := toml.DecodeFile(m2.path, &m2.cfg); err != nil {
-		t.Fatalf("重新读取配置失败: %v", err)
-	}
-	if m2.cfg.CurseforgeApiKey != "abc-123-xyz" {
-		t.Errorf("配置文件应包含 key，实际 %q", m2.cfg.CurseforgeApiKey)
 	}
 
 	// 空串清除

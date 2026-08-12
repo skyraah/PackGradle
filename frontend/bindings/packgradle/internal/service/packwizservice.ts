@@ -12,14 +12,18 @@ import { Call as $Call, CancellablePromise as $CancellablePromise } from "@wails
 
 // eslint-disable-next-line @typescript-eslint/ban-ts-comment
 // @ts-ignore: Unused imports
+import * as packwiz$0 from "../packwiz/models.js";
+
+// eslint-disable-next-line @typescript-eslint/ban-ts-comment
+// @ts-ignore: Unused imports
 import * as $models from "./models.js";
 
 /**
  * CheckUpdates 通过 packwiz 官方 update 命令检查项目更新（不实际应用）：
  * 运行 `packwiz update --all` 并向确认提示喂入 "n"，使其打印更新列表后取消
  */
-export function CheckUpdates(projectName: string): $CancellablePromise<$models.UpdateCheckResult> {
-    return $Call.ByID(752923826, projectName);
+export function CheckUpdates(projectName: string): $CancellablePromise<packwiz$0.UpdateCheckResult> {
+    return $Call.ByID(753090219, projectName);
 }
 
 /**
@@ -27,50 +31,50 @@ export function CheckUpdates(projectName: string): $CancellablePromise<$models.U
  * 结果写入本地缓存并逐条返回
  */
 export function FetchAllModVersions(projectName: string): $CancellablePromise<$models.ModVersionResult[] | null> {
-    return $Call.ByID(3715337844, projectName);
+    return $Call.ByID(316089995, projectName);
 }
 
 /**
  * FetchModVersion 获取单个 mod 的 CurseForge 版本信息，写入本地缓存，
  * 返回带缓存字段的 ModInfo
  */
-export function FetchModVersion(projectName: string, modID: string): $CancellablePromise<$models.ModInfo> {
-    return $Call.ByID(980627508, projectName, modID);
+export function FetchModVersion(projectName: string, modID: string): $CancellablePromise<packwiz$0.ModInfo> {
+    return $Call.ByID(1433898967, projectName, modID);
 }
 
 /**
  * ImportProject 导入一个 pack.toml 并返回解析结果（同名项目会覆盖路径）
  */
-export function ImportProject(packTomlPath: string): $CancellablePromise<$models.PackProject> {
-    return $Call.ByID(2950539706, packTomlPath);
+export function ImportProject(packTomlPath: string): $CancellablePromise<packwiz$0.PackProject> {
+    return $Call.ByID(2671061045, packTomlPath);
 }
 
 /**
  * ListProjects 返回所有已导入项目的解析结果
  */
-export function ListProjects(): $CancellablePromise<$models.PackProject[] | null> {
-    return $Call.ByID(2506904462);
+export function ListProjects(): $CancellablePromise<packwiz$0.PackProject[] | null> {
+    return $Call.ByID(987411783);
 }
 
 /**
  * RefreshProject 在项目目录执行 `packwiz refresh` 并返回输出
  */
-export function RefreshProject(name: string): $CancellablePromise<$models.RefreshResult> {
-    return $Call.ByID(3050250452, name);
+export function RefreshProject(name: string): $CancellablePromise<packwiz$0.RefreshResult> {
+    return $Call.ByID(3364809645, name);
 }
 
 /**
  * RemoveProject 按名称移除项目，返回剩余项目列表
  */
-export function RemoveProject(name: string): $CancellablePromise<$models.PackProject[] | null> {
-    return $Call.ByID(4221499969, name);
+export function RemoveProject(name: string): $CancellablePromise<packwiz$0.PackProject[] | null> {
+    return $Call.ByID(4224803538, name);
 }
 
 /**
  * UpdateMods 应用更新：modName 非空时更新单个（packwiz update <name>，无确认直接应用），
- * 为空时更新全部（packwiz update --all -y）。
- * name 为 .pw.toml 文件名（即 mod id）
+ * 为空时更新全部（packwiz update --all -y）。name 为 .pw.toml 文件名（即 mod id）。
+ * 更新成功后重建版本缓存：删除旧 file-id 的缓存条目并自动获取当前版本，避免缓存堆积
  */
-export function UpdateMods(projectName: string, modName: string): $CancellablePromise<$models.RefreshResult> {
-    return $Call.ByID(2687918632, projectName, modName);
+export function UpdateMods(projectName: string, modName: string): $CancellablePromise<packwiz$0.RefreshResult> {
+    return $Call.ByID(3996989405, projectName, modName);
 }

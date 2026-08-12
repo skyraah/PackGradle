@@ -1,32 +1,48 @@
 <script setup lang="ts">
 import { onMounted, ref } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { Dialogs } from '@wailsio/runtime'
-import { PackwizService } from '../../bindings/packgradle'
-import type { PackProject, ModInfo, UpdateCheckResult } from '../../bindings/packgradle/models'
-import { navigate } from '../nav'
+import { PackwizService } from '../../bindings/packgradle/internal/service'
+import type { PackProject, ModInfo, UpdateCheckResult } from '../../bindings/packgradle/internal/packwiz'
+import { useSnackbar } from '../composables/useSnackbar'
+import { useApiKeyGuide } from '../composables/useApiKeyGuide'
+import { errText, displayText } from '../utils/errors'
+import { isCfMod, cfReleaseKey, cfDateText, loaderChips, sideColors } from '../utils/cf'
+
+const { t } = useI18n()
 
 const projects = ref<PackProject[]>([])
 const loading = ref(false)
 const importing = ref(false)
 const expanded = ref<string | null>(null)
-const snackbar = ref(false)
-const snackbarMsg = ref('')
+const { snackbar, snackbarMsg, show } = useSnackbar()
 const refreshing = ref<string | null>(null)
 const refreshOutput = ref('')
 const outputDialog = ref(false)
 
-const loaderChips: Record<string, { label: string; color: string }> = {
-    fabric: { label: 'Fabric', color: 'orange' },
-    forge: { label: 'Forge', color: 'green' },
-    neoforge: { label: 'NeoForge', color: 'blue' },
-    quilt: { label: 'Quilt', color: 'pink' },
-    liteloader: { label: 'LiteLoader', color: 'teal' },
+// —— CurseForge 版本获取 ——
+const fetching = ref<string | null>(null) // 单行获取中的 mod id
+const fetchingAll = ref<string | null>(null) // 批量获取中的项目名
+const { apiKeyDialog, handleError, goConfigApiKey } = useApiKeyGuide()
+
+function loaderChip(loader: string) {
+    return loaderChips[loader] ?? { label: loader, color: 'grey' }
 }
 
-const sideColors: Record<string, string> = {
-    client: 'blue',
-    server: 'orange',
-    both: 'green',
+// side 中文标签（side.* 翻译键，缺失时显示未知）
+function sideText(mod: ModInfo): string {
+    return mod.side ? t(`side.${mod.side}`) : t('side.unknown')
+}
+
+// releaseType 中文标签（cf.release.* 翻译键）
+function releaseText(tp: number): string {
+    const key = cfReleaseKey(tp)
+    return key ? t(key) : ''
+}
+
+// 项目解析失败原因（错误码 JSON 文本）→ 用户可读文本
+function projectError(proj: PackProject): string {
+    return displayText(proj.error)
 }
 
 async function load() {
@@ -42,7 +58,7 @@ async function importProject() {
     let picked: string | string[]
     try {
         picked = await Dialogs.OpenFile({
-            Title: '选择 pack.toml',
+            Title: t('projects.pickPackToml'),
             CanChooseFiles: true,
             Filters: [{ DisplayName: 'pack.toml', Pattern: 'pack.toml' }],
         })
@@ -53,13 +69,11 @@ async function importProject() {
     importing.value = true
     try {
         const proj = await PackwizService.ImportProject(String(picked))
-        snackbarMsg.value = `已导入项目「${proj.name}」（${(proj.mods ?? []).length} 个 mod）`
-        snackbar.value = true
+        show(t('projects.imported', [proj.name, (proj.mods ?? []).length]))
         await load()
         expanded.value = proj.name
     } catch (e) {
-        snackbarMsg.value = '导入失败: ' + String(e)
-        snackbar.value = true
+        show(t('projects.importFailed', [errText(e)]))
     } finally {
         importing.value = false
     }
@@ -69,17 +83,17 @@ async function removeProject(proj: PackProject) {
     let confirmed: string
     try {
         confirmed = await Dialogs.Question({
-            Title: '确认移除',
-            Message: `确定从列表中移除项目「${proj.name}」吗？（不会删除磁盘上的文件）`,
+            Title: t('projects.removeTitle'),
+            Message: t('projects.removeMessage', [proj.name]),
             Buttons: [
-                { Label: '移除' },
-                { Label: '取消', IsCancel: true },
+                { Label: t('projects.removeBtn') },
+                { Label: t('projects.cancel'), IsCancel: true },
             ],
         })
     } catch {
         return // 用户取消对话框，静默忽略
     }
-    if (confirmed !== 'Yes' && confirmed !== '移除') return
+    if (confirmed !== 'Yes' && confirmed !== t('projects.removeBtn')) return
     projects.value = (await PackwizService.RemoveProject(proj.name)) ?? []
     if (expanded.value === proj.name) expanded.value = null
 }
@@ -88,61 +102,13 @@ async function refreshProject(proj: PackProject) {
     refreshing.value = proj.name
     try {
         const result = await PackwizService.RefreshProject(proj.name)
-        outputTitle.value = 'packwiz refresh 输出'
-        refreshOutput.value = result.output || (result.ok ? 'packwiz refresh 执行成功（无输出）' : '执行失败')
+        outputTitle.value = t('projects.refreshOutputTitle')
+        refreshOutput.value = displayText(result.output || (result.ok ? t('projects.outputSuccess', ['packwiz refresh']) : t('projects.outputFailed')))
         outputDialog.value = true
         await load()
     } finally {
         refreshing.value = null
     }
-}
-
-function loaderChip(loader: string) {
-    return loaderChips[loader] ?? { label: loader, color: 'grey' }
-}
-
-// —— CurseForge 版本获取 ——
-const fetching = ref<string | null>(null) // 单行获取中的 mod id
-const fetchingAll = ref<string | null>(null) // 批量获取中的项目名
-const apiKeyDialog = ref(false) // 未配置/无效 API Key 的引导弹窗
-
-// 稳健提取 Wails 调用错误信息（兼容 Error / string / 对象等形态）
-function errText(e: unknown): string {
-    if (e instanceof Error) return e.message
-    if (typeof e === 'string') return e
-    if (e && typeof e === 'object' && 'message' in e) return String((e as { message: unknown }).message)
-    return String(e)
-}
-
-// 统一错误处理：涉及 API Key 的问题弹窗引导配置，其余用 snackbar 提示
-function handleError(e: unknown) {
-    const msg = errText(e)
-    if (msg.includes('API Key')) {
-        apiKeyDialog.value = true
-        return
-    }
-    snackbarMsg.value = msg
-    snackbar.value = true
-}
-
-function goConfigApiKey() {
-    apiKeyDialog.value = false
-    navigate('env')
-}
-
-function isCfMod(mod: ModInfo): boolean {
-    return (mod.cf_project_id ?? 0) > 0 && (mod.cf_file_id ?? 0) > 0
-}
-
-function cfReleaseLabel(t: number): string {
-    return t === 1 ? '正式版' : t === 2 ? '测试版' : t === 3 ? 'Alpha' : ''
-}
-
-function cfDateText(iso: string): string {
-    if (!iso) return ''
-    const d = new Date(iso)
-    if (isNaN(d.getTime())) return ''
-    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
 }
 
 async function fetchModVersion(proj: PackProject, mod: ModInfo) {
@@ -151,10 +117,9 @@ async function fetchModVersion(proj: PackProject, mod: ModInfo) {
         const updated = await PackwizService.FetchModVersion(proj.name, mod.id)
         const target = proj.mods?.find(m => m.id === mod.id)
         if (target && updated) Object.assign(target, updated)
-        snackbarMsg.value = `已获取「${updated?.name ?? mod.name}」版本`
-        snackbar.value = true
+        show(t('projects.versionFetched', [updated?.name ?? mod.name]))
     } catch (e) {
-        handleError(e)
+        handleError(e, show)
     } finally {
         fetching.value = null
     }
@@ -165,11 +130,10 @@ async function fetchAllVersions(proj: PackProject) {
     try {
         const results = (await PackwizService.FetchAllModVersions(proj.name)) ?? []
         const ok = results.filter(r => r.ok).length
-        snackbarMsg.value = `已获取 ${ok}/${results.length} 个 mod 版本`
-        snackbar.value = true
+        show(t('projects.versionsFetched', [ok, results.length]))
         await load()
     } catch (e) {
-        handleError(e)
+        handleError(e, show)
     } finally {
         fetchingAll.value = null
     }
@@ -181,7 +145,7 @@ const checkingProj = ref<PackProject | null>(null) // 检查结果对应的项�
 const checkResult = ref<UpdateCheckResult | null>(null)
 const checkDialog = ref(false)
 const updatingAll = ref(false) // 正在应用全部更新
-const outputTitle = ref('packwiz refresh 输出') // 命令输出对话框标题
+const outputTitle = ref('') // 命令输出对话框标题
 
 // 检查：运行 `packwiz update --all` 并喂入 "n"，只列出可更新项不实际应用
 async function checkUpdates(proj: PackProject) {
@@ -193,11 +157,9 @@ async function checkUpdates(proj: PackProject) {
         checkDialog.value = true
         const upd = result?.updates?.length ?? 0
         const err = result?.errors?.length ?? 0
-        snackbarMsg.value = `检查完成：${upd} 个有更新${err ? `，${err} 个失败/跳过` : ''}`
-        snackbar.value = true
+        show(err > 0 ? t('projects.checkDoneWithErrors', [upd, err]) : t('projects.checkDone', [upd]))
     } catch (e) {
-        snackbarMsg.value = String(e)
-        snackbar.value = true
+        show(errText(e))
     } finally {
         checking.value = null
     }
@@ -210,14 +172,13 @@ async function applyAllUpdates() {
     updatingAll.value = true
     try {
         const result = await PackwizService.UpdateMods(proj.name, '')
-        outputTitle.value = 'packwiz update 输出'
-        refreshOutput.value = result.output || (result.ok ? 'packwiz update 执行成功（无输出）' : '执行失败')
+        outputTitle.value = t('projects.updateOutputTitle')
+        refreshOutput.value = displayText(result.output || (result.ok ? t('projects.outputSuccess', ['packwiz update']) : t('projects.outputFailed')))
         outputDialog.value = true
         checkDialog.value = false
         await load()
     } catch (e) {
-        snackbarMsg.value = String(e)
-        snackbar.value = true
+        show(errText(e))
     } finally {
         updatingAll.value = false
     }
@@ -230,13 +191,13 @@ onMounted(load)
     <div>
         <v-row class="align-center mb-4">
             <v-col>
-                <h2 class="text-h5">项目管理</h2>
-                <div class="text-body-2 text-medium-emphasis">导入 pack.toml，以视图管理你的 packwiz 项目与 mod</div>
+                <h2 class="text-h5">{{ t('projects.title') }}</h2>
+                <div class="text-body-2 text-medium-emphasis">{{ t('projects.subtitle') }}</div>
             </v-col>
             <v-col cols="auto">
                 <v-btn variant="text" icon="mdi-refresh" :loading="loading" @click="load" />
                 <v-btn color="primary" prepend-icon="mdi-folder-open" :loading="importing" @click="importProject">
-                    导入 pack.toml
+                    {{ t('projects.importBtn') }}
                 </v-btn>
             </v-col>
         </v-row>
@@ -248,7 +209,7 @@ onMounted(load)
             class="mb-4"
             prepend-icon="mdi-information-outline"
         >
-            尚未导入任何项目。点击右上角「导入 pack.toml」，选择你的整合包项目根目录下的 pack.toml 文件。
+            {{ t('projects.empty') }}
         </v-alert>
 
         <v-progress-linear v-if="loading" indeterminate class="mb-4" />
@@ -262,7 +223,7 @@ onMounted(load)
                 </template>
                 <template #title>
                     {{ proj.name }}
-                    <v-chip v-if="proj.error" size="x-small" color="error" class="ml-2">解析失败</v-chip>
+                    <v-chip v-if="proj.error" size="x-small" color="error" class="ml-2">{{ t('projects.parseFailed') }}</v-chip>
                 </template>
                 <template #subtitle>
                     <span v-if="!proj.error">
@@ -276,15 +237,15 @@ onMounted(load)
                             {{ loaderChip(proj.modloader).label }} {{ proj.modloader_version }}
                         </v-chip>
                         <v-chip v-if="proj.minecraft" size="x-small" variant="tonal" class="mr-2">
-                            Minecraft {{ proj.minecraft }}
+                            {{ t('projects.minecraft', [proj.minecraft]) }}
                         </v-chip>
                         <v-chip v-if="proj.version" size="x-small" variant="tonal" class="mr-2">
                             v{{ proj.version }}
                         </v-chip>
-                        <v-chip v-if="proj.author" size="x-small" variant="tonal">作者: {{ proj.author }}</v-chip>
-                        <span class="ml-2 text-caption text-medium-emphasis">{{ (proj.mods ?? []).length }} 个 mod</span>
+                        <v-chip v-if="proj.author" size="x-small" variant="tonal">{{ t('projects.author', [proj.author]) }}</v-chip>
+                        <span class="ml-2 text-caption text-medium-emphasis">{{ t('projects.modCount', [(proj.mods ?? []).length]) }}</span>
                     </span>
-                    <span v-else class="text-error">{{ proj.error }}</span>
+                    <span v-else class="text-error">{{ projectError(proj) }}</span>
                 </template>
                 <template #append>
                     <v-btn
@@ -292,7 +253,7 @@ onMounted(load)
                         icon="mdi-update"
                         variant="text"
                         size="small"
-                        title="检查全部 mod 更新（packwiz）"
+                        :title="t('projects.tooltipCheckUpdates')"
                         :loading="checking === proj.name"
                         @click.stop="checkUpdates(proj)"
                     />
@@ -301,7 +262,7 @@ onMounted(load)
                         icon="mdi-cloud-download"
                         variant="text"
                         size="small"
-                        title="获取全部 mod 版本（CurseForge）"
+                        :title="t('projects.tooltipFetchAll')"
                         :loading="fetchingAll === proj.name"
                         @click.stop="fetchAllVersions(proj)"
                     />
@@ -310,8 +271,8 @@ onMounted(load)
                         icon="mdi-refresh"
                         variant="text"
                         size="small"
+                        :title="t('projects.tooltipRefresh')"
                         :loading="refreshing === proj.name"
-                        title="packwiz refresh"
                         @click.stop="refreshProject(proj)"
                     />
                     <v-btn
@@ -319,7 +280,7 @@ onMounted(load)
                         variant="text"
                         size="small"
                         color="error"
-                        title="移除项目"
+                        :title="t('projects.tooltipRemove')"
                         @click.stop="removeProject(proj)"
                     />
                 </template>
@@ -331,11 +292,11 @@ onMounted(load)
                     <v-table density="compact">
                         <thead>
                             <tr>
-                                <th>mod</th>
-                                <th class="w-25">side</th>
-                                <th class="w-30">文件</th>
-                                <th class="w-25">版本</th>
-                                <th class="text-right">操作</th>
+                                <th>{{ t('projects.colMod') }}</th>
+                                <th class="w-25">{{ t('projects.colSide') }}</th>
+                                <th class="w-30">{{ t('projects.colFile') }}</th>
+                                <th class="w-25">{{ t('projects.colVersion') }}</th>
+                                <th class="text-right">{{ t('projects.colAction') }}</th>
                             </tr>
                         </thead>
                         <tbody>
@@ -350,7 +311,7 @@ onMounted(load)
                                         :color="sideColors[mod.side] ?? 'grey'"
                                         variant="tonal"
                                     >
-                                        {{ mod.side_cn || '未知' }}
+                                        {{ sideText(mod) }}
                                     </v-chip>
                                 </td>
                                 <td class="text-caption">{{ mod.file || '—' }}</td>
@@ -358,14 +319,14 @@ onMounted(load)
                                     <!-- 本地版本优先；CurseForge displayName 与文件名一致时不再重复显示，改为发布日期 -->
                                     <span v-if="mod.version" :title="mod.cf_version || ''">{{ mod.version }}</span>
                                     <span v-else-if="mod.cf_version && mod.cf_version !== mod.file">{{ mod.cf_version }}</span>
-                                    <span v-else-if="mod.cf_version">发布 {{ cfDateText(mod.cf_file_date) || '—' }}</span>
+                                    <span v-else-if="mod.cf_version">{{ t('projects.published') }} {{ cfDateText(mod.cf_file_date) || '—' }}</span>
                                     <span v-else>—</span>
                                     <div v-if="mod.cf_version && mod.cf_version !== mod.file" class="text-medium-emphasis">
-                                        {{ cfReleaseLabel(mod.cf_release_type) }}
+                                        {{ releaseText(mod.cf_release_type) }}
                                         <template v-if="mod.cf_release_type && mod.cf_file_date"> · </template>{{ cfDateText(mod.cf_file_date) }}
                                     </div>
-                                    <div v-else-if="mod.cf_version && cfReleaseLabel(mod.cf_release_type)" class="text-medium-emphasis">
-                                        {{ cfReleaseLabel(mod.cf_release_type) }}
+                                    <div v-else-if="mod.cf_version && releaseText(mod.cf_release_type)" class="text-medium-emphasis">
+                                        {{ releaseText(mod.cf_release_type) }}
                                     </div>
                                 </td>
                                 <td class="text-right">
@@ -376,13 +337,13 @@ onMounted(load)
                                         variant="text"
                                         :loading="fetching === mod.id"
                                         :disabled="fetchingAll !== null"
-                                        :title="mod.cf_version ? '重新获取版本' : '从 CurseForge 获取版本'"
+                                        :title="mod.cf_version ? t('projects.tooltipRefetch') : t('projects.tooltipFetch')"
                                         @click="fetchModVersion(proj, mod)"
                                     />
                                 </td>
                             </tr>
                             <tr v-if="(proj.mods ?? []).length === 0">
-                                <td colspan="5" class="text-center text-medium-emphasis">未检测到 mod</td>
+                                <td colspan="5" class="text-center text-medium-emphasis">{{ t('projects.noMods') }}</td>
                             </tr>
                         </tbody>
                     </v-table>
@@ -398,7 +359,7 @@ onMounted(load)
                 </v-card-text>
                 <v-card-actions>
                     <v-spacer />
-                    <v-btn variant="tonal" @click="outputDialog = false">关闭</v-btn>
+                    <v-btn variant="tonal" @click="outputDialog = false">{{ t('projects.close') }}</v-btn>
                 </v-card-actions>
             </v-card>
         </v-dialog>
@@ -407,7 +368,7 @@ onMounted(load)
             <v-card>
                 <v-card-title class="text-subtitle-1">
                     <v-icon icon="mdi-update" class="mr-1" />
-                    更新检查结果
+                    {{ t('projects.checkDialogTitle') }}
                 </v-card-title>
                 <v-card-text>
                     <v-alert
@@ -417,7 +378,7 @@ onMounted(load)
                         density="compact"
                         class="mb-3"
                     >
-                        packwiz update 执行失败（退出码非 0），以下为输出
+                        {{ t('projects.checkFailed') }}
                     </v-alert>
                     <v-alert
                         v-else-if="(checkResult?.updates?.length ?? 0) === 0 && (checkResult?.errors?.length ?? 0) === 0"
@@ -426,10 +387,10 @@ onMounted(load)
                         density="compact"
                         class="mb-3"
                     >
-                        所有 mod 均是最新版本
+                        {{ t('projects.allUpToDate') }}
                     </v-alert>
                     <v-list v-if="(checkResult?.updates?.length ?? 0) > 0" density="compact" class="mb-3">
-                        <v-list-subheader>有更新（{{ checkResult?.updates?.length }}）</v-list-subheader>
+                        <v-list-subheader>{{ t('projects.hasUpdates', [checkResult?.updates?.length]) }}</v-list-subheader>
                         <v-list-item v-for="u in checkResult?.updates ?? []" :key="u.name">
                             <v-list-item-title class="text-body-2">{{ u.name }}</v-list-item-title>
                             <v-list-item-subtitle class="text-caption">
@@ -440,10 +401,10 @@ onMounted(load)
                         </v-list-item>
                     </v-list>
                     <v-list v-if="(checkResult?.errors?.length ?? 0) > 0" density="compact" class="mb-3">
-                        <v-list-subheader>失败 / 跳过（{{ checkResult?.errors?.length }}）</v-list-subheader>
+                        <v-list-subheader>{{ t('projects.failedSkipped', [checkResult?.errors?.length]) }}</v-list-subheader>
                         <v-list-item v-for="e in checkResult?.errors ?? []" :key="e.name + e.error">
                             <v-list-item-title class="text-caption">
-                                {{ e.name }}：<span class="text-error">{{ e.error }}</span>
+                                {{ e.name }}：<span class="text-error">{{ displayText(e.error) }}</span>
                             </v-list-item-title>
                         </v-list-item>
                     </v-list>
@@ -451,7 +412,7 @@ onMounted(load)
                 </v-card-text>
                 <v-card-actions>
                     <v-spacer />
-                    <v-btn variant="text" @click="checkDialog = false">关闭</v-btn>
+                    <v-btn variant="text" @click="checkDialog = false">{{ t('projects.close') }}</v-btn>
                     <v-btn
                         v-if="(checkResult?.updates?.length ?? 0) > 0"
                         color="primary"
@@ -459,7 +420,7 @@ onMounted(load)
                         :loading="updatingAll"
                         @click="applyAllUpdates"
                     >
-                        应用全部更新
+                        {{ t('projects.applyAll') }}
                     </v-btn>
                 </v-card-actions>
             </v-card>
@@ -469,16 +430,13 @@ onMounted(load)
             <v-card>
                 <v-card-title class="d-flex align-center">
                     <v-icon icon="mdi-key-alert-outline" color="warning" class="mr-2" />
-                    需要 CurseForge API Key
+                    {{ t('projects.apiKeyDialogTitle') }}
                 </v-card-title>
-                <v-card-text>
-                    获取 mod 版本信息需要有效的 CurseForge API Key。请前往「环境配置」页面填写你的
-                    API Key（可在 CurseForge 开发者后台免费申请）。
-                </v-card-text>
+                <v-card-text>{{ t('projects.apiKeyDialogText') }}</v-card-text>
                 <v-card-actions>
                     <v-spacer />
-                    <v-btn variant="text" @click="apiKeyDialog = false">关闭</v-btn>
-                    <v-btn color="primary" variant="tonal" @click="goConfigApiKey">去配置 API Key</v-btn>
+                    <v-btn variant="text" @click="apiKeyDialog = false">{{ t('projects.close') }}</v-btn>
+                    <v-btn color="primary" variant="tonal" @click="goConfigApiKey">{{ t('projects.goConfigureApiKey') }}</v-btn>
                 </v-card-actions>
             </v-card>
         </v-dialog>

@@ -1,4 +1,4 @@
-package main
+package packwiz
 
 import (
 	"os"
@@ -8,7 +8,7 @@ import (
 
 // 现代 packwiz 项目：pack.toml + index.toml（meta 文件索引）+ mods/ 下扁平的 .pw.toml。
 // 验证通过 index.toml 的 mods/ 条目驱动扫描，并覆盖直接放入的 jar 与索引存在但文件缺失的情况。
-func TestParsePackTomlWithIndex(t *testing.T) {
+func TestParseProjectWithIndex(t *testing.T) {
 	dir := t.TempDir()
 	mustWriteFile(t, filepath.Join(dir, "pack.toml"), `name = "Collapse"
 author = "PickAID"
@@ -91,9 +91,9 @@ version = "mc1.20.1-0.5.8"
 	mustWriteFile(t, filepath.Join(dir, "mods", "mcrd-cn.ksmcbrigade-1.20.1-4.jar"), "jar-bytes")
 	// 注意：mods/ghost.pw.toml 不写入磁盘，模拟索引存在但文件缺失
 
-	proj, err := parsePackToml(filepath.Join(dir, "pack.toml"))
+	proj, err := ParseProject(filepath.Join(dir, "pack.toml"))
 	if err != nil {
-		t.Fatalf("parsePackToml: %v", err)
+		t.Fatalf("ParseProject: %v", err)
 	}
 	if proj.Name != "Collapse" || proj.Minecraft != "1.20.1" || proj.Modloader != "forge" || proj.ModloaderVersion != "47.4.10" {
 		t.Errorf("元信息解析不正确: %+v", proj)
@@ -103,7 +103,7 @@ version = "mc1.20.1-0.5.8"
 	}
 
 	create := findMod(t, proj.Mods, "create")
-	if create.Name != "Create" || create.Side != "both" || create.SideCN != "通用" ||
+	if create.Name != "Create" || create.Side != "both" ||
 		create.File != "create-1.20.1-6.0.8.jar" || filepath.Base(create.Path) != "create.pw.toml" {
 		t.Errorf("mod 元数据解析不正确: %+v", create)
 	}
@@ -123,7 +123,7 @@ version = "mc1.20.1-0.5.8"
 
 	// modrinth 源：版本应从 [update.modrinth] 表提取
 	sodium := findMod(t, proj.Mods, "sodium")
-	if sodium.Version != "mc1.20.1-0.5.8" || sodium.Side != "client" || sodium.SideCN != "客户端" {
+	if sodium.Version != "mc1.20.1-0.5.8" || sodium.Side != "client" {
 		t.Errorf("[update.modrinth] 版本提取不正确: %+v", sodium)
 	}
 	// 非 curseforge 源不应有 CF ID
@@ -133,7 +133,7 @@ version = "mc1.20.1-0.5.8"
 
 	jar := findMod(t, proj.Mods, "mcrd-cn.ksmcbrigade-1.20.1-4")
 	if jar.Name != "mcrd-cn.ksmcbrigade-1.20.1-4" || jar.File != "mcrd-cn.ksmcbrigade-1.20.1-4.jar" ||
-		jar.Side != "" || jar.SideCN != "" {
+		jar.Side != "" {
 		t.Errorf("直接放入的 jar 应仅以文件名展示: %+v", jar)
 	}
 
@@ -144,7 +144,7 @@ version = "mc1.20.1-0.5.8"
 }
 
 // 旧式 packwiz 项目：无 index.toml，mods/<name>/pw.toml 目录结构，应回退到目录扫描
-func TestParsePackTomlLegacyFallback(t *testing.T) {
+func TestParseProjectLegacyFallback(t *testing.T) {
 	dir := t.TempDir()
 	packToml := filepath.Join(dir, "pack.toml")
 	packContent := `name = "Test Pack"
@@ -184,9 +184,9 @@ version = "0.5.8"
 		t.Fatal(err)
 	}
 
-	proj, err := parsePackToml(packToml)
+	proj, err := ParseProject(packToml)
 	if err != nil {
-		t.Fatalf("parsePackToml: %v", err)
+		t.Fatalf("ParseProject: %v", err)
 	}
 	if proj.Name != "Test Pack" || proj.Minecraft != "1.20.1" || proj.Modloader != "fabric" || proj.ModloaderVersion != "0.15.11" {
 		t.Errorf("元信息解析不正确: %+v", proj)
@@ -195,12 +195,29 @@ version = "0.5.8"
 		t.Fatalf("应扫描到 1 个 mod，实际 %d", len(proj.Mods))
 	}
 	m := proj.Mods[0]
-	if m.Name != "Sodium" || m.Side != "both" || m.SideCN != "通用" || m.File != "sodium-fabric-0.5.8.jar" {
+	if m.Name != "Sodium" || m.Side != "both" || m.File != "sodium-fabric-0.5.8.jar" {
 		t.Errorf("mod 解析不正确: %+v", m)
 	}
 	// 顶层无 version，应从 [update.fabric] 表回退提取
 	if m.Version != "0.5.8" {
 		t.Errorf("[update.fabric] 版本提取不正确: %+v", m)
+	}
+}
+
+// pack.toml 缺失 / 无 name 字段时应报错
+func TestParseProjectErrors(t *testing.T) {
+	dir := t.TempDir()
+
+	if _, err := ParseProject(filepath.Join(dir, "missing.toml")); err == nil {
+		t.Error("文件缺失应报错")
+	}
+
+	bad := filepath.Join(dir, "pack.toml")
+	if err := os.WriteFile(bad, []byte("version = \"1.0\"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ParseProject(bad); err == nil {
+		t.Error("缺少 name 字段应报错")
 	}
 }
 
