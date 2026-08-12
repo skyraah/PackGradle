@@ -103,6 +103,17 @@ func (s *PackwizService) RemoveProject(name string) []PackProject {
 	return s.ListProjects()
 }
 
+// newHiddenCmd 创建 packwiz 子进程命令，并确保 GUI 程序下不弹出控制台窗口：
+// CREATE_NO_WINDOW 让 Windows 完全不创建控制台（仅隐藏不够，窗口仍会短暂出现）
+func newHiddenCmd(name string, args ...string) *exec.Cmd {
+	cmd := exec.Command(name, args...)
+	cmd.SysProcAttr = &syscall.SysProcAttr{
+		HideWindow:    true,       // 隐藏控制台窗口
+		CreationFlags: 0x08000000, // CREATE_NO_WINDOW：完全不创建控制台
+	}
+	return cmd
+}
+
 // RefreshProject 在项目目录执行 `packwiz refresh` 并返回输出
 func (s *PackwizService) RefreshProject(name string) RefreshResult {
 	projectDir := ""
@@ -120,9 +131,8 @@ func (s *PackwizService) RefreshProject(name string) RefreshResult {
 	if err != nil {
 		return RefreshResult{OK: false, Output: err.Error()}
 	}
-	cmd := exec.Command(packwiz, "refresh")
+	cmd := newHiddenCmd(packwiz, "refresh")
 	cmd.Dir = projectDir
-	cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true} // GUI 程序下隐藏子进程控制台窗口
 	out, err := cmd.CombinedOutput()
 	return RefreshResult{OK: err == nil, Output: strings.TrimSpace(string(out))}
 }

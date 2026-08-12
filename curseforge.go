@@ -5,12 +5,10 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strings"
 	"sync"
-	"syscall"
 	"time"
 )
 
@@ -269,10 +267,9 @@ func (s *PackwizService) CheckUpdates(projectName string) (UpdateCheckResult, er
 	if err != nil {
 		return UpdateCheckResult{OK: false, Output: err.Error()}, nil
 	}
-	cmd := exec.Command(packwiz, "update", "--all")
+	cmd := newHiddenCmd(packwiz, "update", "--all")
 	cmd.Dir = proj.Path
-	cmd.Stdin = strings.NewReader("n\n")            // 确认输入为 n：只打印更新列表，不应用
-	cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true} // GUI 程序下隐藏子进程控制台窗口
+	cmd.Stdin = strings.NewReader("n\n") // 确认输入为 n：只打印更新列表，不应用
 	out, err := cmd.CombinedOutput()
 	output := strings.TrimSpace(string(out))
 	updates, errors := parseUpdateOutput(output)
@@ -297,9 +294,8 @@ func (s *PackwizService) UpdateMods(projectName, modName string) (RefreshResult,
 	} else {
 		args = append(args, "--all", "-y")
 	}
-	cmd := exec.Command(packwiz, args...)
+	cmd := newHiddenCmd(packwiz, args...)
 	cmd.Dir = proj.Path
-	cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true} // GUI 程序下隐藏子进程控制台窗口
 	out, err := cmd.CombinedOutput()
 	return RefreshResult{OK: err == nil, Output: strings.TrimSpace(string(out))}, nil
 }
