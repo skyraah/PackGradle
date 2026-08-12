@@ -3,6 +3,7 @@ package service
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"packgradle/internal/appconfig"
@@ -976,5 +977,99 @@ func TestSelectInstanceFilesJunctionRejected(t *testing.T) {
 	files, _ := svc.ListInstanceDirFiles(proj, "config")
 	if len(files) != 0 {
 		t.Errorf("junction 模式实例侧列表应为空，实际 %v", files)
+	}
+}
+
+// 推送：项目 mod 元数据 → 实例 mods/.index（Prism 兼容格式，含 x-prismlauncher-* 字段）
+func TestPushMeta(t *testing.T) {
+	_, _ = makePrismFixture(t)
+	cm := newTestConfig(t)
+	svc := newPrismServiceWithMemory(cm)
+	proj, _ := makeLinkProject(t, cm, "Collapse")
+	entry, _ := cm.FindProject(proj)
+	// 项目 mods 下两个 pw.toml（含 version 与 update 源）
+	mustWriteFile(t, filepath.Join(entry.Path, "mods", "moda.pw.toml"),
+		"name = \"Mod A\"\nfilename = \"moda.jar\"\nside = \"both\"\nversion = \"1.0.0\"\n\n[download]\nurl = \"https://x/moda.jar\"\nhash-format = \"sha256\"\nhash = \"aa\"\n")
+	mustWriteFile(t, filepath.Join(entry.Path, "mods", "modb.pw.toml"),
+		"name = \"Mod B\"\nfilename = \"modb.jar\"\nside = \"client\"\n\n[update.modrinth]\nmod-id = \"xyz\"\nversion = \"2.0.0\"\n")
+	// index.toml 收录（权威列表）
+	mustWriteFile(t, filepath.Join(entry.Path, "index.toml"),
+		"[[files]]\nfile = \"mods/moda.pw.toml\"\nhash = \"aa\"\n\n[[files]]\nfile = \"mods/modb.pw.toml\"\nhash = \"bb\"\n")
+	if err := svc.LinkProject(proj, "Collapse"); err != nil {
+		t.Fatal(err)
+	}
+
+	count, err := svc.PushMeta(proj)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if count != 2 {
+		t.Fatalf("应推送 2 个 mod，实际 %d", count)
+	}
+	instancesDir, _ := svc.InstancesDir()
+	indexDir := filepath.Join(instancesDir, "Collapse", "minecraft", "mods", ".index")
+	// moda：version 来自 pw.toml 顶层
+	data, err := os.ReadFile(filepath.Join(indexDir, "moda.pw.toml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := string(data)
+	for _, want := range []string{
+		"side = \"both\"\nx-prismlauncher-loaders = \"forge:47.4.10\"",
+		"x-prismlauncher-mc-versions = \"1.20.1\"",
+		"x-prismlauncher-release-type = \"release\"",
+		"x-prismlauncher-version-number = \"1.0.0\"",
+	} {
+		if !strings.Contains(s, want) {
+			t.Errorf("moda 应包含 %q:\n%s", want, s)
+		}
+	}
+	// modb：version 来自 [update.modrinth]
+	data2, _ := os.ReadFile(filepath.Join(indexDir, "modb.pw.toml"))
+	if !strings.Contains(string(data2), "x-prismlauncher-version-number = \"2.0.0\"") {
+		t.Errorf("modb 版本应来自 update 源:\n%s", string(data2))
+	}
+}
+
+// 拉取：实例 .index → 项目 mods（删除 x-prismlauncher-* 与 [download].url）
+func TestPullMeta(t *testing.T) {
+	_, _ = makePrismFixture(t)
+	cm := newTestConfig(t)
+	svc := newPrismServiceWithMemory(cm)
+	proj, _ := makeLinkProject(t, cm, "Collapse")
+	entry, _ := cm.FindProject(proj)
+	// makeLinkProject 的 index.toml 是占位内容，替换为合法空索引
+	mustWriteFile(t, filepath.Join(entry.Path, "index.toml"), "")
+	if err := svc.LinkProject(proj, "Collapse"); err != nil {
+		t.Fatal(err)
+	}
+	// 实例侧 .index 已有 Prism 兼容格式元数据
+	instancesDir, _ := svc.InstancesDir()
+	indexDir := filepath.Join(instancesDir, "Collapse", "minecraft", "mods", ".index")
+	mustWriteFile(t, filepath.Join(indexDir, "newmod.pw.toml"),
+		"name = \"New Mod\"\nfilename = \"newmod.jar\"\nside = \"both\"\nx-prismlauncher-loaders = \"forge:47.4.10\"\nx-prismlauncher-mc-versions = \"1.20.1\"\nx-prismlauncher-release-type = \"release\"\nx-prismlauncher-version-number = \"3.0.0\"\n\n[download]\nurl = \"https://x/newmod.jar\"\nhash-format = \"sha256\"\nhash = \"cc\"\n")
+
+	count, err := svc.PullMeta(proj)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if count != 1 {
+		t.Fatalf("应拉取 1 个 mod，实际 %d", count)
+	}
+	data, err := os.ReadFile(filepath.Join(entry.Path, "mods", "newmod.pw.toml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := string(data)
+	for _, f := range []string{"x-prismlauncher-loaders", "x-prismlauncher-mc-versions", "x-prismlauncher-release-type", "x-prismlauncher-version-number"} {
+		if strings.Contains(s, f) {
+			t.Errorf("拉回后应删除 %s:\n%s", f, s)
+		}
+	}
+	if strings.Contains(s, "url = \"https://x/newmod.jar\"") {
+		t.Errorf("拉回后应删除 [download].url:\n%s", s)
+	}
+	if !strings.Contains(s, "name = \"New Mod\"") || !strings.Contains(s, "hash-format = \"sha256\"") {
+		t.Errorf("其余内容应保留:\n%s", s)
 	}
 }

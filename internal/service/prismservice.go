@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"packgradle/internal/appconfig"
+	"packgradle/internal/curseforge"
 	"packgradle/internal/errs"
 	"packgradle/internal/junction"
 	"packgradle/internal/packwiz"
@@ -1048,6 +1049,160 @@ func (s *PrismService) ListProjectDirs(projectName string) ([]string, error) {
 func isDir(path string) bool {
 	info, err := os.Stat(path)
 	return err == nil && info.IsDir()
+}
+
+// metaPushContext 组装单个 mod 推送所需的项目级信息
+type metaPushContext struct {
+	loaders    string
+	mcVersions string
+	cache      map[string]curseforge.CfFileCache
+}
+
+// PushMeta 将项目 mod 元数据推送到实例 mods/.index（Prism 兼容格式）：
+// 每个 mod 的 pw.toml 在 side 条目后插入 x-prismlauncher-* 四个扩展字段
+// （loaders/mc-versions/release-type/version-number），供 Prism 识别。
+// mods 目录本身不建 junction（meta 推送机制）。返回推送数量。
+func (s *PrismService) PushMeta(projectName string) (int, error) {
+	proj, err := s.findProject(projectName)
+	if err != nil {
+		return 0, err
+	}
+	if proj.Error != "" {
+		return 0, errs.New("err.proj.not_found", projectName)
+	}
+	pc, err := appconfig.LoadProjectConfig(proj.Path)
+	if err != nil {
+		return 0, err
+	}
+	if pc.Instance == "" {
+		return 0, errs.New("err.link.not_found", projectName)
+	}
+	inst, ok := s.scanInstancesSafe()[pc.Instance]
+	if !ok {
+		return 0, errs.New("err.prism.instance_not_found", pc.Instance)
+	}
+	indexDir := filepath.Join(inst.GameDir, "mods", ".index")
+	if err := os.MkdirAll(indexDir, 0o755); err != nil {
+		return 0, errs.NewDetail("err.file.mkdir", err.Error(), indexDir)
+	}
+
+	// 项目级推送上下文（loader/mc 版本 + 版本缓存用于 release-type）
+	ctx := metaPushContext{
+		loaders:    loaderMeta(proj),
+		mcVersions: proj.Minecraft,
+	}
+	if cache, err := curseforge.NewCfCacheStore(filepath.Join(proj.Path, ".cache")).Load(); err == nil {
+		ctx.cache = cache
+	}
+
+	count := 0
+	for _, mod := range proj.Mods {
+		if mod.Path == "" {
+			continue // 元数据文件缺失的条目（索引保留展示），跳过
+		}
+		content, err := os.ReadFile(mod.Path)
+		if err != nil {
+			continue
+		}
+		out, err := prism.ToPrismFormat(content, prism.PrismMeta{
+			Loaders:     ctx.loaders,
+			MCVersions:  ctx.mcVersions,
+			ReleaseType: releaseTypeMeta(ctx, mod),
+			Version:     mod.Version,
+		})
+		if err != nil {
+			continue
+		}
+		target := filepath.Join(indexDir, mod.ID+".pw.toml")
+		if err := os.WriteFile(target, out, 0o644); err != nil {
+			return count, errs.NewDetail("err.file.write", err.Error(), target)
+		}
+		count++
+	}
+	return count, nil
+}
+
+// PullMeta 将实例 mods/.index 的元数据拉回项目 mods 目录（packwiz 格式）：
+// 删除 x-prismlauncher-* 扩展字段与 [download] 表中的 url 条目。
+// 拉回后需运行 packwiz refresh 使 index.toml 收录新条目。返回拉取数量。
+func (s *PrismService) PullMeta(projectName string) (int, error) {
+	proj, err := s.findProject(projectName)
+	if err != nil {
+		return 0, err
+	}
+	if proj.Error != "" {
+		return 0, errs.New("err.proj.not_found", projectName)
+	}
+	pc, err := appconfig.LoadProjectConfig(proj.Path)
+	if err != nil {
+		return 0, err
+	}
+	if pc.Instance == "" {
+		return 0, errs.New("err.link.not_found", projectName)
+	}
+	inst, ok := s.scanInstancesSafe()[pc.Instance]
+	if !ok {
+		return 0, errs.New("err.prism.instance_not_found", pc.Instance)
+	}
+	indexDir := filepath.Join(inst.GameDir, "mods", ".index")
+	entries, err := os.ReadDir(indexDir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return 0, nil // 实例侧尚无 .index
+		}
+		return 0, errs.NewDetail("err.toml.read", err.Error(), indexDir)
+	}
+	modsDir := filepath.Join(proj.Path, "mods")
+	if err := os.MkdirAll(modsDir, 0o755); err != nil {
+		return 0, errs.NewDetail("err.file.mkdir", err.Error(), modsDir)
+	}
+
+	count := 0
+	for _, e := range entries {
+		if e.IsDir() || !strings.HasSuffix(strings.ToLower(e.Name()), ".pw.toml") {
+			continue
+		}
+		content, err := os.ReadFile(filepath.Join(indexDir, e.Name()))
+		if err != nil {
+			continue
+		}
+		out, err := prism.FromPrismFormat(content)
+		if err != nil {
+			continue
+		}
+		target := filepath.Join(modsDir, e.Name())
+		if err := os.WriteFile(target, out, 0o644); err != nil {
+			return count, errs.NewDetail("err.file.write", err.Error(), target)
+		}
+		count++
+	}
+	return count, nil
+}
+
+// loaderMeta 组装 Prism 的加载器字段（"forge:47.4.10"；无加载器为空串）
+func loaderMeta(proj packwiz.PackProject) string {
+	if proj.Modloader == "" {
+		return ""
+	}
+	if proj.ModloaderVersion != "" {
+		return proj.Modloader + ":" + proj.ModloaderVersion
+	}
+	return proj.Modloader
+}
+
+// releaseTypeMeta 从版本缓存取发布类型（1=正式 2=测试 3=Alpha），无缓存默认 release
+func releaseTypeMeta(ctx metaPushContext, mod packwiz.ModInfo) string {
+	if ctx.cache != nil && mod.CfProjectID > 0 && mod.CfFileID > 0 {
+		if entry, ok := ctx.cache[curseforge.CacheKey(mod.CfProjectID, mod.CfFileID)]; ok {
+			switch entry.ReleaseType {
+			case 2:
+				return "beta"
+			case 3:
+				return "alpha"
+			}
+		}
+	}
+	return "release"
 }
 
 // samePath 规范化比较两条路径是否指向同一位置（忽略大小写与分隔符差异）

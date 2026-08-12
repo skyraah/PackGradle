@@ -141,6 +141,25 @@ export function ManualLinkDir(projectName: string, dir: string): $CancellablePro
 }
 
 /**
+ * PullMeta 将实例 mods/.index 的元数据拉回项目 mods 目录（packwiz 格式）：
+ * 删除 x-prismlauncher-* 扩展字段与 [download] 表中的 url 条目。
+ * 拉回后需运行 packwiz refresh 使 index.toml 收录新条目。返回拉取数量。
+ */
+export function PullMeta(projectName: string): $CancellablePromise<number> {
+    return $Call.ByID(655690463, projectName);
+}
+
+/**
+ * PushMeta 将项目 mod 元数据推送到实例 mods/.index（Prism 兼容格式）：
+ * 每个 mod 的 pw.toml 在 side 条目后插入 x-prismlauncher-* 四个扩展字段
+ * （loaders/mc-versions/release-type/version-number），供 Prism 识别。
+ * mods 目录本身不建 junction（meta 推送机制）。返回推送数量。
+ */
+export function PushMeta(projectName: string): $CancellablePromise<number> {
+    return $Call.ByID(3796457884, projectName);
+}
+
+/**
  * RemoveDirLink 移除目录关联对，并删除已建链接（仅链接本身，目标内容不动）
  */
 export function RemoveDirLink(projectName: string, projectDir: string): $CancellablePromise<void> {
