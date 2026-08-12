@@ -19,6 +19,9 @@ const { snackbar, snackbarMsg, show } = useSnackbar()
 const refreshing = ref<string | null>(null)
 const refreshOutput = ref('')
 const outputDialog = ref(false)
+// 移除项目确认对话框（替代 Wails 原生 Question）
+const removeDialog = ref(false)
+const removing = ref<PackProject | null>(null)
 
 // —— CurseForge 版本获取 ——
 const fetching = ref<string | null>(null) // 单行获取中的 mod id
@@ -80,22 +83,20 @@ async function importProject() {
 }
 
 async function removeProject(proj: PackProject) {
-    let confirmed: string
+    // Wails 原生 Question 对话框在构建版会挂起（Promise 不返回），改用自定义确认对话框
+    removing.value = proj
+    removeDialog.value = true
+}
+
+// 确认移除：执行删除并刷新列表
+async function confirmRemove() {
+    const proj = removing.value
+    if (!proj) return
+    removeDialog.value = false
+    removing.value = null
     try {
-        confirmed = await Dialogs.Question({
-            Title: t('projects.removeTitle'),
-            Message: t('projects.removeMessage', [proj.name]),
-            Buttons: [
-                { Label: t('projects.removeBtn') },
-                { Label: t('projects.cancel'), IsCancel: true },
-            ],
-        })
-    } catch {
-        return // 用户取消对话框，静默忽略
-    }
-    if (confirmed !== 'Yes' && confirmed !== t('projects.removeBtn')) return
-    try {
-        projects.value = (await PackwizService.RemoveProject(proj.name)) ?? []
+        const list = await PackwizService.RemoveProject(proj.name)
+        projects.value = list ?? []
         if (expanded.value === proj.name) expanded.value = null
     } catch (e) {
         show(t('projects.removeFailed', [errText(e)]))
@@ -441,6 +442,22 @@ onMounted(load)
                     <v-spacer />
                     <v-btn variant="text" @click="apiKeyDialog = false">{{ t('projects.close') }}</v-btn>
                     <v-btn color="primary" variant="tonal" @click="goConfigApiKey">{{ t('projects.goConfigureApiKey') }}</v-btn>
+                </v-card-actions>
+            </v-card>
+        </v-dialog>
+
+        <!-- 移除项目确认对话框（Wails 原生 Question 在构建版挂起，用自定义对话框替代） -->
+        <v-dialog v-model="removeDialog" max-width="440">
+            <v-card>
+                <v-card-title class="d-flex align-center">
+                    <v-icon icon="mdi-alert-outline" color="warning" class="mr-2" />
+                    {{ t('projects.removeTitle') }}
+                </v-card-title>
+                <v-card-text>{{ t('projects.removeMessage', [removing?.name ?? '']) }}</v-card-text>
+                <v-card-actions>
+                    <v-spacer />
+                    <v-btn variant="text" @click="removeDialog = false">{{ t('projects.cancel') }}</v-btn>
+                    <v-btn color="error" variant="tonal" @click="confirmRemove">{{ t('projects.removeBtn') }}</v-btn>
                 </v-card-actions>
             </v-card>
         </v-dialog>

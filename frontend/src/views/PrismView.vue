@@ -42,6 +42,8 @@ const selDir = ref('')
 // 一键关联结果
 const linkAllResults = ref<LinkResult[]>([])
 const linkAlling = ref(false)
+// .pgignore 缺失询问对话框
+const pgignoreDialog = ref(false)
 
 // 加载器 chip：已识别 → 颜色标签；空 → 原版；其余 → 原样文本
 function loaderInfo(inst: Instance): { label: string; color?: string } {
@@ -221,36 +223,32 @@ async function removeDirLink(dl: DirLinkView) {
 }
 
 // 一键关联：项目根下全部未被 .pgignore 忽略的条目建链。
-// 未检测到 .pgignore 时先询问用户是否生成默认忽略规则。
+// 未检测到 .pgignore 时弹自定义对话框询问（Wails 原生 Question 在构建版会挂起）。
 async function doLinkAll() {
     if (!dirLinkProject.value) return
     const exists = await PrismService.HasPGIgnore(dirLinkProject.value)
     if (!exists) {
-        let choice: string
+        pgignoreDialog.value = true // 确认后走 choosePGIgnore 继续
+        return
+    }
+    await executeLinkAll()
+}
+
+// .pgignore 询问结果：create = 生成默认规则后继续，skip = 不生成直接关联
+function choosePGIgnore(choice: 'create' | 'skip') {
+    pgignoreDialog.value = false
+    void applyPGIgnoreChoice(choice)
+}
+
+async function applyPGIgnoreChoice(choice: 'create' | 'skip') {
+    if (choice === 'create') {
         try {
-            choice = await Dialogs.Question({
-                Title: t('prism.pgignoreMissingTitle'),
-                Message: t('prism.pgignoreMissingText'),
-                Buttons: [
-                    { Label: t('prism.pgignoreCreateAndLink') },
-                    { Label: t('prism.pgignoreSkipAndLink') },
-                    { Label: t('prism.linkCancel'), IsCancel: true },
-                ],
-            })
-        } catch {
-            return // 用户取消
+            await PrismService.EnsurePGIgnore(dirLinkProject.value)
+            show(t('prism.pgignoreCreated'))
+        } catch (e) {
+            show(errText(e))
+            return
         }
-        if (choice === t('prism.linkCancel')) return
-        if (choice === t('prism.pgignoreCreateAndLink')) {
-            try {
-                await PrismService.EnsurePGIgnore(dirLinkProject.value)
-                show(t('prism.pgignoreCreated'))
-            } catch (e) {
-                show(errText(e))
-                return
-            }
-        }
-        // 不生成直接关联：跳过生成步骤
     }
     await executeLinkAll()
 }
@@ -618,6 +616,25 @@ onMounted(async () => {
                         @click="addDirLink"
                     >
                         {{ t('prism.dirLinkAdd') }}
+                    </v-btn>
+                </v-card-actions>
+            </v-card>
+        </v-dialog>
+
+        <!-- .pgignore 缺失询问（自定义对话框，替代 Wails 原生 Question） -->
+        <v-dialog v-model="pgignoreDialog" max-width="520">
+            <v-card>
+                <v-card-title class="d-flex align-center">
+                    <v-icon icon="mdi-file-question-outline" color="warning" class="mr-2" />
+                    {{ t('prism.pgignoreMissingTitle') }}
+                </v-card-title>
+                <v-card-text>{{ t('prism.pgignoreMissingText') }}</v-card-text>
+                <v-card-actions>
+                    <v-spacer />
+                    <v-btn variant="text" @click="pgignoreDialog = false">{{ t('prism.linkCancel') }}</v-btn>
+                    <v-btn variant="tonal" @click="choosePGIgnore('skip')">{{ t('prism.pgignoreSkipAndLink') }}</v-btn>
+                    <v-btn color="primary" variant="tonal" @click="choosePGIgnore('create')">
+                        {{ t('prism.pgignoreCreateAndLink') }}
                     </v-btn>
                 </v-card-actions>
             </v-card>
