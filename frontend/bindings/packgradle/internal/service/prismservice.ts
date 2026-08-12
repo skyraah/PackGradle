@@ -141,22 +141,32 @@ export function ManualLinkDir(projectName: string, dir: string): $CancellablePro
 }
 
 /**
+ * MetaDiff 计算项目 ↔ 实例 mods 的元数据差异并刷新缓存：
+ * 项目侧以 index.toml 权威列表为准，实例侧扫描 mods/.index 的 pw.toml。
+ * 每次「查看差异」时调用（重新计算 + 写入 .cache/metadiff.cache），
+ * 不做实时监听，避免目录变化带来的性能开销。
+ */
+export function MetaDiff(projectName: string): $CancellablePromise<prism$0.MetaDiff> {
+    return $Call.ByID(3469852635, projectName);
+}
+
+/**
  * PullMeta 将实例 mods/.index 的元数据拉回项目 mods 目录（packwiz 格式）：
  * 删除 x-prismlauncher-* 扩展字段与 [download] 表中的 url 条目。
- * 拉回后需运行 packwiz refresh 使 index.toml 收录新条目。返回拉取数量。
+ * modID 非空时仅拉取该 mod（空串拉取全部）。拉回后需运行 packwiz refresh 收录。
  */
-export function PullMeta(projectName: string): $CancellablePromise<number> {
-    return $Call.ByID(655690463, projectName);
+export function PullMeta(projectName: string, modID: string): $CancellablePromise<number> {
+    return $Call.ByID(655690463, projectName, modID);
 }
 
 /**
  * PushMeta 将项目 mod 元数据推送到实例 mods/.index（Prism 兼容格式）：
  * 每个 mod 的 pw.toml 在 side 条目后插入 x-prismlauncher-* 四个扩展字段
  * （loaders/mc-versions/release-type/version-number），供 Prism 识别。
- * mods 目录本身不建 junction（meta 推送机制）。返回推送数量。
+ * modID 非空时仅推送该 mod（空串推送全部）。mods 目录本身不建 junction（meta 推送机制）。
  */
-export function PushMeta(projectName: string): $CancellablePromise<number> {
-    return $Call.ByID(3796457884, projectName);
+export function PushMeta(projectName: string, modID: string): $CancellablePromise<number> {
+    return $Call.ByID(3796457884, projectName, modID);
 }
 
 /**

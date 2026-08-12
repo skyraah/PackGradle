@@ -3,7 +3,7 @@ import { computed, onMounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { Dialogs } from '@wailsio/runtime'
 import { PrismService, PackwizService } from '../../bindings/packgradle/internal/service'
-import type { Instance, LinkView, DirLinkView, LinkResult } from '../../bindings/packgradle/internal/prism'
+import type { Instance, LinkView, DirLinkView, LinkResult, MetaDiff } from '../../bindings/packgradle/internal/prism'
 import type { PackProject } from '../../bindings/packgradle/internal/packwiz'
 import { useSnackbar } from '../composables/useSnackbar'
 import { displayText, errText, errorCode } from '../utils/errors'
@@ -59,6 +59,14 @@ const savingFiles = ref(false)
 const metaBusy = ref('') // 操作中的项目名（推送/拉取共用 loading）
 const pullConfirmDialog = ref(false)
 const pullConfirmTarget = ref<LinkView | null>(null)
+// meta 差异
+const diffDialog = ref(false)
+const diffProject = ref('')
+const diff = ref<MetaDiff | null>(null)
+const diffLoading = ref(false)
+const diffBusy = ref('') // 差异对话框中单操作中的 mod id
+const pullOneDialog = ref(false)
+const pullOneTarget = ref('')
 
 // 加载器 chip：已识别 → 颜色标签；空 → 原版；其余 → 原样文本
 function loaderInfo(inst: Instance): { label: string; color?: string } {
@@ -378,7 +386,7 @@ function toggleFile(f: string, checked: boolean | null) {
 async function pushMeta(link: LinkView) {
     metaBusy.value = link.project
     try {
-        const count = await PrismService.PushMeta(link.project)
+        const count = await PrismService.PushMeta(link.project, '')
         show(t('prism.metaPushed', [count ?? 0]))
     } catch (e) {
         show(errText(e))
@@ -400,7 +408,7 @@ async function confirmPullMeta() {
     pullConfirmTarget.value = null
     metaBusy.value = link.project
     try {
-        const count = await PrismService.PullMeta(link.project)
+        const count = await PrismService.PullMeta(link.project, '')
         show(t('prism.metaPulled', [count ?? 0]))
     } catch (e) {
         show(errText(e))
@@ -408,6 +416,76 @@ async function confirmPullMeta() {
         metaBusy.value = ''
     }
 }
+
+// meta 差异：打开对话框时重新计算并刷新缓存
+async function openMetaDiff(link: LinkView) {
+    diffProject.value = link.project
+    diffDialog.value = true
+    await refreshDiff()
+}
+
+async function refreshDiff() {
+    diffLoading.value = true
+    try {
+        diff.value = await PrismService.MetaDiff(diffProject.value)
+    } catch (e) {
+        show(errText(e))
+    } finally {
+        diffLoading.value = false
+    }
+}
+
+// 差异视图中的单 mod 拉取（确认后执行）
+function askPullOne(id: string) {
+    pullOneTarget.value = id
+    pullOneDialog.value = true
+}
+
+async function confirmPullOne() {
+    const id = pullOneTarget.value
+    if (!id) return
+    pullOneDialog.value = false
+    pullOneTarget.value = ''
+    diffBusy.value = id
+    try {
+        await PrismService.PullMeta(diffProject.value, id)
+        show(t('prism.metaOneDone', [t('prism.metaPullOne'), id]))
+        await refreshDiff()
+    } catch (e) {
+        show(errText(e))
+    } finally {
+        diffBusy.value = ''
+    }
+}
+
+// 差异视图中的单 mod 推送
+async function pushOne(id: string) {
+    diffBusy.value = id
+    try {
+        await PrismService.PushMeta(diffProject.value, id)
+        show(t('prism.metaOneDone', [t('prism.metaPushOne'), id]))
+        await refreshDiff()
+    } catch (e) {
+        show(errText(e))
+    } finally {
+        diffBusy.value = ''
+    }
+}
+
+// 差异计算时间展示
+function diffFetchedText(): string {
+    const ts = diff.value?.fetched_at
+    if (!ts) return ''
+    return t('prism.metaFetchedAt', [ts])
+}
+
+// 差异三区（模板安全访问：null 时为空数组）
+const diffInstanceOnly = computed(() => diff.value?.instance_only ?? [])
+const diffProjectOnly = computed(() => diff.value?.project_only ?? [])
+const diffVersionDiff = computed(() => diff.value?.version_diff ?? [])
+const hasDiff = computed(
+    () => diffInstanceOnly.value.length > 0 || diffProjectOnly.value.length > 0 || diffVersionDiff.value.length > 0,
+)
 
 // 一键关联结果的状态 chip 信息
 function resultChip(r: LinkResult): { color: string; label: string } {
@@ -610,6 +688,9 @@ onMounted(async () => {
                             @click="askPullMeta(link)"
                         >
                             {{ t('prism.metaPullBtn') }}
+                        </v-btn>
+                        <v-btn size="small" variant="tonal" class="mr-1" @click="openMetaDiff(link)">
+                            {{ t('prism.metaDiffBtn') }}
                         </v-btn>
                         <v-btn size="small" variant="tonal" class="mr-1" @click="openDirLinks(link)">
                             {{ t('prism.dirLinkBtn') }}
@@ -922,6 +1003,106 @@ onMounted(async () => {
                     <v-btn variant="text" @click="pullConfirmDialog = false">{{ t('prism.linkCancel') }}</v-btn>
                     <v-btn color="primary" variant="tonal" @click="confirmPullMeta">
                         {{ t('prism.metaPullBtn') }}
+                    </v-btn>
+                </v-card-actions>
+            </v-card>
+        </v-dialog>
+
+        <!-- meta 差异对话框：每次打开时重新计算并刷新缓存 -->
+        <v-dialog v-model="diffDialog" max-width="640">
+            <v-card>
+                <v-card-title class="d-flex align-center">
+                    <v-icon icon="mdi-compare-horizontal" color="primary" class="mr-2" />
+                    {{ t('prism.metaDiffTitle') }} · {{ diffProject }}
+                    <v-chip v-if="diffFetchedText()" size="x-small" variant="tonal" class="ml-3">
+                        {{ diffFetchedText() }}
+                    </v-chip>
+                </v-card-title>
+                <v-card-text>
+                    <div class="text-body-2 text-medium-emphasis mb-2">{{ t('prism.metaDiffHint') }}</div>
+                    <div v-if="hasDiff">
+                        <!-- 实例独有：可拉取 -->
+                        <v-list-subheader v-if="diffInstanceOnly.length > 0" class="text-caption text-primary">
+                            {{ t('prism.metaDiffInstanceOnly') }}（{{ diffInstanceOnly.length }}）
+                        </v-list-subheader>
+                        <v-list-item
+                            v-for="id in diffInstanceOnly"
+                            :key="'i' + id"
+                            density="compact"
+                            :title="id"
+                        >
+                            <template #append>
+                                <v-btn
+                                    size="small"
+                                    variant="tonal"
+                                    :loading="diffBusy === id"
+                                    :disabled="diffBusy !== ''"
+                                    @click="askPullOne(id)"
+                                >
+                                    {{ t('prism.metaPullOne') }}
+                                </v-btn>
+                            </template>
+                        </v-list-item>
+
+                        <!-- 项目独有：可推送 -->
+                        <v-list-subheader v-if="diffProjectOnly.length > 0" class="text-caption text-success">
+                            {{ t('prism.metaDiffProjectOnly') }}（{{ diffProjectOnly.length }}）
+                        </v-list-subheader>
+                        <v-list-item
+                            v-for="id in diffProjectOnly"
+                            :key="'p' + id"
+                            density="compact"
+                            :title="id"
+                        >
+                            <template #append>
+                                <v-btn
+                                    size="small"
+                                    variant="tonal"
+                                    :loading="diffBusy === id"
+                                    :disabled="diffBusy !== ''"
+                                    @click="pushOne(id)"
+                                >
+                                    {{ t('prism.metaPushOne') }}
+                                </v-btn>
+                            </template>
+                        </v-list-item>
+
+                        <!-- 版本差异 -->
+                        <v-list-subheader v-if="diffVersionDiff.length > 0" class="text-caption text-warning">
+                            {{ t('prism.metaDiffVersionDiff') }}（{{ diffVersionDiff.length }}）
+                        </v-list-subheader>
+                        <v-list-item
+                            v-for="v in diffVersionDiff"
+                            :key="'v' + v.id"
+                            density="compact"
+                            :title="v.id"
+                            :subtitle="`项目 ${v.project_version} → 实例 ${v.instance_version}`"
+                        />
+                    </div>
+                    <div v-else class="text-body-2 text-medium-emphasis">
+                        {{ t('prism.metaDiffEmpty') }}
+                    </div>
+                </v-card-text>
+                <v-card-actions>
+                    <v-spacer />
+                    <v-btn variant="text" @click="diffDialog = false">{{ t('prism.linkCancel') }}</v-btn>
+                </v-card-actions>
+            </v-card>
+        </v-dialog>
+
+        <!-- 差异视图中的单 mod 拉取确认 -->
+        <v-dialog v-model="pullOneDialog" max-width="480">
+            <v-card>
+                <v-card-title class="d-flex align-center">
+                    <v-icon icon="mdi-alert-outline" color="warning" class="mr-2" />
+                    {{ t('prism.metaPullOneConfirmTitle') }}
+                </v-card-title>
+                <v-card-text>{{ t('prism.metaPullOneConfirmText', [pullOneTarget]) }}</v-card-text>
+                <v-card-actions>
+                    <v-spacer />
+                    <v-btn variant="text" @click="pullOneDialog = false">{{ t('prism.linkCancel') }}</v-btn>
+                    <v-btn color="primary" variant="tonal" @click="confirmPullOne">
+                        {{ t('prism.metaPullOne') }}
                     </v-btn>
                 </v-card-actions>
             </v-card>

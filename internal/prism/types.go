@@ -61,3 +61,20 @@ type LinkResult struct {
 	Status string `json:"status"` // linked / existing / skipped / manual / error
 	Detail string `json:"detail"` // 跳过原因或错误文本
 }
+
+// VersionDiffItem 是双端版本不一致的单个 mod
+type VersionDiffItem struct {
+	ID              string `json:"id"`
+	ProjectVersion  string `json:"project_version"`  // 项目侧版本（packwiz 元数据）
+	InstanceVersion string `json:"instance_version"` // 实例侧版本（.index 元数据）
+}
+
+// MetaDiff 是项目 ↔ 实例 mods 元数据的差异（按 index.toml 权威列表 vs 实例 mods/.index 对比）。
+// 持久化到 <项目目录>/.cache/metadiff.cache：每次「查看差异」时重新计算并刷新缓存，
+// 避免实时监听目录变化带来的性能开销。
+type MetaDiff struct {
+	FetchedAt    string            `json:"fetched_at"`     // 计算时间（RFC3339）
+	InstanceOnly []string          `json:"instance_only"`  // 实例 .index 有、项目 index.toml 无（可拉取）
+	ProjectOnly  []string          `json:"project_only"`   // 项目有、实例 .index 无（可推送）
+	VersionDiff  []VersionDiffItem `json:"version_diff"`   // 双端版本不一致
+}

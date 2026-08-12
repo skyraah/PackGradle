@@ -134,3 +134,47 @@ export interface LinkView {
      */
     "instance_valid": boolean;
 }
+
+/**
+ * MetaDiff 是项目 ↔ 实例 mods 元数据的差异（按 index.toml 权威列表 vs 实例 mods/.index 对比）。
+ * 持久化到 <项目目录>/.cache/metadiff.cache：每次「查看差异」时重新计算并刷新缓存，
+ * 避免实时监听目录变化带来的性能开销。
+ */
+export interface MetaDiff {
+    /**
+     * 计算时间（RFC3339）
+     */
+    "fetched_at": string;
+
+    /**
+     * 实例 .index 有、项目 index.toml 无（可拉取）
+     */
+    "instance_only": string[] | null;
+
+    /**
+     * 项目有、实例 .index 无（可推送）
+     */
+    "project_only": string[] | null;
+
+    /**
+     * 双端版本不一致
+     */
+    "version_diff": VersionDiffItem[] | null;
+}
+
+/**
+ * VersionDiffItem 是双端版本不一致的单个 mod
+ */
+export interface VersionDiffItem {
+    "id": string;
+
+    /**
+     * 项目侧版本（packwiz 元数据）
+     */
+    "project_version": string;
+
+    /**
+     * 实例侧版本（.index 元数据）
+     */
+    "instance_version": string;
+}

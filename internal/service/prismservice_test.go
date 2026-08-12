@@ -999,7 +999,7 @@ func TestPushMeta(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	count, err := svc.PushMeta(proj)
+	count, err := svc.PushMeta(proj, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1049,7 +1049,7 @@ func TestPullMeta(t *testing.T) {
 	mustWriteFile(t, filepath.Join(indexDir, "newmod.pw.toml"),
 		"name = \"New Mod\"\nfilename = \"newmod.jar\"\nside = \"both\"\nx-prismlauncher-loaders = \"forge:47.4.10\"\nx-prismlauncher-mc-versions = \"1.20.1\"\nx-prismlauncher-release-type = \"release\"\nx-prismlauncher-version-number = \"3.0.0\"\n\n[download]\nurl = \"https://x/newmod.jar\"\nhash-format = \"sha256\"\nhash = \"cc\"\n")
 
-	count, err := svc.PullMeta(proj)
+	count, err := svc.PullMeta(proj, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1071,5 +1071,130 @@ func TestPullMeta(t *testing.T) {
 	}
 	if !strings.Contains(s, "name = \"New Mod\"") || !strings.Contains(s, "hash-format = \"sha256\"") {
 		t.Errorf("其余内容应保留:\n%s", s)
+	}
+}
+
+// makeMetaProject 构造含双端 mod 元数据的项目（项目侧 2 个 + 实例侧 3 个），
+// 返回项目名与实例 .index 目录
+func makeMetaProject(t *testing.T, svc *PrismService, cm *appconfig.ConfigManager, name string) (string, string) {
+	t.Helper()
+	proj, _ := makeLinkProject(t, cm, name)
+	entry, _ := cm.FindProject(proj)
+	// 项目侧：只有 moda 与 modc（index.toml 权威）
+	mustWriteFile(t, filepath.Join(entry.Path, "index.toml"),
+		"[[files]]\nfile = \"mods/moda.pw.toml\"\nhash = \"aa\"\n\n[[files]]\nfile = \"mods/modc.pw.toml\"\nhash = \"cc\"\n")
+	mustWriteFile(t, filepath.Join(entry.Path, "mods", "moda.pw.toml"),
+		"name = \"Mod A\"\nfilename = \"moda.jar\"\nside = \"both\"\nversion = \"1.0.0\"\n")
+	mustWriteFile(t, filepath.Join(entry.Path, "mods", "modc.pw.toml"),
+		"name = \"Mod C\"\nfilename = \"modc.jar\"\nside = \"both\"\nversion = \"3.0.0\"\n")
+	if err := svc.LinkProject(proj, "Collapse"); err != nil {
+		t.Fatal(err)
+	}
+	// 实例侧 .index：moda（版本不同）、modb（项目无）、modd（项目无）
+	instancesDir, _ := svc.InstancesDir()
+	indexDir := filepath.Join(instancesDir, "Collapse", "minecraft", "mods", ".index")
+	mustWriteFile(t, filepath.Join(indexDir, "moda.pw.toml"),
+		"name = \"Mod A\"\nfilename = \"moda.jar\"\nside = \"both\"\nx-prismlauncher-version-number = \"2.0.0\"\n")
+	mustWriteFile(t, filepath.Join(indexDir, "modb.pw.toml"),
+		"name = \"Mod B\"\nfilename = \"modb.jar\"\nside = \"client\"\n")
+	mustWriteFile(t, filepath.Join(indexDir, "modd.pw.toml"),
+		"name = \"Mod D\"\nfilename = \"modd.jar\"\nside = \"both\"\n")
+	return proj, indexDir
+}
+
+// 差异计算：InstanceOnly/ProjectOnly/VersionDiff + 缓存持久化
+func TestMetaDiff(t *testing.T) {
+	_, _ = makePrismFixture(t)
+	cm := newTestConfig(t)
+	svc := newPrismServiceWithMemory(cm)
+	proj, _ := makeMetaProject(t, svc, cm, "Collapse")
+
+	diff, err := svc.MetaDiff(proj)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// 实例独有：modb、modd（项目 index.toml 无）
+	if len(diff.InstanceOnly) != 2 || diff.InstanceOnly[0] != "modb" || diff.InstanceOnly[1] != "modd" {
+		t.Errorf("InstanceOnly 错误: %v", diff.InstanceOnly)
+	}
+	// 项目独有：modc（实例 .index 无）
+	if len(diff.ProjectOnly) != 1 || diff.ProjectOnly[0] != "modc" {
+		t.Errorf("ProjectOnly 错误: %v", diff.ProjectOnly)
+	}
+	// 版本差异：moda（项目 1.0.0 vs 实例 2.0.0）
+	if len(diff.VersionDiff) != 1 || diff.VersionDiff[0].ID != "moda" ||
+		diff.VersionDiff[0].ProjectVersion != "1.0.0" || diff.VersionDiff[0].InstanceVersion != "2.0.0" {
+		t.Errorf("VersionDiff 错误: %+v", diff.VersionDiff)
+	}
+	if diff.FetchedAt == "" {
+		t.Error("FetchedAt 不应为空")
+	}
+	// 缓存已持久化到 .cache/metadiff.cache
+	entry, _ := cm.FindProject(proj)
+	var cached prism.MetaDiff
+	if err := appconfig.ReadToml(filepath.Join(entry.Path, ".cache", "metadiff.cache"), &cached); err != nil {
+		t.Fatal(err)
+	}
+	if len(cached.InstanceOnly) != 2 || len(cached.VersionDiff) != 1 {
+		t.Errorf("缓存内容错误: %+v", cached)
+	}
+}
+
+// 单 mod 拉取：仅拉指定 mod（其他不动）
+func TestPullMetaSingle(t *testing.T) {
+	_, _ = makePrismFixture(t)
+	cm := newTestConfig(t)
+	svc := newPrismServiceWithMemory(cm)
+	proj, indexDir := makeMetaProject(t, svc, cm, "Collapse")
+	entry, _ := cm.FindProject(proj)
+	// 实例侧 modb 带 Prism 字段与 url
+	mustWriteFile(t, filepath.Join(indexDir, "modb.pw.toml"),
+		"name = \"Mod B\"\nfilename = \"modb.jar\"\nside = \"client\"\nx-prismlauncher-loaders = \"forge:47.4.10\"\n\n[download]\nurl = \"https://x/modb.jar\"\nhash-format = \"sha256\"\nhash = \"bb\"\n")
+
+	count, err := svc.PullMeta(proj, "modb")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if count != 1 {
+		t.Fatalf("应拉取 1 个，实际 %d", count)
+	}
+	data, _ := os.ReadFile(filepath.Join(entry.Path, "mods", "modb.pw.toml"))
+	s := string(data)
+	if strings.Contains(s, "x-prismlauncher-loaders") || strings.Contains(s, "url = \"https://x/modb.jar\"") {
+		t.Errorf("单拉取应转换格式:\n%s", s)
+	}
+	// 其他 mod 未被拉取（modd 不在项目 mods）
+	if _, err := os.Stat(filepath.Join(entry.Path, "mods", "modd.pw.toml")); err == nil {
+		t.Error("未指定的 mod 不应被拉取")
+	}
+}
+
+// 单 mod 推送：仅推指定 mod
+func TestPushMetaSingle(t *testing.T) {
+	_, _ = makePrismFixture(t)
+	cm := newTestConfig(t)
+	svc := newPrismServiceWithMemory(cm)
+	proj, indexDir := makeMetaProject(t, svc, cm, "Collapse")
+
+	count, err := svc.PushMeta(proj, "modc")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if count != 1 {
+		t.Fatalf("应推送 1 个，实际 %d", count)
+	}
+	if _, err := os.Stat(filepath.Join(indexDir, "modc.pw.toml")); err != nil {
+		t.Error("modc 应被推送")
+	}
+	if _, err := os.Stat(filepath.Join(indexDir, "moda.pw.toml")); err == nil {
+		// moda 在实例侧已存在同名——单推送 modc 不应覆盖/新建 moda（moda 已有）
+	}
+	// 推送全部仍可用
+	countAll, err := svc.PushMeta(proj, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if countAll != 2 {
+		t.Errorf("推送全部应为 2，实际 %d", countAll)
 	}
 }

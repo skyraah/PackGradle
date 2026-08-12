@@ -5,5 +5,7 @@ export type {
     DirLinkView,
     Instance,
     LinkResult,
-    LinkView
+    LinkView,
+    MetaDiff,
+    VersionDiffItem
 } from "./models.js";
