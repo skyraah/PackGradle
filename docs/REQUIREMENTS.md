@@ -1,10 +1,11 @@
 # PackGradle 需求文档
 
-> 版本：1.1（2026-08-12）
+> 版本：1.2（2026-08-13）
 > 状态标注：✅ 完整实现 ／ ⚠️ 部分实现 ／ ❌ 缺失 ／ ⛔ 不在开发范围内
 > 本文档覆盖 README 全部愿景，逐条标注完成状态并给出实现位置与验收要点，作为后续架构设计与实现的依据。
 >
 > 更新记录：
+> - v1.2：REQ-3.2/3.3/3.4 标注完成（实例检测、关联流程、程序创建实例、Junction 建链、手动链接、文件级同步）；新增 REQ-3.6 文件级同步；GAP-1 收窄为仅 meta 拉取；路线图 P0 仅剩 REQ-3.5；补充单实例防护与 Wails 对话框坑
 > - v1.1：修正 REQ-3.1（区分 Prism 安装路径检测 ✅ 与实例路径检测 ❌）；REQ-4.9 CurseForge 搜索标注 ⛔ 不在开发范围内；路线图重排（Prism 联动上调 P0，其余顺延）
 > - v1.0：初版
 
@@ -92,10 +93,11 @@ frontend/src/
 | 编号 | 需求 | 状态 | 实现位置 | 验收要点 |
 |---|---|---|---|---|
 | REQ-3.1 | 检测 Prism Launcher **安装路径** | ✅ | `detect.go:detectPrism`（安装目录扫描） | 查找链检测，自动回写 config.toml |
-| REQ-3.2 | 检测 Prism **实例路径**（自动定位实例根 + 扫描 `instances/` 列表） | ✅ | `internal/prism/prism.go`（便携 cfg 解析/APPDATA 回退）、`instance.go`（mmc-pack.json/instance.cfg/instgroups 解析）、`service/prismservice.go:ListInstances`；前端 `PrismView.vue` | 7 个真实实例全部解析正确；坏实例 Error 内嵌不中断；手动指定实例根目录随 Phase 2 提供 |
-| REQ-3.3 | 将 packwiz 项目对应到 Prism 实例（关联流程：扫描匹配 → 无匹配时询问 → 手动关联 / **程序创建实例**；关联持久化 `[[links]]`，目录同步关联 `[[dir_links]]`） | ⚠️ | `prismservice.go:LinkProject/UnlinkProject/GetLinks/CreateInstance`、`prism/create.go`（instance.cfg + mmc-pack.json 程序创建）；前端关联对话框（同名自动匹配 + 创建实例按钮）；目录关联管理界面（候选 = 项目顶层目录，排除 mods/隐藏目录） | 关联与目录关联管理完成；junction 建链/状态属 REQ-3.4（Phase 3） |
-| REQ-3.4 | 根据配置创建 Junction 同步项目文件更改 | ❌ | 无 | 零实现 |
-| REQ-3.5 | prism ↔ packwiz 相互 meta 拉取（更新项目 mod） | ❌ | 无 | 零实现 |
+| REQ-3.2 | 检测 Prism **实例路径**（自动定位实例根 + 扫描 `instances/` 列表 + 手动指定入口） | ✅ | `internal/prism/prism.go`（固定 `%APPDATA%\PrismLauncher` + prismlauncher.cfg InstanceDir 相对/绝对解析）、`instance.go`（mmc-pack.json/instance.cfg/instgroups 解析）、`prismservice.go:ListInstances/InstancesDir/SetInstancesPath`；前端 `PrismView.vue` 常驻实例目录设置卡片 | 7 个真实实例全部解析正确；坏实例 Error 内嵌不中断；手动路径持久化 `prism_instances_path`、自动检测回写 `prism_instances_dir` |
+| REQ-3.3 | 将 packwiz 项目对应到 Prism 实例（关联流程：扫描匹配 → 无匹配时询问 → 手动关联 / **程序创建实例**；关联持久化项目级 `packgradle.toml`） | ✅ | `prismservice.go:LinkProject/UnlinkProject/GetLinks/CreateInstance`、`prism/create.go`（instance.cfg + mmc-pack.json 程序创建）；前端关联对话框（同名自动匹配 + 基于项目创建实例按钮）；**配置分离**：实例关联与目录同步存 `<项目目录>/packgradle.toml`，全局 config 只留全局项（旧数据启动时一次性迁移） | 关联/解除/程序创建/持久化全链路完成；真实 Collapse ↔ Project-Collapse 关联验证通过 |
+| REQ-3.4 | 根据配置创建 Junction 同步项目文件更改（一键关联 + 手动链接 + 空目录处理） | ✅ | `internal/junction`（cmd mklink 创建 + FSCTL_GET_REPARSE_POINT 检测/目标解析 + os.Remove 删除；修复 Go 1.23+ Lstat 对 junction 报 ModeIrregular 的误判）、`prismservice.go:CreateAllLinks`（.pgignore 过滤 + mods 内建排除 + 文件硬链接 + 幂等）、`ManualLinkDir`（实例侧非空复制并入 / 空目录直接删除）、`RemoveDirLink/UnlinkProject` 联动删链；`internal/pgignore`（gitignore 规则，导入时自动创建，默认黑名单 .git/.cache/index.toml/pack.toml/packgradle.toml/.pgignore） | 真实环境验证：junction 双向穿透、硬链接同一文件、幂等 existing、解除清理、项目文件完好 |
+| REQ-3.6 | **文件级同步**：目录关联可选文件模式，单独控制哪些文件同步到实例（从目标侧选择） | ✅ | `ProjectDirLink.Mode`（空=整目录 junction / files=文件级）+ `Files` 清单；`SetDirLinkMode`（模式互切即重建链接）、`SetDirLinkFiles`（项目侧指定清单）、**`ListInstanceDirFiles` + `SelectInstanceFiles`**（从实例侧读文件列表 → 勾选移动到项目目录 → 硬链接回实例侧）；前端文件选择对话框（实例侧递归列表 + 勾选/全选/清空） | 真实环境验证：实例侧列表 → 勾选移动并入 → 硬链接同一文件 → 未勾选保留实例侧独立 → 模式互切 → 解除清理 |
+| REQ-3.5 | prism ↔ packwiz 相互 meta 拉取（更新项目 mod：mods 元数据推送到实例 `mods/.index` + 双向差异报告） | ❌ | 无 | 未实现（路线图 P0 的最后一块） |
 
 ### F4 meta 优化
 
@@ -134,7 +136,7 @@ frontend/src/
 
 | 编号 | 缺口 | 证据 | 影响 |
 |---|---|---|---|
-| GAP-1 | **Prism 联动整体缺失**（实例路径检测/实例对应/Junction/meta 拉取）——README 核心卖点 | README:9-10 vs 代码零实现（仅安装路径检测） | 产品方向性缺失 |
+| GAP-1 | **Prism 联动剩余缺口**：仅双向 meta 拉取（REQ-3.5）未实现 | README:9-10；实例检测/关联/Junction/文件级同步已全部完成（REQ-3.2/3.3/3.4/3.6 ✅） | 路线图 P0 最后一块 |
 | GAP-2 | **mod 生命周期闭环断裂**（创建项目/添加/移除/搜索/导出） | 无 packwiz init/add/remove、无 `/v1/mods/search` | 工具是"只读管理器+更新器" |
 | GAP-3 | 单 mod 更新为死路径 | `curseforceservice.go:125` 非空分支无前端调用（`ProjectsView.vue:174` 仅传空串） | 后端能力闲置 |
 | GAP-4 | `CfCacheStore.Save` 生产零调用 | `cache.go:47` | 死代码 |
@@ -149,6 +151,8 @@ frontend/src/
 | GAP-13 | 前端零测试 | 无任何前端测试文件 | 回归风险 |
 | GAP-14 | 批量获取无进度事件 | `FetchAllModVersions` 无事件推送 | 长任务 UX 差 |
 | GAP-15 | 更新检查依赖交互式喂 "n" 与英文提示格式 | `cli.go:33` | 脆弱，packwiz 输出变更即破坏 |
+| GAP-16 | **多实例并存配置互覆**（已防护） | 两个实例各自持有 config 内存状态，删除项目写盘后被另一实例旧状态覆盖（表现为删除后配置复活）；已用 Windows 命名互斥体拦截（`internal/singleinstance`），弹窗提示后退出 | 已解决，记录供回归 |
+| GAP-17 | **Wails 原生消息对话框构建版挂起**（已绕行） | `Dialogs.Question` 等消息类对话框在 production 构建中 Promise 永久挂起（OpenFile 正常）；已全部改用 Vuetify 自定义 v-dialog | 已解决；后续新增确认/询问一律用自定义对话框 |
 
 ---
 
@@ -156,7 +160,7 @@ frontend/src/
 
 按优先级排列候选方向（每轮选择一个方向设计架构并实现）：
 
-- **P0 · Prism Launcher 联动**（README 核心卖点，本轮优先）：实例路径检测（扫描 Prism 安装目录 `instances/`，补 REQ-3.2）+ 实例管理（列表/选择）+ 项目-实例对应 + Junction 同步 + 双向 meta 拉取。工程量最大，需独立设计文件系统同步方案与冲突处理，建议分阶段（先实例检测与对应，再 Junction，最后 meta 拉取）。
+- **P0 · Prism Launcher 联动**：实例检测 ✅ / 关联与程序创建 ✅ / Junction 与一键关联 ✅ / 文件级同步 ✅ —— **仅剩最后一块：REQ-3.5 双向 meta 拉取**（mods 元数据推送到实例 `mods/.index`（packwiz-installer 兼容格式）+ 双向差异报告；报告先行，导入动作依赖 P1 packwiz add）。
 - **P1 · mod 生命周期闭环**（原 P0 顺延）：项目创建（packwiz init 引导向导）+ 添加 mod（packwiz add，URL/文件源；CF 搜索不在范围，见 REQ-4.9）+ 移除 mod（packwiz remove）。复用现有 `packwiz/cli.go` 子进程模式、index.toml 权威扫描，打通「创建 → 添加 → 管理 → 更新」闭环。架构提示：CLI 层新增 `RunInit/RunAdd/RunRemove`，前端新增向导/对话框；错误码沿用 `err.*` 契约。
 - **P2 · 体验与健壮性补全**（原 P1 顺延）：单 mod 更新按钮（打通 GAP-3）、批量获取进度事件（Wails Events，替换 GAP-14 loading）、缓存批量 Upsert 合并写（GAP-4 顺带消除）、config 损坏降级（GAP-8）、en-US 语言文件与切换器（NFR-2）。
 - **P3 · 收尾项**：导出/构建 modpack、side 编辑（REQ-4.2）、打包配置定制（NFR-6）、清理模板残留（GAP-10）与死代码（GAP-4/11）。
