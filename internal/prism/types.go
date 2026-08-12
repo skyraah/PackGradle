@@ -42,14 +42,16 @@ type LinkView struct {
 	InstanceValid bool   `json:"instance_valid"` // 实例当前是否仍可解析
 }
 
-// DirLinkView 是目录关联对的视图（含两侧目录实态，junction 状态由 Phase 3 补充）
+// DirLinkView 是目录关联对的视图（含两侧目录实态与同步模式）
 type DirLinkView struct {
-	Project        string `json:"project"`
-	Instance       string `json:"instance"`
-	ProjectDir     string `json:"project_dir"`     // 项目根下目录名
-	InstanceDir    string `json:"instance_dir"`    // 实例游戏目录下相对路径
-	ProjectExists  bool   `json:"project_exists"`  // 项目侧目录是否存在
-	InstanceExists bool   `json:"instance_exists"` // 实例侧目录是否存在
+	Project        string   `json:"project"`
+	Instance       string   `json:"instance"`
+	ProjectDir     string   `json:"project_dir"`     // 项目根下目录名
+	InstanceDir    string   `json:"instance_dir"`    // 实例游戏目录下相对路径
+	Mode           string   `json:"mode"`            // ""=整目录 junction / "files"=文件级同步
+	Files          []string `json:"files"`           // files 模式的同步文件清单（相对 ProjectDir）
+	ProjectExists  bool     `json:"project_exists"`  // 项目侧目录是否存在
+	InstanceExists bool     `json:"instance_exists"` // 实例侧目录是否存在
 }
 
 // LinkResult 是一键关联中单个条目的建链结果

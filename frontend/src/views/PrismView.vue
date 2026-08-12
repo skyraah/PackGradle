@@ -48,6 +48,13 @@ const pgignoreDialog = ref(false)
 const manualLinkDialog = ref(false)
 const manualLinkTarget = ref<DirLinkView | null>(null)
 const manualLinking = ref(false)
+// 文件级同步：文件选择对话框
+const fileSelectDialog = ref(false)
+const fileSelectProject = ref('')
+const fileSelectDir = ref('')
+const allFiles = ref<string[]>([])
+const selectedFiles = ref<string[]>([])
+const savingFiles = ref(false)
 
 // 加载器 chip：已识别 → 颜色标签；空 → 原版；其余 → 原样文本
 function loaderInfo(inst: Instance): { label: string; color?: string } {
@@ -303,6 +310,50 @@ async function confirmManualLink() {
         show(errText(e))
     } finally {
         manualLinking.value = false
+    }
+}
+
+// 文件级同步：打开文件选择对话框（加载项目目录全部文件 + 当前勾选）
+async function openFileSelect(dl: DirLinkView) {
+    fileSelectProject.value = dl.project
+    fileSelectDir.value = dl.project_dir
+    allFiles.value = (await PrismService.ListDirFiles(dl.project, dl.project_dir)) ?? []
+    selectedFiles.value = [...(dl.files ?? [])]
+    fileSelectDialog.value = true
+}
+
+// 保存文件清单（自动切换为文件级同步并重建链接）
+async function saveFileSelect() {
+    savingFiles.value = true
+    try {
+        await PrismService.SetDirLinkFiles(fileSelectProject.value, fileSelectDir.value, selectedFiles.value)
+        show(t('prism.dirLinkFilesSaved', [fileSelectDir.value]))
+        fileSelectDialog.value = false
+        await refreshDirLinks()
+    } catch (e) {
+        show(errText(e))
+    } finally {
+        savingFiles.value = false
+    }
+}
+
+// 从文件级切回整目录 junction
+async function switchToJunction(dl: DirLinkView) {
+    try {
+        await PrismService.SetDirLinkMode(dl.project, dl.project_dir, '')
+        show(t('prism.dirLinkModeJunction'))
+        await refreshDirLinks()
+    } catch (e) {
+        show(errText(e))
+    }
+}
+
+// 文件勾选切换
+function toggleFile(f: string, checked: boolean | null) {
+    if (checked) {
+        if (!selectedFiles.value.includes(f)) selectedFiles.value.push(f)
+    } else {
+        selectedFiles.value = selectedFiles.value.filter(x => x !== f)
     }
 }
 
@@ -614,6 +665,14 @@ onMounted(async () => {
                         >
                             <template #append>
                                 <v-chip
+                                    size="x-small"
+                                    :color="dl.mode === 'files' ? 'info' : 'grey'"
+                                    variant="tonal"
+                                    class="mr-2"
+                                >
+                                    {{ dl.mode === 'files' ? t('prism.dirLinkModeFiles') : t('prism.dirLinkModeJunction') }}
+                                </v-chip>
+                                <v-chip
                                     v-if="!dl.project_exists"
                                     size="x-small"
                                     color="warning"
@@ -622,7 +681,30 @@ onMounted(async () => {
                                 >
                                     {{ t('prism.parseFailed') }}
                                 </v-chip>
-                                <v-btn size="small" variant="text" class="mr-1" @click="askManualLink(dl)">
+                                <v-btn
+                                    size="small"
+                                    variant="text"
+                                    class="mr-1"
+                                    @click="openFileSelect(dl)"
+                                >
+                                    {{ t('prism.dirLinkFilesBtn') }}
+                                </v-btn>
+                                <v-btn
+                                    v-if="dl.mode === 'files'"
+                                    size="small"
+                                    variant="text"
+                                    class="mr-1"
+                                    @click="switchToJunction(dl)"
+                                >
+                                    {{ t('prism.dirLinkSwitchJunction') }}
+                                </v-btn>
+                                <v-btn
+                                    v-if="dl.mode !== 'files'"
+                                    size="small"
+                                    variant="text"
+                                    class="mr-1"
+                                    @click="askManualLink(dl)"
+                                >
                                     {{ t('prism.manualLinkBtn') }}
                                 </v-btn>
                                 <v-btn size="small" variant="text" @click="removeDirLink(dl)">
@@ -694,6 +776,52 @@ onMounted(async () => {
                     <v-btn variant="text" @click="manualLinkDialog = false">{{ t('prism.linkCancel') }}</v-btn>
                     <v-btn color="primary" variant="tonal" :loading="manualLinking" @click="confirmManualLink">
                         {{ t('prism.manualLinkBtn') }}
+                    </v-btn>
+                </v-card-actions>
+            </v-card>
+        </v-dialog>
+
+        <!-- 文件级同步：文件选择对话框 -->
+        <v-dialog v-model="fileSelectDialog" max-width="560">
+            <v-card>
+                <v-card-title class="d-flex align-center">
+                    <v-icon icon="mdi-file-check-outline" color="primary" class="mr-2" />
+                    {{ t('prism.dirLinkFilesTitle') }} · {{ fileSelectDir }}
+                </v-card-title>
+                <v-card-text>
+                    <div class="text-body-2 text-medium-emphasis mb-3">
+                        {{ t('prism.dirLinkFilesHint', [fileSelectDir]) }}
+                    </div>
+                    <div class="mb-2">
+                        <v-btn size="small" variant="tonal" class="mr-2" @click="selectedFiles = [...allFiles]">
+                            {{ t('prism.selectAll') }}
+                        </v-btn>
+                        <v-btn size="small" variant="text" @click="selectedFiles = []">
+                            {{ t('prism.clearAll') }}
+                        </v-btn>
+                    </div>
+                    <v-list v-if="allFiles.length > 0" density="compact" max-height="320" class="overflow-y-auto">
+                        <v-list-item v-for="f in allFiles" :key="f">
+                            <template #prepend>
+                                <v-checkbox
+                                    :model-value="selectedFiles.includes(f)"
+                                    density="compact"
+                                    hide-details
+                                    @update:model-value="(v: boolean | null) => toggleFile(f, v)"
+                                />
+                            </template>
+                            <v-list-item-title class="text-body-2">{{ f }}</v-list-item-title>
+                        </v-list-item>
+                    </v-list>
+                    <div v-else class="text-caption text-medium-emphasis">
+                        {{ t('prism.dirLinkNoCandidate') }}
+                    </div>
+                </v-card-text>
+                <v-card-actions>
+                    <v-spacer />
+                    <v-btn variant="text" @click="fileSelectDialog = false">{{ t('prism.linkCancel') }}</v-btn>
+                    <v-btn color="primary" variant="tonal" :loading="savingFiles" @click="saveFileSelect">
+                        {{ t('prism.save') }}
                     </v-btn>
                 </v-card-actions>
             </v-card>

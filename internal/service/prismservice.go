@@ -150,10 +150,7 @@ func (s *PrismService) UnlinkProject(projectName string) error {
 	// 先删除已建链接（junction 与硬链接），实例已不存在时跳过
 	if inst, ok := s.scanInstancesSafe()[pc.Instance]; ok {
 		for _, dl := range pc.DirLinks {
-			instSide := filepath.Join(inst.GameDir, filepath.FromSlash(dl.InstanceDir))
-			if isJ, _ := s.junctions.IsJunction(instSide); isJ {
-				_ = s.junctions.Remove(instSide)
-			}
+			_ = s.removeDirLinkTargets(inst, entry.Path, dl)
 		}
 		for _, f := range pc.FileLinks {
 			_ = os.Remove(filepath.Join(inst.GameDir, filepath.FromSlash(f))) // 硬链接删除只减引用
@@ -255,10 +252,9 @@ func (s *PrismService) RemoveDirLink(projectName, projectDir string) error {
 	}
 	// 删除实例侧链接（若已建立且指向本项目）
 	if inst, ok := s.scanInstancesSafe()[pc.Instance]; ok {
-		instSide := filepath.Join(inst.GameDir, filepath.FromSlash(projectDir))
-		if isJ, _ := s.junctions.IsJunction(instSide); isJ {
-			if target, err := s.junctions.TargetOf(instSide); err == nil && samePath(target, filepath.Join(entry.Path, projectDir)) {
-				_ = s.junctions.Remove(instSide)
+		for _, dl := range pc.DirLinks {
+			if dl.ProjectDir == projectDir {
+				_ = s.removeDirLinkTargets(inst, entry.Path, dl)
 			}
 		}
 	}
@@ -270,6 +266,43 @@ func (s *PrismService) RemoveDirLink(projectName, projectDir string) error {
 	}
 	pc.DirLinks = out
 	return appconfig.SaveProjectConfig(entry.Path, pc)
+}
+
+// removeDirLinkTargets 删除某目录关联已建立的链接：
+// files 模式删除文件硬链接并清理残留空目录；junction 模式删除目录链接（仅当指向项目侧）
+func (s *PrismService) removeDirLinkTargets(inst prism.Instance, projectPath string, dl appconfig.ProjectDirLink) error {
+	gameDir := inst.GameDir
+	if dl.Mode == "files" {
+		instDir := filepath.Join(gameDir, filepath.FromSlash(dl.InstanceDir))
+		for _, f := range dl.Files {
+			_ = os.Remove(filepath.Join(instDir, filepath.FromSlash(f)))
+		}
+		// 清理建链时创建的残留空目录结构（含用户内容的目录保留）
+		removeEmptyDirs(instDir)
+		return nil
+	}
+	// junction：仅删除指向项目侧的链接
+	instSide := filepath.Join(gameDir, filepath.FromSlash(dl.InstanceDir))
+	if isJ, _ := s.junctions.IsJunction(instSide); isJ {
+		if target, err := s.junctions.TargetOf(instSide); err == nil && samePath(target, filepath.Join(projectPath, dl.ProjectDir)) {
+			_ = s.junctions.Remove(instSide)
+		}
+	}
+	return nil
+}
+
+// removeEmptyDirs 自底向上删除完全空的目录（含任何内容的目录保留不动）
+func removeEmptyDirs(root string) {
+	var dirs []string
+	_ = filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
+		if err == nil && d.IsDir() {
+			dirs = append(dirs, path)
+		}
+		return nil
+	})
+	for i := len(dirs) - 1; i >= 0; i-- {
+		_ = os.Remove(dirs[i]) // 非空目录删除失败，静默跳过
+	}
 }
 
 // HasPGIgnore 检查项目是否已有 .pgignore 文件（一键关联前询问用）
@@ -347,10 +380,22 @@ func (s *PrismService) CreateAllLinks(projectName string) ([]prism.LinkResult, e
 		projSide := filepath.Join(entry.Path, name)
 		instSide := filepath.Join(inst.GameDir, name)
 		if e.IsDir() {
+			// files 模式目录：不建整目录 junction，文件级链接单独处理
+			if isFilesMode(pc.DirLinks, name) {
+				continue
+			}
 			results = append(results, s.linkDir(instSide, projSide, name, &newDirLinks))
 		} else {
 			results = append(results, s.linkFile(instSide, projSide, name, &newFileLinks))
 		}
+	}
+
+	// files 模式目录：对清单文件逐个建硬链接（未选中的文件实例侧保持独立）
+	for _, dl := range pc.DirLinks {
+		if dl.Mode != "files" {
+			continue
+		}
+		results = append(results, s.linkDirFiles(inst, entry.Path, dl)...)
 	}
 
 	// 持久化本次建链记录（有变化才写）
@@ -378,12 +423,32 @@ func (s *PrismService) linkDir(instSide, projSide, name string, newDirLinks *[]a
 		res.Detail = errs.New("err.junction.wrong_target", name).Error()
 		return res
 	}
-	// 实例侧已有真实内容：不自动处理（避免破坏游戏侧数据），
-	// 标记为需手动链接——用户确认后由 ManualLinkDir 复制内容并建链
+	// 实例侧已有内容：空目录直接删除后建链（无内容可保留）；
+	// 非空目录不自动处理（避免破坏游戏侧数据），标记为需手动链接——
+	// 用户确认后由 ManualLinkDir 复制内容并入并建链
 	if _, err := os.Lstat(instSide); err == nil {
-		res.Status = "manual"
-		res.Detail = errs.New("err.sync.manual_required", name).Error()
-		return res
+		if !isDir(instSide) {
+			res.Status = "error"
+			res.Detail = errs.New("err.sync.dir_conflict", name).Error()
+			return res
+		}
+		entries, rerr := os.ReadDir(instSide)
+		if rerr != nil {
+			res.Status = "error"
+			res.Detail = errs.NewDetail("err.toml.read", rerr.Error(), instSide).Error()
+			return res
+		}
+		if len(entries) > 0 {
+			res.Status = "manual"
+			res.Detail = errs.New("err.sync.manual_required", name).Error()
+			return res
+		}
+		// 空目录：直接删除后继续建链
+		if err := os.Remove(instSide); err != nil {
+			res.Status = "error"
+			res.Detail = errs.NewDetail("err.sync.remove_failed", err.Error(), name).Error()
+			return res
+		}
 	}
 	if !isDir(projSide) {
 		res.Status = "skipped"
@@ -542,14 +607,220 @@ func appendDirLink(links *[]appconfig.ProjectDirLink, projectDir, instanceDir st
 	*links = append(*links, appconfig.ProjectDirLink{ProjectDir: projectDir, InstanceDir: instanceDir})
 }
 
-// samePath 规范化比较两条路径是否指向同一位置（忽略大小写与分隔符差异）
-func samePath(a, b string) bool {
-	aa, err1 := filepath.Abs(a)
-	bb, err2 := filepath.Abs(b)
-	if err1 != nil || err2 != nil {
-		return false
+// isFilesMode 判断目录关联是否为文件级同步模式
+func isFilesMode(links []appconfig.ProjectDirLink, dir string) bool {
+	for _, dl := range links {
+		if dl.ProjectDir == dir && dl.Mode == "files" {
+			return true
+		}
 	}
-	return strings.EqualFold(filepath.Clean(aa), filepath.Clean(bb))
+	return false
+}
+
+// linkDirFiles 为 files 模式目录的清单文件逐个建硬链接（项目 → 实例）。
+// 项目侧文件缺失或实例侧已存在时跳过并报告，不中断其余文件。
+func (s *PrismService) linkDirFiles(inst prism.Instance, projectPath string, dl appconfig.ProjectDirLink) []prism.LinkResult {
+	var results []prism.LinkResult
+	for _, f := range dl.Files {
+		res := prism.LinkResult{Name: dl.ProjectDir + "/" + f, IsDir: false}
+		projSide := filepath.Join(projectPath, dl.ProjectDir, filepath.FromSlash(f))
+		instSide := filepath.Join(inst.GameDir, filepath.FromSlash(dl.InstanceDir), filepath.FromSlash(f))
+		if !isFile(projSide) {
+			res.Status = "skipped"
+			res.Detail = errs.New("err.junction.target_missing", res.Name).Error()
+			results = append(results, res)
+			continue
+		}
+		if _, err := os.Lstat(instSide); err == nil {
+			res.Status = "skipped"
+			res.Detail = errs.New("err.link.file_exists", res.Name).Error()
+			results = append(results, res)
+			continue
+		}
+		if err := os.MkdirAll(filepath.Dir(instSide), 0o755); err != nil {
+			res.Status = "error"
+			res.Detail = errs.NewDetail("err.file.mkdir", err.Error(), res.Name).Error()
+			results = append(results, res)
+			continue
+		}
+		if err := os.Link(projSide, instSide); err != nil {
+			res.Status = "error"
+			res.Detail = errs.NewDetail("err.link.hardlink_failed", err.Error(), res.Name).Error()
+			results = append(results, res)
+			continue
+		}
+		res.Status = "linked"
+		results = append(results, res)
+	}
+	return results
+}
+
+// isFile 判断路径是否为普通文件
+func isFile(path string) bool {
+	info, err := os.Stat(path)
+	return err == nil && !info.IsDir()
+}
+
+// SetDirLinkMode 切换目录关联的同步模式（""=整目录 junction / "files"=文件级）。
+// 切换时自动重建链接：清理旧模式链接，按新模式建链；
+// 切回 junction 且实例侧已有内容时返回错误提示先手动处理。
+func (s *PrismService) SetDirLinkMode(projectName, dir, mode string) error {
+	if mode != "" && mode != "files" {
+		return errs.New("err.sync.invalid_mode", mode)
+	}
+	entry, ok := s.config.FindProject(projectName)
+	if !ok {
+		return errs.New("err.proj.not_found", projectName)
+	}
+	pc, err := appconfig.LoadProjectConfig(entry.Path)
+	if err != nil {
+		return err
+	}
+	if pc.Instance == "" {
+		return errs.New("err.link.not_found", projectName)
+	}
+	inst, ok := s.scanInstancesSafe()[pc.Instance]
+	if !ok {
+		return errs.New("err.prism.instance_not_found", pc.Instance)
+	}
+	idx := -1
+	for i := range pc.DirLinks {
+		if pc.DirLinks[i].ProjectDir == dir {
+			idx = i
+			break
+		}
+	}
+	if idx == -1 {
+		return errs.New("err.sync.dir_not_linked", dir)
+	}
+	if pc.DirLinks[idx].Mode == mode {
+		return nil // 无变化
+	}
+
+	// 清理旧模式链接
+	if err := s.removeDirLinkTargets(inst, entry.Path, pc.DirLinks[idx]); err != nil {
+		return err
+	}
+	// 更新模式并重建链接
+	pc.DirLinks[idx].Mode = mode
+	if mode == "files" {
+		s.linkDirFiles(inst, entry.Path, pc.DirLinks[idx]) // 对已有 Files 清单建链（结果由前端后续刷新）
+	} else {
+		instSide := filepath.Join(inst.GameDir, filepath.FromSlash(pc.DirLinks[idx].InstanceDir))
+		projSide := filepath.Join(entry.Path, pc.DirLinks[idx].ProjectDir)
+		r := s.linkDir(instSide, projSide, dir, &pc.DirLinks)
+		if r.Status == "manual" {
+			// 实例侧已有内容：切回 junction 需先手动处理
+			return errs.New("err.sync.manual_required", dir)
+		}
+		if r.Status == "error" {
+			return errs.NewDetail("err.junction.create", r.Detail, dir)
+		}
+	}
+	return appconfig.SaveProjectConfig(entry.Path, pc)
+}
+
+// SetDirLinkFiles 设置文件级同步的清单（自动切换为 files 模式并重建链接）。
+// 清单为空时视为退出文件级模式（回到 junction）。
+func (s *PrismService) SetDirLinkFiles(projectName, dir string, files []string) error {
+	entry, ok := s.config.FindProject(projectName)
+	if !ok {
+		return errs.New("err.proj.not_found", projectName)
+	}
+	pc, err := appconfig.LoadProjectConfig(entry.Path)
+	if err != nil {
+		return err
+	}
+	if pc.Instance == "" {
+		return errs.New("err.link.not_found", projectName)
+	}
+	inst, ok := s.scanInstancesSafe()[pc.Instance]
+	if !ok {
+		return errs.New("err.prism.instance_not_found", pc.Instance)
+	}
+	idx := -1
+	for i := range pc.DirLinks {
+		if pc.DirLinks[i].ProjectDir == dir {
+			idx = i
+			break
+		}
+	}
+	if idx == -1 {
+		return errs.New("err.sync.dir_not_linked", dir)
+	}
+
+	// 清理旧链接（无论旧模式）
+	if err := s.removeDirLinkTargets(inst, entry.Path, pc.DirLinks[idx]); err != nil {
+		return err
+	}
+
+	// 去重排序清单
+	seen := map[string]bool{}
+	clean := make([]string, 0, len(files))
+	for _, f := range files {
+		f = strings.TrimSpace(filepath.ToSlash(f))
+		if f == "" || seen[f] {
+			continue
+		}
+		seen[f] = true
+		clean = append(clean, f)
+	}
+	sort.Strings(clean)
+
+	pc.DirLinks[idx].Files = clean
+	if len(clean) == 0 {
+		// 空清单：退出文件级模式，回到整目录 junction
+		pc.DirLinks[idx].Mode = ""
+		instSide := filepath.Join(inst.GameDir, filepath.FromSlash(pc.DirLinks[idx].InstanceDir))
+		projSide := filepath.Join(entry.Path, pc.DirLinks[idx].ProjectDir)
+		r := s.linkDir(instSide, projSide, dir, &pc.DirLinks)
+		if r.Status == "manual" {
+			return errs.New("err.sync.manual_required", dir)
+		}
+		if r.Status == "error" {
+			return errs.NewDetail("err.junction.create", r.Detail, dir)
+		}
+	} else {
+		pc.DirLinks[idx].Mode = "files"
+		s.linkDirFiles(inst, entry.Path, pc.DirLinks[idx])
+	}
+	return appconfig.SaveProjectConfig(entry.Path, pc)
+}
+
+// ListDirFiles 递归列出项目目录下的全部文件（相对 projectDir，排除隐藏项），
+// 供文件级同步的勾选界面使用
+func (s *PrismService) ListDirFiles(projectName, dir string) ([]string, error) {
+	entry, ok := s.config.FindProject(projectName)
+	if !ok {
+		return nil, errs.New("err.proj.not_found", projectName)
+	}
+	root := filepath.Join(entry.Path, dir)
+	var out []string
+	err := filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
+		if err != nil {
+			return nil // 单文件错误跳过
+		}
+		if path == root {
+			return nil
+		}
+		if strings.HasPrefix(d.Name(), ".") {
+			if d.IsDir() {
+				return filepath.SkipDir
+			}
+			return nil // 隐藏文件跳过
+		}
+		if d.IsDir() {
+			return nil
+		}
+		rel, _ := filepath.Rel(root, path)
+		out = append(out, filepath.ToSlash(rel))
+		return nil
+	})
+	if err != nil {
+		return nil, errs.NewDetail("err.proj.invalid_path", err.Error(), root)
+	}
+	sort.Strings(out)
+	return out, nil
 }
 
 // ListDirLinks 返回某项目的目录关联对（含两侧目录实态）
@@ -570,6 +841,8 @@ func (s *PrismService) ListDirLinks(projectName string) []prism.DirLinkView {
 			Instance:    pc.Instance,
 			ProjectDir:  dl.ProjectDir,
 			InstanceDir: dl.InstanceDir,
+			Mode:        dl.Mode,
+			Files:       dl.Files,
 		}
 		view.ProjectExists = isDir(filepath.Join(entry.Path, dl.ProjectDir))
 		if inst, ok := instances[pc.Instance]; ok {
@@ -608,4 +881,14 @@ func (s *PrismService) ListProjectDirs(projectName string) ([]string, error) {
 func isDir(path string) bool {
 	info, err := os.Stat(path)
 	return err == nil && info.IsDir()
+}
+
+// samePath 规范化比较两条路径是否指向同一位置（忽略大小写与分隔符差异）
+func samePath(a, b string) bool {
+	aa, err1 := filepath.Abs(a)
+	bb, err2 := filepath.Abs(b)
+	if err1 != nil || err2 != nil {
+		return false
+	}
+	return strings.EqualFold(filepath.Clean(aa), filepath.Clean(bb))
 }

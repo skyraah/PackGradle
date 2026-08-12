@@ -25,6 +25,11 @@ type ProjectConfig struct {
 type ProjectDirLink struct {
 	ProjectDir  string `toml:"project_dir"`  // 相对项目根（如 config）
 	InstanceDir string `toml:"instance_dir"` // 相对实例游戏目录（minecraft/），默认与 ProjectDir 同名
+	// 同步模式：空 = 整目录 junction（默认）；"files" = 文件级同步
+	// （junction 无法排除子项，需要单独控制某些文件是否同步时用文件级模式，
+	// 对 Files 清单中的每个文件逐个建硬链接，未选中的文件实例侧保持独立）
+	Mode  string   `toml:"mode,omitempty"`
+	Files []string `toml:"files,omitempty"` // files 模式：相对 ProjectDir 的同步文件清单
 }
 
 // ProjectConfigPath 返回项目级配置文件路径（与 pack.toml 同目录）

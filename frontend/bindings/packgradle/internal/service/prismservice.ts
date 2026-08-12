@@ -87,6 +87,14 @@ export function LinkProject(projectName: string, instanceID: string): $Cancellab
 }
 
 /**
+ * ListDirFiles 递归列出项目目录下的全部文件（相对 projectDir，排除隐藏项），
+ * 供文件级同步的勾选界面使用
+ */
+export function ListDirFiles(projectName: string, dir: string): $CancellablePromise<string[] | null> {
+    return $Call.ByID(1654091995, projectName, dir);
+}
+
+/**
  * ListDirLinks 返回某项目的目录关联对（含两侧目录实态）
  */
 export function ListDirLinks(projectName: string): $CancellablePromise<prism$0.DirLinkView[] | null> {
@@ -128,6 +136,23 @@ export function ManualLinkDir(projectName: string, dir: string): $CancellablePro
  */
 export function RemoveDirLink(projectName: string, projectDir: string): $CancellablePromise<void> {
     return $Call.ByID(2816067440, projectName, projectDir);
+}
+
+/**
+ * SetDirLinkFiles 设置文件级同步的清单（自动切换为 files 模式并重建链接）。
+ * 清单为空时视为退出文件级模式（回到 junction）。
+ */
+export function SetDirLinkFiles(projectName: string, dir: string, files: string[] | null): $CancellablePromise<void> {
+    return $Call.ByID(3091833297, projectName, dir, files);
+}
+
+/**
+ * SetDirLinkMode 切换目录关联的同步模式（""=整目录 junction / "files"=文件级）。
+ * 切换时自动重建链接：清理旧模式链接，按新模式建链；
+ * 切回 junction 且实例侧已有内容时返回错误提示先手动处理。
+ */
+export function SetDirLinkMode(projectName: string, dir: string, mode: string): $CancellablePromise<void> {
+    return $Call.ByID(3471433285, projectName, dir, mode);
 }
 
 /**

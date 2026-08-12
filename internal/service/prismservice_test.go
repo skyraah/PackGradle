@@ -697,3 +697,156 @@ func TestManualLinkDirValidation(t *testing.T) {
 		t.Errorf("实例侧是文件应报错，实际 %+v", res)
 	}
 }
+
+// makeConfigFiles 在项目 config 目录下创建多文件（含子目录），返回文件名清单
+func makeConfigFiles(t *testing.T, entry appconfig.ProjectEntry) {
+	t.Helper()
+	mustWriteFile(t, filepath.Join(entry.Path, "config", "a.cfg"), "a")
+	mustWriteFile(t, filepath.Join(entry.Path, "config", "b.cfg"), "b")
+	mustWriteFile(t, filepath.Join(entry.Path, "config", "jade", "jade.json"), "{}")
+	mustWriteFile(t, filepath.Join(entry.Path, "config", "secret.cfg"), "secret")
+}
+
+// 文件级同步：设置清单后切换 files 模式，一键关联按清单建硬链接
+func TestDirLinkFilesMode(t *testing.T) {
+	_, _ = makePrismFixture(t)
+	cm := newTestConfig(t)
+	mem := junction.NewMemoryManager()
+	svc := &PrismService{config: cm, junctions: mem}
+	proj, _ := makeLinkProject(t, cm, "Collapse")
+	entry, _ := cm.FindProject(proj)
+	makeConfigFiles(t, entry)
+	if err := svc.LinkProject(proj, "Collapse"); err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.AddDirLink(proj, "config"); err != nil {
+		t.Fatal(err)
+	}
+
+	// 设置文件清单（只同步 a.cfg 与 jade/jade.json，排除 b.cfg 与 secret.cfg）
+	if err := svc.SetDirLinkFiles(proj, "config", []string{"a.cfg", "jade/jade.json"}); err != nil {
+		t.Fatal(err)
+	}
+	pc, _ := appconfig.LoadProjectConfig(entry.Path)
+	if len(pc.DirLinks) != 1 || pc.DirLinks[0].Mode != "files" {
+		t.Fatalf("应切换为 files 模式: %+v", pc.DirLinks)
+	}
+	if len(pc.DirLinks[0].Files) != 2 {
+		t.Fatalf("清单应为 2 个文件: %+v", pc.DirLinks[0].Files)
+	}
+
+	// 一键关联：config 不建 junction，清单文件建硬链接
+	if _, err := svc.CreateAllLinks(proj); err != nil {
+		t.Fatal(err)
+	}
+	instancesDir, _ := svc.InstancesDir()
+	gameDir := filepath.Join(instancesDir, "Collapse", "minecraft")
+	if isJ, _ := mem.IsJunction(filepath.Join(gameDir, "config")); isJ {
+		t.Error("files 模式不应建整目录 junction")
+	}
+	// 清单文件应为硬链接（同一文件）
+	for _, f := range []string{filepath.Join("config", "a.cfg"), filepath.Join("config", "jade", "jade.json")} {
+		if _, err := os.Stat(filepath.Join(gameDir, f)); err != nil {
+			t.Errorf("清单文件 %s 应已建链: %v", f, err)
+		}
+	}
+	// 未勾选文件不应出现（实例侧保持独立）
+	if _, err := os.Stat(filepath.Join(gameDir, "config", "b.cfg")); err == nil {
+		t.Error("未勾选文件不应建链")
+	}
+	if _, err := os.Stat(filepath.Join(gameDir, "config", "secret.cfg")); err == nil {
+		t.Error("未勾选文件不应建链")
+	}
+
+	// ListDirFiles 返回递归文件清单
+	files, err := svc.ListDirFiles(proj, "config")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(files) != 4 {
+		t.Errorf("应有 4 个文件（含子目录），实际 %v", files)
+	}
+
+	// 解除：文件链接清理
+	if err := svc.UnlinkProject(proj); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(gameDir, "config", "a.cfg")); err == nil {
+		t.Error("解除后文件链接应清理")
+	}
+}
+
+// 文件清单置空：退出 files 模式回到 junction
+func TestDirLinkFilesClearReturnsJunction(t *testing.T) {
+	_, _ = makePrismFixture(t)
+	cm := newTestConfig(t)
+	svc := newPrismServiceWithMemory(cm)
+	proj, _ := makeLinkProject(t, cm, "Collapse")
+	entry, _ := cm.FindProject(proj)
+	makeConfigFiles(t, entry)
+	if err := svc.LinkProject(proj, "Collapse"); err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.AddDirLink(proj, "config"); err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.SetDirLinkFiles(proj, "config", []string{"a.cfg"}); err != nil {
+		t.Fatal(err)
+	}
+	// 清空清单 → 回 junction
+	if err := svc.SetDirLinkFiles(proj, "config", []string{}); err != nil {
+		t.Fatal(err)
+	}
+	pc, _ := appconfig.LoadProjectConfig(entry.Path)
+	if pc.DirLinks[0].Mode != "" {
+		t.Errorf("空清单应回到 junction 模式，实际 %+v", pc.DirLinks[0])
+	}
+	instancesDir, _ := svc.InstancesDir()
+	gameDir := filepath.Join(instancesDir, "Collapse", "minecraft")
+	if isJ, _ := svc.junctions.IsJunction(filepath.Join(gameDir, "config")); !isJ {
+		t.Error("应已重建整目录 junction")
+	}
+}
+
+// 模式切换：files → junction / junction → files 均重建链接
+func TestSetDirLinkModeSwitch(t *testing.T) {
+	_, _ = makePrismFixture(t)
+	cm := newTestConfig(t)
+	mem := junction.NewMemoryManager()
+	svc := &PrismService{config: cm, junctions: mem}
+	proj, _ := makeLinkProject(t, cm, "Collapse")
+	entry, _ := cm.FindProject(proj)
+	makeConfigFiles(t, entry)
+	if err := svc.LinkProject(proj, "Collapse"); err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.AddDirLink(proj, "config"); err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.SetDirLinkFiles(proj, "config", []string{"a.cfg"}); err != nil {
+		t.Fatal(err)
+	}
+	instancesDir, _ := svc.InstancesDir()
+	gameDir := filepath.Join(instancesDir, "Collapse", "minecraft")
+	// files → junction
+	if err := svc.SetDirLinkMode(proj, "config", ""); err != nil {
+		t.Fatal(err)
+	}
+	if isJ, _ := mem.IsJunction(filepath.Join(gameDir, "config")); !isJ {
+		t.Error("切回 junction 应建整目录链接")
+	}
+	// junction → files（清单保留）
+	if err := svc.SetDirLinkMode(proj, "config", "files"); err != nil {
+		t.Fatal(err)
+	}
+	if isJ, _ := mem.IsJunction(filepath.Join(gameDir, "config")); isJ {
+		t.Error("切到 files 应移除整目录链接")
+	}
+	if _, err := os.Stat(filepath.Join(gameDir, "config", "a.cfg")); err != nil {
+		t.Errorf("files 模式应重建文件链接: %v", err)
+	}
+	// 非法模式拒绝
+	if err := svc.SetDirLinkMode(proj, "config", "bogus"); errs.CodeOf(err) != "err.sync.invalid_mode" {
+		t.Errorf("非法模式应报错，实际 %v", err)
+	}
+}
