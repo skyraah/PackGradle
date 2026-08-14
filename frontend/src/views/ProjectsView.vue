@@ -6,13 +6,15 @@ import { PackwizService } from '../../bindings/packgradle/internal/service'
 import type { PackProject, ModInfo, UpdateCheckResult } from '../../bindings/packgradle/internal/packwiz'
 import { useSnackbar } from '../composables/useSnackbar'
 import { useApiKeyGuide } from '../composables/useApiKeyGuide'
+import { useProjects } from '../composables/useProjects'
 import { errText, displayText } from '../utils/errors'
 import { isCfMod, cfReleaseKey, cfDateText, loaderChips, sideColors } from '../utils/cf'
 import { projectsVersion } from '../nav'
 
 const { t } = useI18n()
 
-const projects = ref<PackProject[]>([])
+// 项目列表走共享缓存：视图切换不再重复解析全部 pack.toml
+const { projects, loaded: projectsLoaded, loadProjects, setProjects } = useProjects()
 const loading = ref(false)
 const importing = ref(false)
 const expanded = ref<string | null>(null)
@@ -49,10 +51,11 @@ function projectError(proj: PackProject): string {
     return displayText(proj.error)
 }
 
+// load 强制重新拉取（刷新按钮 / 操作后 / 跨视图数据变更）
 async function load() {
     loading.value = true
     try {
-        projects.value = (await PackwizService.ListProjects()) ?? []
+        await loadProjects(true)
     } finally {
         loading.value = false
     }
@@ -89,15 +92,14 @@ async function removeProject(proj: PackProject) {
     removeDialog.value = true
 }
 
-// 确认移除：执行删除并刷新列表
+// 确认移除：执行删除并更新共享缓存
 async function confirmRemove() {
     const proj = removing.value
     if (!proj) return
     removeDialog.value = false
     removing.value = null
     try {
-        const list = await PackwizService.RemoveProject(proj.name)
-        projects.value = list ?? []
+        setProjects(await PackwizService.RemoveProject(proj.name))
         if (expanded.value === proj.name) expanded.value = null
     } catch (e) {
         show(t('projects.removeFailed', [errText(e)]))
@@ -190,7 +192,10 @@ async function applyAllUpdates() {
     }
 }
 
-onMounted(load)
+onMounted(async () => {
+    // 共享缓存已就绪时直接展示（视图切换零开销）；未就绪才拉取
+    if (!projectsLoaded.value) await load()
+})
 
 // 跨视图数据变更（如 Prism 联动页拉取 meta 改变项目 mods）后自动刷新列表
 watch(projectsVersion, () => {

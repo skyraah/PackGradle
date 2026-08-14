@@ -6,7 +6,6 @@ import (
 
 	"packgradle/internal/appconfig"
 	"packgradle/internal/curseforge"
-	"packgradle/internal/envutil"
 	"packgradle/internal/errs"
 	"packgradle/internal/junction"
 	"packgradle/internal/packwiz"
@@ -88,33 +87,24 @@ func (s *PackwizService) cleanupProjectLinks(projectPath string) {
 	if err != nil || pc.Instance == "" {
 		return // 未关联，无需清理
 	}
-	// 定位实例根目录（手动路径优先，同 PrismService 定位链）
-	instDir := s.config.Get().PrismInstancesPath
-	if !isDir(instDir) {
-		if dataDir := prism.DataDir(); isDir(dataDir) {
-			if d, err := prism.InstancesDir(dataDir); err == nil && isDir(d) {
-				instDir = d
-			}
-		}
-	}
-	if instDir == "" {
+	// 定位实例根目录（与 PrismService 同一套定位链）
+	instDir, _, err := resolveInstancesDir(s.config.Get())
+	if err != nil {
 		_ = os.Remove(appconfig.ProjectConfigPath(projectPath))
 		return
 	}
-	for _, inst := range prism.ScanInstances(instDir) {
-		if inst.ID != pc.Instance {
-			continue
-		}
-		for _, dl := range pc.DirLinks {
-			link := filepath.Join(inst.GameDir, filepath.FromSlash(dl.InstanceDir))
-			if isJ, _ := s.junctions.IsJunction(link); isJ {
-				_ = s.junctions.Remove(link) // 仅删链接，目标内容不动
-			}
-		}
-		for _, f := range pc.FileLinks {
-			_ = os.Remove(filepath.Join(inst.GameDir, filepath.FromSlash(f))) // 硬链接删除只减引用
+	inst, ok := findInstanceByID(prism.ScanInstances(instDir), pc.Instance)
+	if !ok {
+		_ = os.Remove(appconfig.ProjectConfigPath(projectPath))
+		return
+	}
+	for _, dl := range pc.DirLinks {
+		link := filepath.Join(inst.GameDir, filepath.FromSlash(dl.InstanceDir))
+		if isJ, _ := s.junctions.IsJunction(link); isJ {
+			_ = s.junctions.Remove(link) // 仅删链接，目标内容不动
 		}
 	}
+	removeHardlinkFiles(inst, pc.FileLinks)
 	_ = os.Remove(appconfig.ProjectConfigPath(projectPath))
 }
 
@@ -131,12 +121,9 @@ func (s *PackwizService) RefreshProject(name string) packwiz.RefreshResult {
 	return packwiz.RunRefresh(packwizPath, entry.Path)
 }
 
-// findPackwiz 返回 packwiz 可执行文件路径。
-// 统一查找链：config → PACKWIZ 环境变量 → PATH → %USERPROFILE%\go\bin
+// findPackwiz 返回 packwiz 可执行文件路径（查找链见 findPackwizExecutable）
 func (s *PackwizService) findPackwiz() (string, error) {
-	cfg := s.config.Get()
-	goBin := filepath.Join(os.Getenv("USERPROFILE"), "go", "bin")
-	path, _, ok := envutil.FindExecutable(cfg.PackwizPath, "packwiz", "PACKWIZ", goBin)
+	path, _, ok := findPackwizExecutable(s.config.Get())
 	if !ok {
 		return "", errs.New("err.tool.packwiz_not_found")
 	}
@@ -145,11 +132,7 @@ func (s *PackwizService) findPackwiz() (string, error) {
 
 // findProject 按名称查找项目并解析
 func (s *PackwizService) findProject(projectName string) (packwiz.PackProject, error) {
-	entry, ok := s.config.FindProject(projectName)
-	if !ok {
-		return packwiz.PackProject{}, errs.New("err.proj.not_found", projectName)
-	}
-	return packwiz.ParseProject(filepath.Join(entry.Path, "pack.toml"))
+	return findProjectByName(s.config, projectName)
 }
 
 // findProjectMod 按名称查找项目并定位其中指定 ID 的 mod

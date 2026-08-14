@@ -4,9 +4,9 @@ import { useI18n } from 'vue-i18n'
 import { Dialogs } from '@wailsio/runtime'
 import { PrismService, PackwizService } from '../../bindings/packgradle/internal/service'
 import type { Instance, LinkView, DirLinkView, LinkResult, MetaDiff } from '../../bindings/packgradle/internal/prism'
-import type { PackProject } from '../../bindings/packgradle/internal/packwiz'
 import { useSnackbar } from '../composables/useSnackbar'
-import { displayText, errText, errorCode } from '../utils/errors'
+import { useProjects } from '../composables/useProjects'
+import { displayText, errText, parseAppErr } from '../utils/errors'
 import { loaderChips } from '../utils/cf'
 import { navigate, bumpProjectsVersion } from '../nav'
 
@@ -24,9 +24,10 @@ const manualPath = ref('')
 const saving = ref(false)
 const { snackbar, snackbarMsg, show } = useSnackbar()
 
-// 项目 ↔ 实例 关联
+// 项目 ↔ 实例 关联（项目列表走共享缓存，避免与项目页重复解析）
+const { projects, loadProjects, invalidateProjects } = useProjects()
+const linkableProjects = computed(() => projects.value.filter(p => !p.error))
 const links = ref<LinkView[]>([])
-const projects = ref<PackProject[]>([])
 const linkDialog = ref(false)
 const selProject = ref('')
 const selInstance = ref('')
@@ -74,30 +75,29 @@ function loaderInfo(inst: Instance): { label: string; color?: string } {
     return loaderChips[inst.modloader] ?? { label: inst.modloader }
 }
 
+// 页面数据装载/刷新：Overview 一次调用返回实例目录 + 实例列表 + 关联视图
+// （后端只扫描一次实例目录，替代此前的 InstancesDir/ListInstances/GetLinks 三次往返）
 async function load() {
     loading.value = true
     try {
-        const dir = await PrismService.InstancesDir()
-        instancesDir.value = dir ?? ''
-        locateFailed.value = false
-        failedError.value = ''
-    } catch (e) {
-        // 定位失败：展示手动输入引导（含具体错误原因）
-        locateFailed.value = true
-        failedCode.value = errorCode(e) ?? ''
-        failedError.value = errText(e)
-        instances.value = []
-        instancesDir.value = ''
-        return
-    } finally {
-        loading.value = false
-    }
-
-    try {
-        instances.value = (await PrismService.ListInstances()) ?? []
+        const ov = await PrismService.Overview()
+        instancesDir.value = ov.instances_dir ?? ''
+        instances.value = ov.instances ?? []
+        links.value = ov.links ?? []
+        if (ov.locate_error) {
+            // 定位失败：展示手动输入引导（含具体错误原因）
+            locateFailed.value = true
+            failedCode.value = parseAppErr(ov.locate_error)?.code ?? ''
+            failedError.value = displayText(ov.locate_error)
+        } else {
+            locateFailed.value = false
+            failedError.value = ''
+        }
     } catch (e) {
         show(errText(e))
         instances.value = []
+    } finally {
+        loading.value = false
     }
 }
 
@@ -137,18 +137,15 @@ async function clearManualPath() {
 
 // ---- 关联 ----
 
-// 加载可关联的项目列表（排除解析失败的项目）
-async function loadProjects() {
-    projects.value = ((await PackwizService.ListProjects()) ?? []).filter(p => !p.error)
-}
-
-async function loadLinks() {
-    links.value = (await PrismService.GetLinks()) ?? []
-}
-
+// 加载可关联的项目列表（共享缓存；打开对话框前强制刷新，排除解析失败的项目）
 async function openLinkDialog() {
-    await loadProjects() // 打开前刷新，保证列表最新
-    if (projects.value.length === 0) {
+    try {
+        await loadProjects(true)
+    } catch (e) {
+        show(errText(e))
+        return
+    }
+    if (linkableProjects.value.length === 0) {
         show(t('prism.noProjectsHint'))
         return
     }
@@ -173,7 +170,7 @@ async function doLink() {
         await PrismService.LinkProject(selProject.value, selInstance.value)
         show(t('prism.linkCreated', [selProject.value, selInstance.value]))
         linkDialog.value = false
-        await loadLinks()
+        await load() // Overview 一并刷新实例与关联视图
     } catch (e) {
         show(errText(e))
     } finally {
@@ -185,7 +182,7 @@ async function doUnlink(project: string) {
     try {
         await PrismService.UnlinkProject(project)
         show(t('prism.linkRemoved', [project]))
-        await loadLinks()
+        await load()
     } catch (e) {
         show(errText(e))
     }
@@ -216,8 +213,13 @@ async function openDirLinks(link: LinkView) {
 }
 
 async function refreshDirLinks() {
-    dirLinks.value = (await PrismService.ListDirLinks(dirLinkProject.value)) ?? []
-    candidates.value = (await PrismService.ListProjectDirs(dirLinkProject.value)) ?? []
+    // 两个独立查询并发执行，避免串行往返
+    const [linksResult, dirsResult] = await Promise.all([
+        PrismService.ListDirLinks(dirLinkProject.value),
+        PrismService.ListProjectDirs(dirLinkProject.value),
+    ])
+    dirLinks.value = linksResult ?? []
+    candidates.value = dirsResult ?? []
     // 已添加的目录从候选中剔除
     const added = new Set(dirLinks.value.map(d => d.project_dir))
     candidates.value = candidates.value.filter(c => !added.has(c))
@@ -413,6 +415,7 @@ async function confirmPullMeta() {
         await refreshProjectIndex(link.project) // refresh 使 index.toml 收录新条目，差异才正确
         await load() // 刷新当前页（实例/关联列表）
         bumpProjectsVersion() // 拉取改变了项目 mods，通知项目列表刷新
+        invalidateProjects() // 共享项目缓存失效（下次 loadProjects 重新拉取）
     } catch (e) {
         show(errText(e))
     } finally {
@@ -456,6 +459,7 @@ async function confirmPullOne() {
         await refreshProjectIndex(diffProject.value) // refresh 使 index.toml 收录新条目，差异才正确
         await load() // 刷新当前页（实例/关联列表）
         bumpProjectsVersion() // 拉取改变了项目 mods，通知项目列表刷新
+        invalidateProjects() // 共享项目缓存失效（下次 loadProjects 重新拉取）
         await refreshDiff()
     } catch (e) {
         show(errText(e))
@@ -525,10 +529,13 @@ function resultChip(r: LinkResult): { color: string; label: string } {
 const instanceCountText = computed(() => t('prism.instanceCount', [instances.value.length]))
 
 onMounted(async () => {
-    manualPath.value = (await PrismService.GetInstancesPath()) ?? ''
-    await loadProjects()
-    await load()
-    await loadLinks()
+    // 三个独立查询并发执行：手动路径、项目列表（共享缓存）、页面总览
+    const [path] = await Promise.all([
+        PrismService.GetInstancesPath(),
+        loadProjects().catch(() => []),
+        load(),
+    ])
+    manualPath.value = path ?? ''
 })
 </script>
 
@@ -732,7 +739,7 @@ onMounted(async () => {
                 <v-card-text>
                     <v-select
                         v-model="selProject"
-                        :items="projects"
+                        :items="linkableProjects"
                         item-title="name"
                         item-value="name"
                         :label="t('prism.linkProject')"

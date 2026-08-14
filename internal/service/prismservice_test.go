@@ -1,6 +1,7 @@
 package service
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -8,6 +9,7 @@ import (
 
 	"packgradle/internal/appconfig"
 	"packgradle/internal/errs"
+	"packgradle/internal/fsutil"
 	"packgradle/internal/junction"
 	"packgradle/internal/pgignore"
 	"packgradle/internal/prism"
@@ -269,6 +271,56 @@ func TestGetLinksInstanceInvalid(t *testing.T) {
 	}
 }
 
+// Overview 一次性返回实例目录 / 实例列表 / 关联视图（实例目录只扫描一次）
+func TestPrismOverview(t *testing.T) {
+	_, instancesDir := makePrismFixture(t)
+	cm := newTestConfig(t)
+	svc := NewPrismService(cm)
+	proj := makeProject(t, cm, "Collapse")
+	if err := svc.LinkProject(proj, "Collapse"); err != nil {
+		t.Fatal(err)
+	}
+
+	ov := svc.Overview()
+	if ov.LocateError != "" {
+		t.Errorf("定位成功时 LocateError 应为空，实际 %q", ov.LocateError)
+	}
+	if ov.InstancesDir != instancesDir {
+		t.Errorf("实例目录应为 %q，实际 %q", instancesDir, ov.InstancesDir)
+	}
+	if len(ov.Instances) != 1 || ov.Instances[0].ID != "Collapse" {
+		t.Errorf("应扫描到 Collapse 实例: %+v", ov.Instances)
+	}
+	if len(ov.Links) != 1 || !ov.Links[0].InstanceValid || ov.Links[0].InstanceName != "Collapse" {
+		t.Errorf("关联视图应含有效 Collapse 实例: %+v", ov.Links)
+	}
+}
+
+// 定位失败：错误落入 LocateError（错误码 JSON），关联视图仍返回（实例失效态）
+func TestPrismOverviewLocateFailed(t *testing.T) {
+	withEnv(t, "APPDATA", t.TempDir()) // Prism 未安装：定位必然失败
+	cm := newTestConfig(t)
+	svc := NewPrismService(cm)
+	proj := makeProject(t, cm, "Proj")
+	// 关联一个不存在的实例（定位失败时 links 仍应组装，标记失效）
+	entry, _ := cm.FindProject(proj)
+	if err := appconfig.SaveProjectConfig(entry.Path, appconfig.ProjectConfig{Instance: "gone"}); err != nil {
+		t.Fatal(err)
+	}
+
+	ov := svc.Overview()
+	var ae errs.AppError
+	if err := json.Unmarshal([]byte(ov.LocateError), &ae); err != nil || ae.Code != "err.prism.not_found" {
+		t.Errorf("LocateError 应为 err.prism.not_found 的错误码 JSON，实际 %q", ov.LocateError)
+	}
+	if len(ov.Instances) != 0 || ov.InstancesDir != "" {
+		t.Errorf("定位失败时实例数据应为空: %+v", ov)
+	}
+	if len(ov.Links) != 1 || ov.Links[0].InstanceValid {
+		t.Errorf("定位失败时关联视图仍应返回且实例失效: %+v", ov.Links)
+	}
+}
+
 // 程序创建实例：组件取自项目 pack.toml
 func TestCreateInstance(t *testing.T) {
 	_, _ = makePrismFixture(t)
@@ -283,7 +335,7 @@ func TestCreateInstance(t *testing.T) {
 	if inst.ID != "NewPack" || inst.Minecraft != "1.20.1" || inst.Modloader != "forge" || inst.ModloaderVersion != "47.4.10" {
 		t.Errorf("实例组件应取自项目 pack.toml: %+v", inst)
 	}
-	if !isDir(filepath.Join(inst.Path, "minecraft")) {
+	if !fsutil.IsDir(filepath.Join(inst.Path, "minecraft")) {
 		t.Error("应创建 minecraft 骨架")
 	}
 	// 创建后可立即关联

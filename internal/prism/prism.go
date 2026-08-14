@@ -23,13 +23,31 @@ func DataDir() string {
 // 返回的目录不一定存在（由调用方校验）。
 func InstancesDir(dataDir string) (string, error) {
 	cfgPath := filepath.Join(dataDir, "prismlauncher.cfg")
-	f, err := os.Open(cfgPath)
+	dir, ok, err := readIniKey(cfgPath, "InstanceDir")
+	if err != nil {
+		return "", errs.NewDetail("err.prism.cfg_read", err.Error())
+	}
+	if !ok {
+		// 无配置文件或未指定 InstanceDir：按默认布局处理
+		return filepath.Join(dataDir, "instances"), nil
+	}
+	if filepath.IsAbs(dir) {
+		return filepath.Clean(dir), nil
+	}
+	return filepath.Join(dataDir, dir), nil
+}
+
+// readIniKey 从 Prism 风格的最小 INI 文件（instance.cfg / prismlauncher.cfg）中
+// 读取指定键的值：容忍 BOM/CRLF，跳过空行与 #/; 注释行。
+// 文件不存在或键未找到/为空时返回 ("", false, nil)；读取失败返回 ("", false, err)。
+// instance.cfg 与 prismlauncher.cfg 共用，避免各自维护一套解析逻辑。
+func readIniKey(path, key string) (string, bool, error) {
+	f, err := os.Open(path)
 	if err != nil {
 		if os.IsNotExist(err) {
-			// 无配置文件时按默认布局处理
-			return filepath.Join(dataDir, "instances"), nil
+			return "", false, nil
 		}
-		return "", errs.NewDetail("err.prism.cfg_read", err.Error())
+		return "", false, err
 	}
 	defer f.Close()
 
@@ -40,23 +58,13 @@ func InstancesDir(dataDir string) (string, error) {
 		if line == "" || strings.HasPrefix(line, "#") || strings.HasPrefix(line, ";") {
 			continue
 		}
-		key, value, ok := strings.Cut(line, "=")
-		if !ok || strings.TrimSpace(key) != "InstanceDir" {
+		k, value, ok := strings.Cut(line, "=")
+		if !ok || strings.TrimSpace(k) != key {
 			continue
 		}
-		dir := strings.TrimSpace(value)
-		if dir == "" {
-			return filepath.Join(dataDir, "instances"), nil
+		if v := strings.TrimSpace(value); v != "" {
+			return v, true, nil
 		}
-		if filepath.IsAbs(dir) {
-			return filepath.Clean(dir), nil
-		}
-		return filepath.Join(dataDir, dir), nil
 	}
-	return filepath.Join(dataDir, "instances"), nil
-}
-
-func fileExists(path string) bool {
-	_, err := os.Stat(path)
-	return err == nil
+	return "", false, nil
 }

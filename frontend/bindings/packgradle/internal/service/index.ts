@@ -12,5 +12,6 @@ export {
 
 export type {
     ModVersionResult,
+    PrismOverview,
     ToolInfo
 } from "./models.js";

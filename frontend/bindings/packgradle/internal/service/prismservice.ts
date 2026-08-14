@@ -15,6 +15,10 @@ import { Call as $Call, CancellablePromise as $CancellablePromise } from "@wails
 // @ts-ignore: Unused imports
 import * as prism$0 from "../prism/models.js";
 
+// eslint-disable-next-line @typescript-eslint/ban-ts-comment
+// @ts-ignore: Unused imports
+import * as $models from "./models.js";
+
 /**
  * AddDirLink 添加目录关联对：项目侧目录名 + 实例侧相对游戏目录路径（默认同名）。
  * 要求项目已关联实例、项目侧目录存在（实例侧目录可稍后由 junction 阶段创建）。
@@ -148,6 +152,14 @@ export function ManualLinkDir(projectName: string, dir: string): $CancellablePro
  */
 export function MetaDiff(projectName: string): $CancellablePromise<prism$0.MetaDiff> {
     return $Call.ByID(3469852635, projectName);
+}
+
+/**
+ * Overview 一次性返回 Prism 页所需的全部数据。
+ * 定位失败不中断：错误落入 LocateError（前端解析错误码渲染引导），关联视图仍可用。
+ */
+export function Overview(): $CancellablePromise<$models.PrismOverview> {
+    return $Call.ByID(2790614566);
 }
 
 /**

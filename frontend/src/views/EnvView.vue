@@ -133,8 +133,9 @@ async function saveApiKey() {
 }
 
 onMounted(async () => {
-    await load()
-    apiKey.value = (await EnvService.GetApiKey()) ?? ''
+    // 检测与读取 API Key 互不依赖，并发执行
+    const [, key] = await Promise.all([load(), EnvService.GetApiKey()])
+    apiKey.value = key ?? ''
 })
 </script>
 

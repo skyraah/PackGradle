@@ -71,9 +71,10 @@ type modTomlFields struct {
 	Update   map[string]map[string]any `toml:"update"`
 }
 
-// updateVersion 从 [update.<来源>] 表中提取 mod 版本号。
-// 按来源优先级取第一个非空 version；curseforge 表只有 file-id/project-id，没有版本
-func updateVersion(update map[string]map[string]any) string {
+// UpdateVersion 从 [update.<来源>] 表中提取 mod 版本号。
+// 按来源优先级取第一个非空 version；curseforge 表只有 file-id/project-id，没有版本。
+// service 层解析实例侧 pw.toml 版本时复用同一优先级链（保持两端口径一致）。
+func UpdateVersion(update map[string]map[string]any) string {
 	for _, src := range []string{"modrinth", "fabric", "forge", "neoforge", "quilt", "liteloader", "curseforge"} {
 		if v, ok := update[src]["version"].(string); ok && v != "" {
 			return v
@@ -157,7 +158,7 @@ func scanIndexEntry(projectDir, relPath string) ModInfo {
 		}
 		version := raw.Version
 		if version == "" {
-			version = updateVersion(raw.Update)
+			version = UpdateVersion(raw.Update)
 		}
 		side := normalizeSide(raw.Side)
 		cfProjectID, cfFileID := CfIDsFromUpdate(raw.Update)
@@ -200,7 +201,7 @@ func scanModsLegacy(projectDir string) ([]ModInfo, error) {
 		}
 		version := raw.Version
 		if version == "" {
-			version = updateVersion(raw.Update)
+			version = UpdateVersion(raw.Update)
 		}
 		mods = append(mods, ModInfo{
 			ID:      e.Name(),

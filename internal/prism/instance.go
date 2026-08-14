@@ -1,7 +1,6 @@
 package prism
 
 import (
-	"bufio"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -9,6 +8,7 @@ import (
 	"strings"
 
 	"packgradle/internal/errs"
+	"packgradle/internal/fsutil"
 )
 
 // ScanInstances 扫描实例根目录下全部实例。
@@ -27,7 +27,7 @@ func ScanInstances(instancesDir string) []Instance {
 			continue
 		}
 		dir := filepath.Join(instancesDir, e.Name())
-		if !fileExists(filepath.Join(dir, "instance.cfg")) {
+		if !fsutil.Exists(filepath.Join(dir, "instance.cfg")) {
 			continue // 无 instance.cfg 不是实例（instgroups.json 等杂物目录）
 		}
 		instances = append(instances, parseInstance(dir, e.Name(), groups))
@@ -48,7 +48,7 @@ func parseInstance(dir, id string, groups map[string]string) Instance {
 	}
 
 	// instance.cfg：name= 缺失时回退目录名
-	if name, ok := parseInstanceName(filepath.Join(dir, "instance.cfg")); ok {
+	if name, ok, _ := readIniKey(filepath.Join(dir, "instance.cfg"), "name"); ok {
 		inst.Name = name
 	}
 
@@ -57,32 +57,6 @@ func parseInstance(dir, id string, groups map[string]string) Instance {
 		inst.Error = err.Error()
 	}
 	return inst
-}
-
-// parseInstanceName 从 instance.cfg 提取 name= 字段（最小 INI 子集，容忍 BOM/CRLF）
-func parseInstanceName(cfgPath string) (string, bool) {
-	f, err := os.Open(cfgPath)
-	if err != nil {
-		return "", false
-	}
-	defer f.Close()
-
-	sc := bufio.NewScanner(f)
-	for sc.Scan() {
-		line := strings.TrimSpace(sc.Text())
-		line = strings.TrimPrefix(line, "\ufeff")
-		if line == "" || strings.HasPrefix(line, "#") || strings.HasPrefix(line, ";") {
-			continue
-		}
-		key, value, ok := strings.Cut(line, "=")
-		if ok && strings.TrimSpace(key) == "name" {
-			name := strings.TrimSpace(value)
-			if name != "" {
-				return name, true
-			}
-		}
-	}
-	return "", false
 }
 
 // mmcPackRaw 对应 mmc-pack.json 的最小结构（字段与 Prism PackProfile.cpp 对齐）

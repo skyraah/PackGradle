@@ -24,8 +24,7 @@ type ToolInfo struct {
 func (s *EnvService) detectPackwiz() ToolInfo {
 	info := ToolInfo{Name: "packwiz"}
 	cfg := s.config.Get()
-	goBin := filepath.Join(os.Getenv("USERPROFILE"), "go", "bin")
-	if path, source, ok := envutil.FindExecutable(cfg.PackwizPath, "packwiz", "PACKWIZ", goBin); ok {
+	if path, source, ok := findPackwizExecutable(cfg); ok {
 		info.Path, info.Source = path, source
 	}
 	s.finishDetection(&info, cfg.PackwizPath)

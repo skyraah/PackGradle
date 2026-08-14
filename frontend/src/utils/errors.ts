@@ -39,6 +39,12 @@ function causeOf(e: unknown): AppErrorCause | undefined {
     return undefined
 }
 
+// parseAppErr 解析数据字段中的错误码 JSON 文本（如 PrismOverview.locate_error）；
+// 非错误码 JSON 返回 undefined。
+export function parseAppErr(v: unknown): AppErrorCause | undefined {
+    return tryParseAppErr(v)
+}
+
 // cause 是 Go 端 MarshalError 反序列化后的对象；文本形式（数据字段）是 JSON 字符串
 function tryParseAppErr(v: unknown): AppErrorCause | undefined {
     let obj: unknown = v

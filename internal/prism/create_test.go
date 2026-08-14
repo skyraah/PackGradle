@@ -5,6 +5,8 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"packgradle/internal/fsutil"
 )
 
 // 创建 fabric 实例：instance.cfg / mmc-pack.json / minecraft 骨架齐全
@@ -120,7 +122,7 @@ func TestCreateInstanceDirExists(t *testing.T) {
 	if _, err := CreateMinimalInstance(instancesDir, CreateRequest{Name: "Existing", Minecraft: "1.20.1"}); err == nil {
 		t.Fatal("目录已存在应报错")
 	}
-	if !fileExists(filepath.Join(instancesDir, "Existing", "keep.txt")) {
+	if !fsutil.Exists(filepath.Join(instancesDir, "Existing", "keep.txt")) {
 		t.Error("已有内容不应被改动")
 	}
 }

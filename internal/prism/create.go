@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"packgradle/internal/errs"
+	"packgradle/internal/fsutil"
 )
 
 // CreateMinimalInstance 在 instancesDir 下程序创建一个最小 Prism 实例：
@@ -20,7 +21,7 @@ func CreateMinimalInstance(instancesDir string, req CreateRequest) (Instance, er
 		return Instance{}, errs.New("err.prism.create_invalid_name", req.Name)
 	}
 	dir := filepath.Join(instancesDir, id)
-	if fileExists(dir) {
+	if fsutil.Exists(dir) {
 		return Instance{}, errs.New("err.prism.instance_exists", id)
 	}
 
