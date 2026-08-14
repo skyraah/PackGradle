@@ -1,7 +1,6 @@
 import { createApp } from 'vue'
 
 import '@mdi/font/css/materialdesignicons.css'
-import '@fontsource/roboto'
 import './assets/main.css'
 
 import App from './App.vue'

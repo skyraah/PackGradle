@@ -85,6 +85,7 @@ export function InstancesDir(): $CancellablePromise<string> {
 /**
  * LinkProject 关联 packwiz 项目到 Prism 实例（一项目一实例，重复关联覆盖）。
  * 实例须存在于当前实例目录；关联持久化在项目目录下的 packgradle.toml。
+ * 若项目已关联其他实例，先清理旧实例侧已建链接，避免残留孤儿 junction/硬链接。
  */
 export function LinkProject(projectName: string, instanceID: string): $CancellablePromise<void> {
     return $Call.ByID(968070894, projectName, instanceID);
@@ -108,7 +109,9 @@ export function ListDirLinks(projectName: string): $CancellablePromise<prism$0.D
 /**
  * ListInstanceDirFiles 递归列出实例侧游戏目录 <dir> 下的文件（相对 dir，排除隐藏项），
  * 供文件级同步从目标侧选择要纳入同步的文件。
- * 实例侧目录是 junction（整目录模式）时返回空列表——此时两侧为同一物理目录，无需选择。
+ * 实例侧目录是 junction（整目录模式）时返回空列表——此时两侧为同一物理目录，无需选择；
+ * files 模式且实例侧目录不存在时（刚由 junction 切换过来），回退列出项目侧文件——
+ * 切换前两侧本就是同一物理目录，清单等价，保证“选择同步文件”流程可用。
  */
 export function ListInstanceDirFiles(projectName: string, dir: string): $CancellablePromise<string[] | null> {
     return $Call.ByID(2111168812, projectName, dir);
@@ -182,7 +185,8 @@ export function PushMeta(projectName: string, modID: string): $CancellablePromis
 }
 
 /**
- * RemoveDirLink 移除目录关联对，并删除已建链接（仅链接本身，目标内容不动）
+ * RemoveDirLink 移除目录关联对，并删除已建链接（仅链接本身，目标内容不动）。
+ * 实例目录无法定位时返回错误并保留配置，避免静默留下无法清理的孤儿链接。
  */
 export function RemoveDirLink(projectName: string, projectDir: string): $CancellablePromise<void> {
     return $Call.ByID(2816067440, projectName, projectDir);
@@ -190,9 +194,10 @@ export function RemoveDirLink(projectName: string, projectDir: string): $Cancell
 
 /**
  * SelectInstanceFiles 将实例侧选中的文件纳入文件级同步：
- *  1. 从实例侧移动到项目目录（成为项目权威内容；项目侧已有同名文件时跳过不覆盖）
- *  2. 移动后从项目目录建硬链接回实例侧（同步生效）
- *  3. 记录到文件清单（mode=files）
+ *  1. 实例侧文件移动到项目目录（成为项目权威内容；项目侧已有同名文件时跳过不覆盖）；
+ *     若文件已在项目侧（例如刚由整目录 junction 切换为文件级同步），跳过移动直接建链；
+ *  2. 移动后从项目目录建硬链接回实例侧（同步生效）；链接失败时回滚移动；
+ *  3. 仅把真正建链成功的文件记录到清单（mode=files），失败项不写清单。
  * 
  * 实例侧目录为 junction（整目录模式）时拒绝——需先切换为文件级同步。
  */

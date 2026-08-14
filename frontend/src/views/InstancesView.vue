@@ -62,7 +62,7 @@ async function load(force = false) {
     try {
         await loadOverview(force)
     } catch (e) {
-        showSnackbar(errText(e))
+        showSnackbar(errText(e), 'error')
     } finally {
         loading.value = false
     }
@@ -87,10 +87,10 @@ async function saveManualPath() {
     saving.value = true
     try {
         await PrismService.SetInstancesPath(manualPath.value)
-        showSnackbar(manualPath.value.trim() ? t('prism.manualPathSaved') : t('prism.manualPathCleared'))
+        showSnackbar(manualPath.value.trim() ? t('prism.manualPathSaved') : t('prism.manualPathCleared'), 'success')
         await load(true)
     } catch (e) {
-        showSnackbar(errText(e))
+        showSnackbar(errText(e), 'error')
     } finally {
         saving.value = false
     }
@@ -103,6 +103,7 @@ async function clearManualPath() {
 
 // —— 关联 ——
 async function doUnlink() {
+    if (unlinkBusy.value || metaBusy.value) return
     const link = unlinkTarget.value
     if (!link) return
     unlinkOpen.value = false
@@ -110,10 +111,10 @@ async function doUnlink() {
     unlinkBusy.value = true
     try {
         await PrismService.UnlinkProject(link.project)
-        showSnackbar(t('prism.linkRemoved', [link.project]))
+        showSnackbar(t('prism.linkRemoved', [link.project]), 'success')
         await load(true)
     } catch (e) {
-        showSnackbar(errText(e))
+        showSnackbar(errText(e), 'error')
     } finally {
         unlinkBusy.value = false
     }
@@ -121,12 +122,13 @@ async function doUnlink() {
 
 // meta 推送：项目 mod 元数据 → 实例 mods/.index
 async function pushMeta(link: LinkView) {
+    if (metaBusy.value || unlinkBusy.value) return
     metaBusy.value = link.project
     try {
         const count = await PrismService.PushMeta(link.project, '')
-        showSnackbar(t('prism.metaPushed', [count ?? 0]))
+        showSnackbar(t('prism.metaPushed', [count ?? 0]), 'success')
     } catch (e) {
-        showSnackbar(errText(e))
+        showSnackbar(errText(e), 'error')
     } finally {
         metaBusy.value = ''
     }
@@ -134,11 +136,13 @@ async function pushMeta(link: LinkView) {
 
 // meta 拉取：确认后从实例 .index 拉回（自动 refresh + 全端缓存失效）
 function askPullMeta(link: LinkView) {
+    if (metaBusy.value || unlinkBusy.value) return
     pullTarget.value = link
     pullOpen.value = true
 }
 
 async function confirmPullMeta() {
+    if (metaBusy.value || unlinkBusy.value) return
     const link = pullTarget.value
     if (!link) return
     pullOpen.value = false
@@ -146,13 +150,13 @@ async function confirmPullMeta() {
     metaBusy.value = link.project
     try {
         const count = await PrismService.PullMeta(link.project, '')
-        showSnackbar(t('prism.metaPulled', [count ?? 0]))
+        showSnackbar(t('prism.metaPulled', [count ?? 0]), 'success')
         await refreshProjectIndex(link.project)
         await load(true)
         bumpProjectsVersion()
         invalidateProjects()
     } catch (e) {
-        showSnackbar(errText(e))
+        showSnackbar(errText(e), 'error')
     } finally {
         metaBusy.value = ''
     }
@@ -162,10 +166,10 @@ async function refreshProjectIndex(project: string) {
     try {
         const result = await PackwizService.RefreshProject(project)
         if (result && !result.ok) {
-            showSnackbar(t('prism.metaRefreshFailed'))
+            showSnackbar(t('prism.metaRefreshFailed'), 'warning')
         }
     } catch (e) {
-        showSnackbar(t('prism.metaRefreshFailed') + ': ' + errText(e))
+        showSnackbar(t('prism.metaRefreshFailed') + ': ' + errText(e), 'error')
     }
 }
 
@@ -305,10 +309,21 @@ onMounted(async () => {
                             <v-btn size="small" variant="tonal" @click="openMetaDiff(link)">
                                 {{ t('prism.metaDiffBtn') }}
                             </v-btn>
-                            <v-btn size="small" variant="tonal" @click="openDirLinks(link)">
+                            <v-btn
+                                size="small"
+                                variant="tonal"
+                                :disabled="metaBusy !== '' || unlinkBusy"
+                                @click="openDirLinks(link)"
+                            >
                                 {{ t('prism.dirLinkBtn') }}
                             </v-btn>
-                            <v-btn size="small" variant="text" color="error" @click="unlinkTarget = link; unlinkOpen = true">
+                            <v-btn
+                                size="small"
+                                variant="text"
+                                color="error"
+                                :disabled="metaBusy !== '' || unlinkBusy"
+                                @click="unlinkTarget = link; unlinkOpen = true"
+                            >
                                 {{ t('prism.unlinkBtn') }}
                             </v-btn>
                         </div>
@@ -346,8 +361,8 @@ onMounted(async () => {
             <v-card-text>
                 <v-row v-if="instances.length > 0">
                     <v-col v-for="inst in instances" :key="inst.id" cols="12" md="6" xl="4">
-                        <v-card variant="flat" color="surface-bright" class="inst-card">
-                            <v-card-text>
+                        <article class="inst-card surface-tile">
+                            <div>
                                 <div class="d-flex align-center mb-2">
                                     <v-icon icon="mdi-folder-outline" color="primary" class="mr-2" />
                                     <span class="text-subtitle-2 font-weight-medium flex-grow-1 inst-name">{{ inst.name }}</span>
@@ -364,8 +379,8 @@ onMounted(async () => {
                                 </div>
                                 <div class="text-caption text-medium-emphasis inst-path">{{ inst.path }}</div>
                                 <div v-if="inst.error" class="text-caption text-error mt-1">{{ displayText(inst.error) }}</div>
-                            </v-card-text>
-                        </v-card>
+                            </div>
+                        </article>
                     </v-col>
                 </v-row>
                 <div v-else-if="!locateFailed" class="text-body-2 text-medium-emphasis">
@@ -409,8 +424,8 @@ onMounted(async () => {
 
 <style scoped>
 .link-row {
-    border: 1px solid rgba(255, 255, 255, 0.07);
-    border-radius: 12px;
+    border: 1px solid var(--pg-border);
+    border-radius: 8px;
     padding: 12px 14px;
 }
 .link-path {
@@ -420,8 +435,7 @@ onMounted(async () => {
     white-space: nowrap;
 }
 .inst-card {
-    border: 1px solid rgba(255, 255, 255, 0.06);
-    border-radius: 14px;
+    height: 100%;
 }
 .inst-name,
 .inst-path {

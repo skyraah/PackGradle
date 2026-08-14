@@ -7,21 +7,31 @@ import type { ToolInfo } from '../../bindings/packgradle/internal/service'
 const tools = ref<ToolInfo[]>([])
 const loaded = ref(false)
 let inflight: Promise<ToolInfo[]> | null = null
+let refreshAfterInflight = false
 
 export async function loadTools(force = false): Promise<ToolInfo[]> {
     if (!force && loaded.value) return tools.value
-    if (!inflight) {
-        inflight = EnvService.Detect()
-            .then(list => {
-                tools.value = list ?? []
-                loaded.value = true
-                return tools.value
-            })
-            .finally(() => {
-                inflight = null
-            })
+    if (inflight) {
+        if (force) refreshAfterInflight = true
+        return inflight
     }
-    return inflight
+    const task = EnvService.Detect().then(list => {
+        tools.value = list ?? []
+        loaded.value = true
+        return tools.value
+    })
+    inflight = task
+    try {
+        return await task
+    } finally {
+        if (inflight === task) {
+            inflight = null
+            if (refreshAfterInflight) {
+                refreshAfterInflight = false
+                void loadTools(true).catch(() => {})
+            }
+        }
+    }
 }
 
 // setTools 用服务端返回的最新检测结果更新缓存（如 SetToolPath/Configure 的返回值）

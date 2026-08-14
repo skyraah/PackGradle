@@ -16,9 +16,12 @@ const { tools, apiKey, loadTools, setTools, loadApiKey } = useEnv()
 
 const loading = ref(false)
 const configuring = ref(false)
+const savingTool = ref('')
+const savingMissing = ref(false)
 // 弹窗引导：检测完成后若有工具未找到则提示键入安装路径
 const missingDialog = ref(false)
 const dismissed = ref(false)
+const toolsBusy = computed(() => loading.value || configuring.value || savingTool.value !== '' || savingMissing.value)
 
 const toolMeta: Record<string, { titleKey: string; icon: string; hintKey: string; placeholderKey: string }> = {
     'packwiz': {
@@ -37,6 +40,11 @@ const toolMeta: Record<string, { titleKey: string; icon: string; hintKey: string
 
 const missingTools = computed(() => tools.value.filter(t => !t.found))
 
+function toolTitle(tool: ToolInfo): string {
+    const key = toolMeta[tool.name]?.titleKey
+    return key ? t(key) : tool.name
+}
+
 // 检测结果提示：按来源渲染（config/env/path/default-dir），未找到时提示键入路径
 function toolMessage(tool: ToolInfo): string {
     if (!tool.found) return t('tool.not_found')
@@ -52,9 +60,12 @@ function toolChip(tool: ToolInfo): { color: string; label: string } {
 }
 
 async function load(force = false) {
+    if (loading.value) return
     loading.value = true
     try {
         await loadTools(force)
+    } catch (e) {
+        showSnackbar(errText(e), 'error')
     } finally {
         loading.value = false
     }
@@ -70,6 +81,7 @@ function maybePromptMissing() {
 }
 
 function closeMissingDialog() {
+    if (savingMissing.value || savingTool.value) return
     missingDialog.value = false
     dismissed.value = true
 }
@@ -77,7 +89,7 @@ function closeMissingDialog() {
 async function browse(tool: ToolInfo) {
     try {
         const picked = await Dialogs.OpenFile({
-            Title: t('env.browseTitle', [toolMeta[tool.name]?.titleKey ?? tool.name]),
+            Title: t('env.browseTitle', [toolTitle(tool)]),
             CanChooseFiles: true,
             CanChooseDirectories: true,
         })
@@ -88,42 +100,61 @@ async function browse(tool: ToolInfo) {
 }
 
 async function configure() {
+    if (toolsBusy.value) return
     configuring.value = true
     try {
         const [updated, added] = await EnvService.Configure()
         if (updated) setTools(updated)
         if (added && added.length > 0) {
-            showSnackbar(t('env.pathConfigured', [added.join('; ')]))
+            showSnackbar(t('env.pathConfigured', [added.join('; ')]), 'success')
         } else {
             showSnackbar(t('env.pathNoChange'))
         }
     } catch (e) {
-        showSnackbar(errText(e))
+        showSnackbar(errText(e), 'error')
     } finally {
         configuring.value = false
     }
 }
 
 async function savePath(tool: ToolInfo, closeDialog = false) {
+    if (savingTool.value || savingMissing.value) return
+    savingTool.value = tool.name
     try {
         setTools(await EnvService.SetToolPath(tool.name, tool.path))
-        showSnackbar(t('env.pathSaved', [toolMeta[tool.name]?.titleKey ?? tool.name]))
-        if (closeDialog) {
+        showSnackbar(t('env.pathSaved', [toolTitle(tool)]), 'success')
+        if (closeDialog && missingTools.value.length === 0) {
             missingDialog.value = false
             dismissed.value = true
         }
     } catch (e) {
-        showSnackbar(errText(e))
+        showSnackbar(errText(e), 'error')
+    } finally {
+        savingTool.value = ''
     }
 }
 
 // 弹窗底部「保存」：逐个保存所有缺失工具的路径后关闭
 async function saveAllMissing() {
-    for (const tool of [...missingTools.value]) {
-        await savePath(tool)
+    if (toolsBusy.value) return
+    savingMissing.value = true
+    try {
+        const targets = [...missingTools.value]
+        for (const tool of targets) {
+            setTools(await EnvService.SetToolPath(tool.name, tool.path))
+        }
+        if (missingTools.value.length > 0) {
+            showSnackbar(t('env.missingPathsStillMissing', [missingTools.value.length]), 'warning')
+            return
+        }
+        showSnackbar(t('env.missingPathsSaved', [targets.length]), 'success')
+        missingDialog.value = false
+        dismissed.value = true
+    } catch (e) {
+        showSnackbar(errText(e), 'error')
+    } finally {
+        savingMissing.value = false
     }
-    missingDialog.value = false
-    dismissed.value = true
 }
 
 // CurseForge API Key
@@ -131,12 +162,13 @@ const apiKeyVisible = ref(false)
 const savingKey = ref(false)
 
 async function saveApiKey() {
+    if (savingKey.value) return
     savingKey.value = true
     try {
         await EnvService.SetApiKey(apiKey.value)
-        showSnackbar(apiKey.value ? t('env.apiKeySaved') : t('env.apiKeyCleared'))
+        showSnackbar(apiKey.value.trim() ? t('env.apiKeySaved') : t('env.apiKeyCleared'), 'success')
     } catch (e) {
-        showSnackbar(errText(e))
+        showSnackbar(errText(e), 'error')
     } finally {
         savingKey.value = false
     }
@@ -144,7 +176,8 @@ async function saveApiKey() {
 
 onMounted(async () => {
     // 检测与读取 API Key 互不依赖，并发执行
-    await Promise.all([load(), loadApiKey()])
+    const [, keyResult] = await Promise.allSettled([load(), loadApiKey()])
+    if (keyResult.status === 'rejected') showSnackbar(errText(keyResult.reason), 'error')
 })
 </script>
 
@@ -152,12 +185,18 @@ onMounted(async () => {
     <v-container fluid class="pa-6">
         <PageHeader :title="t('settings.title')" :subtitle="t('settings.subtitle')">
             <template #actions>
-                <v-btn variant="text" icon="mdi-refresh" :loading="loading" @click="load(true)" />
+                <v-btn
+                    variant="text"
+                    icon="mdi-refresh"
+                    :loading="loading"
+                    :disabled="configuring || savingMissing || savingTool !== ''"
+                    @click="load(true)"
+                />
                 <v-btn
                     color="primary"
                     prepend-icon="mdi-wrench"
                     :loading="configuring"
-                    :disabled="!tools.some(t => t.found)"
+                    :disabled="loading || savingMissing || savingTool !== '' || !tools.some(t => t.found)"
                     @click="configure"
                 >
                     {{ t('env.configureBtn') }}
@@ -173,10 +212,11 @@ onMounted(async () => {
             </v-card-title>
             <v-card-text class="text-body-2 text-medium-emphasis pb-0">{{ t('settings.toolsHint') }}</v-card-text>
             <v-card-text>
+                <v-progress-linear v-if="loading" indeterminate class="mb-4" />
                 <v-row>
                     <v-col v-for="tool in tools" :key="tool.name" cols="12" md="6">
-                        <v-card variant="flat" :loading="loading" class="tool-card" color="surface-bright">
-                            <v-card-text>
+                        <section class="tool-card surface-tile">
+                            <div>
                                 <div class="d-flex align-center mb-3">
                                     <v-avatar
                                         rounded="lg"
@@ -213,15 +253,31 @@ onMounted(async () => {
                                     density="comfortable"
                                     hide-details="auto"
                                     clearable
+                                    :disabled="configuring || savingMissing"
                                     @keyup.enter="savePath(tool)"
                                 >
                                     <template #append>
-                                        <v-btn size="small" variant="text" icon="mdi-folder-search" :title="t('env.browse')" @click="browse(tool)" />
-                                        <v-btn size="small" variant="tonal" @click="savePath(tool)">{{ t('env.save') }}</v-btn>
+                                        <v-btn
+                                            size="small"
+                                            variant="text"
+                                            icon="mdi-folder-search"
+                                            :title="t('env.browse')"
+                                            :disabled="toolsBusy"
+                                            @click="browse(tool)"
+                                        />
+                                        <v-btn
+                                            size="small"
+                                            variant="tonal"
+                                            :loading="savingTool === tool.name"
+                                            :disabled="toolsBusy && savingTool !== tool.name"
+                                            @click="savePath(tool)"
+                                        >
+                                            {{ t('env.save') }}
+                                        </v-btn>
                                     </template>
                                 </v-text-field>
-                            </v-card-text>
-                        </v-card>
+                            </div>
+                        </section>
                     </v-col>
                 </v-row>
             </v-card-text>
@@ -274,7 +330,7 @@ onMounted(async () => {
             @click:outside="closeMissingDialog"
             @keydown.esc="closeMissingDialog"
         >
-            <v-card elevation="8">
+            <v-card class="dialog-card" elevation="8">
                 <v-card-title class="d-flex align-center pt-5">
                     <v-icon icon="mdi-help-circle-outline" color="warning" class="mr-2" />
                     {{ t('env.missingDialogTitle') }}
@@ -300,8 +356,10 @@ onMounted(async () => {
                 </v-card-text>
                 <v-card-actions class="px-5 pb-4">
                     <v-spacer />
-                    <v-btn variant="text" @click="closeMissingDialog">{{ t('env.missingDialogCancel') }}</v-btn>
-                    <v-btn color="primary" variant="flat" @click="saveAllMissing">
+                    <v-btn variant="text" :disabled="savingMissing || savingTool !== ''" @click="closeMissingDialog">
+                        {{ t('env.missingDialogCancel') }}
+                    </v-btn>
+                    <v-btn color="primary" variant="flat" :loading="savingMissing" :disabled="savingTool !== ''" @click="saveAllMissing">
                         {{ t('env.missingDialogSave') }}
                     </v-btn>
                 </v-card-actions>
@@ -312,7 +370,6 @@ onMounted(async () => {
 
 <style scoped>
 .tool-card {
-    border: 1px solid rgba(255, 255, 255, 0.06);
-    border-radius: 14px;
+    height: 100%;
 }
 </style>

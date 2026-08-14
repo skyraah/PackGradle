@@ -125,7 +125,7 @@ frontend/src/
 | NFR-1 | 错误处理：client/server 分离、错误码全覆盖 | ✅ | 26 个代码内错误码调用，28 条 `err.*` 翻译键 100% 对齐；`err.cause` 与文本双路径解析 |
 | NFR-2 | i18n 多语言 | ⚠️ | 架构按 `{code, args}` 设计可扩展，但仅 zh-CN 一份文件、locale 硬编码、无切换 UI、无 en-US |
 | NFR-3 | 健壮性 | ⚠️ | `main.go:37` config.toml 解析失败直接 `log.Fatalf` 启动崩溃，无降级/恢复；更新检查解析依赖 packwiz 英文提示格式 |
-| NFR-4 | 性能 | ⚠️ | `FetchAllModVersions` 每 mod 全量缓存文件原子重写（Upsert 读-改-写）IO 放大；`FetchedAt` 只写不读，缓存无 TTL；批量获取无进度事件，长任务只有 loading |
+| NFR-4 | 性能 | ⚠️ | `FetchAllModVersions` 已改为 `UpsertMany` 单次合并写缓存（2026-08-15）；`FetchedAt` 仍只写不读、缓存无 TTL；批量获取无进度事件，长任务只有 loading |
 | NFR-5 | 平台 | ⚠️ | `envutil/path.go`、`cli.go` 为纯 Windows 代码，但 Taskfile 仍挂载 darwin/linux/ios/android 构建目标（必然失败）；ios/android 无意义 |
 | NFR-6 | 打包配置 | ⚠️ | `build/config.yml` 为模板占位值（companyName "My Company" 等未定制）；`build/windows/info.json` 待核实 |
 | NFR-7 | 测试 | ⚠️ | Go 单测覆盖良好（appconfig/envutil/errs/packwiz/curseforge/service 均有 _test.go）；**前端零测试** |
@@ -139,7 +139,7 @@ frontend/src/
 |---|---|---|---|
 | GAP-1 | **Prism 联动已全部完成**（实例检测/关联/Junction/文件级同步/meta 双向与差异） | README:9-10 承诺全部兑现（REQ-3.1~3.6 ✅） | 已解决，保留记录 |
 | GAP-2 | **mod 生命周期闭环断裂**（创建项目/添加/移除/搜索/导出） | 无 packwiz init/add/remove、无 `/v1/mods/search` | 工具是"只读管理器+更新器" |
-| GAP-3 | 单 mod 更新为死路径 | `curseforceservice.go:125` 非空分支无前端调用（`ProjectsView.vue:174` 仅传空串） | 后端能力闲置 |
+| GAP-3 | 单 mod 更新已闭环（2026-08-15 修复 BUG-04：前端按显示名反查 mod id/slug 后调用） | `CheckUpdatesDialog.vue` + `curseforceservice.go:UpdateMods` 非空分支 | 已解决，保留记录 |
 | GAP-4 | `CfCacheStore.Save` 生产零调用 | `cache.go:47` | 死代码 |
 | GAP-5 | `FetchedAt` 只写不读 | `client.go:31,94` | 缓存永久有效，无 TTL 策略 |
 | GAP-6 | `ModVersionResult.Error` 前端不渲染 | `ProjectsView.vue:131-133` 只统计 ok 数 | 部分 mod 失败对用户不可见 |
@@ -150,7 +150,7 @@ frontend/src/
 | GAP-11 | 测试用导出残留生产代码 | `curseforge.BaseURL()/SetBaseURL`（`client.go:17-24`） | 接口膨胀 |
 | GAP-12 | API Key 明文存储 | config.toml 直接保存 | 安全隐患 |
 | GAP-13 | 前端零测试 | 无任何前端测试文件 | 回归风险 |
-| GAP-14 | 批量获取无进度事件 | `FetchAllModVersions` 无事件推送 | 长任务 UX 差 |
+| GAP-14 | 批量获取无进度事件（缓存写盘已优化为 `UpsertMany` 单次合并写） | `FetchAllModVersions` 无事件推送 | 长任务 UX 差 |
 | GAP-15 | 更新检查依赖交互式喂 "n" 与英文提示格式 | `cli.go:33` | 脆弱，packwiz 输出变更即破坏 |
 | GAP-16 | **多实例并存配置互覆**（已防护） | 两个实例各自持有 config 内存状态，删除项目写盘后被另一实例旧状态覆盖（表现为删除后配置复活）；已用 Windows 命名互斥体拦截（`internal/singleinstance`），弹窗提示后退出 | 已解决，记录供回归 |
 | GAP-17 | **Wails 原生消息对话框构建版挂起**（已绕行） | `Dialogs.Question` 等消息类对话框在 production 构建中 Promise 永久挂起（OpenFile 正常）；已全部改用 Vuetify 自定义 v-dialog | 已解决；后续新增确认/询问一律用自定义对话框 |

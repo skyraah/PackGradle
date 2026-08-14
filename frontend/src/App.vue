@@ -1,16 +1,46 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useRoute } from 'vue-router'
+import { useTheme } from 'vuetify'
 import { navRoutes } from './router'
 import { useUi } from './stores/ui'
 import { useApiKeyGuide } from './stores/apiKeyGuide'
 
 const { t } = useI18n()
 const route = useRoute()
-const { snackbar, snackbarMsg } = useUi()
+const vuetifyTheme = useTheme()
+const { snackbar, snackbarMsg, snackbarTone, snackbarTimeout, dismissSnackbar } = useUi()
 const { apiKeyDialog, goConfigApiKey } = useApiKeyGuide()
-const rail = ref(false)
+const rail = ref(localStorage.getItem('packgradle.navigation.rail') === 'true')
+
+watch(rail, value => {
+    localStorage.setItem('packgradle.navigation.rail', String(value))
+})
+
+const noticeIcon = computed(() => ({
+    info: 'mdi-information-outline',
+    success: 'mdi-check-circle-outline',
+    warning: 'mdi-alert-outline',
+    error: 'mdi-alert-circle-outline',
+})[snackbarTone.value])
+
+let colorScheme: MediaQueryList | null = null
+
+function applySystemTheme(event?: MediaQueryListEvent) {
+    const dark = event?.matches ?? colorScheme?.matches ?? true
+    vuetifyTheme.global.name.value = dark ? 'dark' : 'light'
+}
+
+onMounted(() => {
+    colorScheme = window.matchMedia('(prefers-color-scheme: dark)')
+    applySystemTheme()
+    colorScheme.addEventListener('change', applySystemTheme)
+})
+
+onBeforeUnmount(() => {
+    colorScheme?.removeEventListener('change', applySystemTheme)
+})
 
 interface NavItem {
     path: string
@@ -46,22 +76,28 @@ const pageTitle = computed(() => {
 
 <template>
     <v-app>
-        <v-app-bar flat height="56" color="surface" class="shell-bar">
-            <v-app-bar-nav-icon @click="rail = !rail" />
-            <v-app-bar-title class="d-flex align-center" style="min-width: 0">
-                <v-icon icon="mdi-hammer-wrench" color="primary" class="mr-2" />
-                <span class="text-subtitle-1 font-weight-bold">PackGradle</span>
-            </v-app-bar-title>
-            <v-divider vertical class="mx-2" />
+        <v-app-bar flat height="52" color="surface" class="shell-bar">
+            <v-btn
+                icon="mdi-menu"
+                variant="text"
+                class="app-no-drag shell-menu"
+                :title="t('common.toggleNavigation')"
+                @click="rail = !rail"
+            />
+            <div class="brand-lockup">
+                <span class="brand-mark"><v-icon icon="mdi-hammer-wrench" size="18" /></span>
+                <span class="brand-name">PackGradle</span>
+            </div>
+            <div class="title-divider" />
             <div v-if="pageTitle" class="text-body-2 text-medium-emphasis page-title">{{ pageTitle }}</div>
             <!-- Wails 拖拽区：占据顶栏中部空白，内部不放交互控件 -->
             <div class="app-drag align-self-stretch" style="flex: 1 1 auto; min-width: 24px"></div>
-            <v-chip size="small" variant="outlined" prepend-icon="mdi-launch" class="mr-3 app-no-drag">
-                packwiz × Prism Launcher
+            <v-chip size="small" variant="tonal" prepend-icon="mdi-connection" class="mr-2 app-no-drag integration-chip">
+                {{ t('app.integration') }}
             </v-chip>
         </v-app-bar>
 
-        <v-navigation-drawer v-model:rail="rail" rail-width="72" width="224" permanent class="shell-drawer">
+        <v-navigation-drawer v-model:rail="rail" rail-width="60" width="220" permanent class="shell-drawer">
             <v-list nav density="comfortable" class="py-3 px-2">
                 <v-tooltip
                     v-for="item in navItems"
@@ -77,7 +113,7 @@ const pageTitle = computed(() => {
                             :active="activePath === item.path"
                             :prepend-icon="item.icon"
                             :title="t(item.titleKey)"
-                            rounded="lg"
+                            class="nav-item"
                             color="primary"
                         />
                     </template>
@@ -85,15 +121,12 @@ const pageTitle = computed(() => {
             </v-list>
             <template #append>
                 <div v-if="!rail" class="px-4 pb-4">
-                    <div class="text-caption text-medium-emphasis">
-                        packwiz × Prism Launcher<br />
-                        整合包开发工作台
-                    </div>
+                    <div class="shell-caption text-caption text-medium-emphasis">{{ t('app.tagline') }}</div>
                 </div>
             </template>
         </v-navigation-drawer>
 
-        <v-main>
+        <v-main class="shell-main">
             <!-- 项目列表保持存活：从详情页返回时保留搜索/滚动状态 -->
             <router-view v-slot="{ Component, route: r }">
                 <keep-alive include="ProjectsView">
@@ -104,7 +137,7 @@ const pageTitle = computed(() => {
 
         <!-- API Key 引导（全局）：项目相关操作遇到 Key 错误时在此弹出 -->
         <v-dialog v-model="apiKeyDialog" max-width="480">
-            <v-card elevation="8">
+            <v-card class="dialog-card" elevation="8">
                 <v-card-title class="d-flex align-center pt-5">
                     <v-icon icon="mdi-key-alert-outline" color="warning" class="mr-2" />
                     {{ t('projects.apiKeyDialogTitle') }}
@@ -120,8 +153,27 @@ const pageTitle = computed(() => {
             </v-card>
         </v-dialog>
 
-        <v-snackbar v-model="snackbar" timeout="4000" location="bottom right">
-            {{ snackbarMsg }}
+        <v-snackbar
+            v-model="snackbar"
+            :timeout="snackbarTimeout"
+            location="top right"
+            color="surface-bright"
+            class="app-snackbar"
+            elevation="12"
+        >
+            <div class="notice-content">
+                <v-icon :icon="noticeIcon" :color="snackbarTone" size="20" />
+                <span>{{ snackbarMsg }}</span>
+            </div>
+            <template #actions>
+                <v-btn
+                    icon="mdi-close"
+                    size="small"
+                    variant="text"
+                    :title="t('common.dismiss')"
+                    @click="dismissSnackbar"
+                />
+            </template>
         </v-snackbar>
     </v-app>
 </template>

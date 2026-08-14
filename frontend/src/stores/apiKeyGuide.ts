@@ -17,7 +17,7 @@ export function handleApiKeyError(e: unknown) {
         apiKeyDialog.value = true
         return
     }
-    showSnackbar(errText(e))
+    showSnackbar(errText(e), 'error')
 }
 
 export function goConfigApiKey() {

@@ -11,6 +11,7 @@ import type { PackProject } from '../../bindings/packgradle/internal/packwiz'
 export const projects = ref<PackProject[]>([])
 export const loaded = ref(false)
 let inflight: Promise<PackProject[]> | null = null
+let refreshAfterInflight = false
 
 // 跨视图数据版本号：数据变更（如 meta 拉取改变项目 mods）后递增，
 // 相关视图 watch 后重新加载——避免视图间直接耦合
@@ -22,20 +23,30 @@ export function bumpProjectsVersion() {
 
 // loadProjects 返回项目列表；已加载时直接复用缓存（force 强制重新拉取），
 // 并发调用共享同一次请求，避免重复后端往返。
+// force 在请求进行中时不会被丢弃：当前请求结束后自动补一次强制刷新。
 export async function loadProjects(force = false): Promise<PackProject[]> {
     if (!force && loaded.value) return projects.value
-    if (!inflight) {
-        inflight = PackwizService.ListProjects()
-            .then(list => {
-                projects.value = list ?? []
-                loaded.value = true
-                return projects.value
-            })
-            .finally(() => {
-                inflight = null
-            })
+    if (inflight) {
+        if (force) refreshAfterInflight = true
+        return inflight
     }
-    return inflight
+    const task = PackwizService.ListProjects().then(list => {
+        projects.value = list ?? []
+        loaded.value = true
+        return projects.value
+    })
+    inflight = task
+    try {
+        return await task
+    } finally {
+        if (inflight === task) {
+            inflight = null
+            if (refreshAfterInflight) {
+                refreshAfterInflight = false
+                void loadProjects(true).catch(() => {})
+            }
+        }
+    }
 }
 
 // setProjects 用服务端返回的最新列表更新缓存（如 ImportProject/RemoveProject 的返回值）

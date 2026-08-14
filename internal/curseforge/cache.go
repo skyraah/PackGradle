@@ -62,6 +62,24 @@ func (c *CfCacheStore) Upsert(key string, entry CfFileCache) error {
 	return c.saveLocked(cache)
 }
 
+// UpsertMany 一次性合并写入多条缓存（只读一次、只写一次），
+// 替代批量获取时逐条 Upsert 造成的 O(n²) 全量重写。
+func (c *CfCacheStore) UpsertMany(entries map[string]CfFileCache) error {
+	if len(entries) == 0 {
+		return nil
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	cache, err := c.loadLocked()
+	if err != nil {
+		return err
+	}
+	for key, entry := range entries {
+		cache[key] = entry
+	}
+	return c.saveLocked(cache)
+}
+
 // Prune 删除不满足 keep 条件的缓存条目（如更新后失效的旧 file-id 条目、
 // 已移除 mod 的孤儿条目），避免缓存堆积；仅在有删除时写盘
 func (c *CfCacheStore) Prune(keep func(key string) bool) error {

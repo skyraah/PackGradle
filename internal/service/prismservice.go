@@ -35,7 +35,7 @@ func (s *PrismService) ListInstances() ([]prism.Instance, error) {
 	if err != nil {
 		return nil, err
 	}
-	return prism.ScanInstances(instDir), nil
+	return prism.ScanInstances(instDir)
 }
 
 // InstancesDir 返回当前定位到的实例根目录（供前端展示与确认）
@@ -84,7 +84,11 @@ func (s *PrismService) scanInstancesSafe() map[string]prism.Instance {
 	if err != nil {
 		return nil
 	}
-	return indexInstances(prism.ScanInstances(instDir))
+	instances, err := prism.ScanInstances(instDir)
+	if err != nil {
+		return nil
+	}
+	return indexInstances(instances)
 }
 
 // ensureInstanceExists 校验实例 ID 存在于当前实例目录
@@ -97,38 +101,55 @@ func (s *PrismService) ensureInstanceExists(instanceID string) error {
 
 // LinkProject 关联 packwiz 项目到 Prism 实例（一项目一实例，重复关联覆盖）。
 // 实例须存在于当前实例目录；关联持久化在项目目录下的 packgradle.toml。
+// 若项目已关联其他实例，先清理旧实例侧已建链接，避免残留孤儿 junction/硬链接。
 func (s *PrismService) LinkProject(projectName, instanceID string) error {
-	entry, pc, err := s.projectConfig(projectName)
-	if err != nil {
-		return err
+	entry, ok := s.config.FindProject(projectName)
+	if !ok {
+		return errs.New("err.proj.not_found", projectName)
 	}
 	if err := s.ensureInstanceExists(instanceID); err != nil {
 		return err
 	}
-	pc.Instance = instanceID
-	return appconfig.SaveProjectConfig(entry.Path, pc)
+	return appconfig.WithProjectConfigLock(entry.Path, func() error {
+		pc, err := appconfig.LoadProjectConfig(entry.Path)
+		if err != nil {
+			return err
+		}
+		if pc.Instance != "" && pc.Instance != instanceID {
+			// 切换实例前清理旧实例侧链接；定位失败时返回错误，由用户先修复实例目录
+			if err := removeProjectLinkTargets(s.config, s.junctions, entry, pc); err != nil {
+				return err
+			}
+		}
+		pc.Instance = instanceID
+		return appconfig.SaveProjectConfig(entry.Path, pc)
+	})
 }
 
 // UnlinkProject 解除项目关联（连同其目录关联与已建链接）
 func (s *PrismService) UnlinkProject(projectName string) error {
-	entry, pc, err := s.projectConfig(projectName)
-	if err != nil {
-		return err
+	entry, ok := s.config.FindProject(projectName)
+	if !ok {
+		return errs.New("err.proj.not_found", projectName)
 	}
-	if pc.Instance == "" {
-		return errs.New("err.link.not_found", projectName)
-	}
-	// 先删除已建链接（junction 与硬链接），实例已不存在时跳过
-	if inst, ok := s.scanInstancesSafe()[pc.Instance]; ok {
-		for _, dl := range pc.DirLinks {
-			_ = s.removeDirLinkTargets(inst, entry.Path, dl)
+	return appconfig.WithProjectConfigLock(entry.Path, func() error {
+		pc, err := appconfig.LoadProjectConfig(entry.Path)
+		if err != nil {
+			return err
 		}
-		removeHardlinkFiles(inst, pc.FileLinks)
-	}
-	pc.Instance = ""
-	pc.DirLinks = nil
-	pc.FileLinks = nil
-	return appconfig.SaveProjectConfig(entry.Path, pc)
+		if pc.Instance == "" {
+			return errs.New("err.link.not_found", projectName)
+		}
+		// 先删除已建链接（junction 与硬链接）；实例目录无法定位时报错，
+		// 保留配置供修复后重试，而不是静默清空留下无法清理的孤儿链接
+		if err := removeProjectLinkTargets(s.config, s.junctions, entry, pc); err != nil {
+			return err
+		}
+		pc.Instance = ""
+		pc.DirLinks = nil
+		pc.FileLinks = nil
+		return appconfig.SaveProjectConfig(entry.Path, pc)
+	})
 }
 
 // GetLinks 返回全部项目 ↔ 实例关联的组装视图（读取各项目 packgradle.toml，
@@ -173,9 +194,12 @@ func (s *PrismService) Overview() PrismOverview {
 	instDir, err := s.findInstancesDir()
 	if err != nil {
 		overview.LocateError = err.Error()
+	} else if instances, scanErr := prism.ScanInstances(instDir); scanErr != nil {
+		overview.InstancesDir = instDir
+		overview.LocateError = scanErr.Error()
 	} else {
 		overview.InstancesDir = instDir
-		overview.Instances = prism.ScanInstances(instDir)
+		overview.Instances = instances
 	}
 	overview.Links = s.buildLinks(indexInstances(overview.Instances))
 	return overview
@@ -206,55 +230,89 @@ func (s *PrismService) CreateInstance(projectName string) (prism.Instance, error
 // AddDirLink 添加目录关联对：项目侧目录名 + 实例侧相对游戏目录路径（默认同名）。
 // 要求项目已关联实例、项目侧目录存在（实例侧目录可稍后由 junction 阶段创建）。
 func (s *PrismService) AddDirLink(projectName, projectDir string) error {
-	entry, pc, err := s.projectConfig(projectName)
+	projectDir, err := validateRelDir(projectDir)
 	if err != nil {
 		return err
 	}
-	if pc.Instance == "" {
-		return errs.New("err.link.not_found", projectName)
+	entry, ok := s.config.FindProject(projectName)
+	if !ok {
+		return errs.New("err.proj.not_found", projectName)
 	}
-	projectDir = strings.TrimSpace(projectDir)
-	if projectDir == "" {
-		return errs.New("err.sync.empty_dir")
-	}
-	if !fsutil.IsDir(filepath.Join(entry.Path, projectDir)) {
-		return errs.New("err.sync.dir_not_exists", projectDir)
-	}
-	for i := range pc.DirLinks {
-		if pc.DirLinks[i].ProjectDir == projectDir {
-			pc.DirLinks[i].InstanceDir = projectDir // 默认同名（相对实例游戏目录）
-			return appconfig.SaveProjectConfig(entry.Path, pc)
+	return appconfig.WithProjectConfigLock(entry.Path, func() error {
+		pc, err := appconfig.LoadProjectConfig(entry.Path)
+		if err != nil {
+			return err
 		}
-	}
-	pc.DirLinks = append(pc.DirLinks, appconfig.ProjectDirLink{
-		ProjectDir:  projectDir,
-		InstanceDir: projectDir,
-	})
-	return appconfig.SaveProjectConfig(entry.Path, pc)
-}
-
-// RemoveDirLink 移除目录关联对，并删除已建链接（仅链接本身，目标内容不动）
-func (s *PrismService) RemoveDirLink(projectName, projectDir string) error {
-	entry, pc, err := s.projectConfig(projectName)
-	if err != nil {
-		return err
-	}
-	// 删除实例侧链接（若已建立且指向本项目）
-	if inst, ok := s.scanInstancesSafe()[pc.Instance]; ok {
-		for _, dl := range pc.DirLinks {
-			if dl.ProjectDir == projectDir {
-				_ = s.removeDirLinkTargets(inst, entry.Path, dl)
+		if pc.Instance == "" {
+			return errs.New("err.link.not_found", projectName)
+		}
+		if !fsutil.IsDir(filepath.Join(entry.Path, projectDir)) {
+			return errs.New("err.sync.dir_not_exists", projectDir)
+		}
+		for i := range pc.DirLinks {
+			if pc.DirLinks[i].ProjectDir == projectDir {
+				pc.DirLinks[i].InstanceDir = projectDir // 默认同名（相对实例游戏目录）
+				return appconfig.SaveProjectConfig(entry.Path, pc)
 			}
 		}
+		pc.DirLinks = append(pc.DirLinks, appconfig.ProjectDirLink{
+			ProjectDir:  projectDir,
+			InstanceDir: projectDir,
+		})
+		return appconfig.SaveProjectConfig(entry.Path, pc)
+	})
+}
+
+// RemoveDirLink 移除目录关联对，并删除已建链接（仅链接本身，目标内容不动）。
+// 实例目录无法定位时返回错误并保留配置，避免静默留下无法清理的孤儿链接。
+func (s *PrismService) RemoveDirLink(projectName, projectDir string) error {
+	projectDir, err := validateRelDir(projectDir)
+	if err != nil {
+		return err
 	}
-	out := pc.DirLinks[:0]
-	for _, dl := range pc.DirLinks {
-		if dl.ProjectDir != projectDir {
-			out = append(out, dl)
+	entry, ok := s.config.FindProject(projectName)
+	if !ok {
+		return errs.New("err.proj.not_found", projectName)
+	}
+	return appconfig.WithProjectConfigLock(entry.Path, func() error {
+		pc, err := appconfig.LoadProjectConfig(entry.Path)
+		if err != nil {
+			return err
 		}
-	}
-	pc.DirLinks = out
-	return appconfig.SaveProjectConfig(entry.Path, pc)
+		// 删除实例侧链接（若已建立且指向本项目）
+		if pc.Instance != "" {
+			var dl *appconfig.ProjectDirLink
+			for i := range pc.DirLinks {
+				if pc.DirLinks[i].ProjectDir == projectDir {
+					dl = &pc.DirLinks[i]
+					break
+				}
+			}
+			if dl != nil {
+				instDir, _, err := resolveInstancesDir(s.config.Get())
+				if err != nil {
+					return err
+				}
+				instances, err := prism.ScanInstances(instDir)
+				if err != nil {
+					return err
+				}
+				if inst, ok := findInstanceByID(instances, pc.Instance); ok {
+					if err := removeDirLinkTargets(s.junctions, inst, entry.Path, *dl); err != nil {
+						return err
+					}
+				}
+			}
+		}
+		out := pc.DirLinks[:0]
+		for _, dl := range pc.DirLinks {
+			if dl.ProjectDir != projectDir {
+				out = append(out, dl)
+			}
+		}
+		pc.DirLinks = out
+		return appconfig.SaveProjectConfig(entry.Path, pc)
+	})
 }
 
 // HasPGIgnore 检查项目是否已有 .pgignore 文件（一键关联前询问用）

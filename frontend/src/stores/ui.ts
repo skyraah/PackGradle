@@ -1,15 +1,60 @@
-// 全局消息提示（snackbar）：应用级单例，App.vue 渲染唯一实例，
-// 各视图通过 showSnackbar() 直接弹出，不再自持一套 snackbar 状态。
-import { ref } from 'vue'
+// 全局通知队列：连续操作产生的消息按顺序展示，避免后一个提示覆盖前一个。
+import { ref, watch } from 'vue'
+
+export type NoticeTone = 'info' | 'success' | 'warning' | 'error'
+
+interface Notice {
+    message: string
+    tone: NoticeTone
+    timeout: number
+}
 
 const snackbar = ref(false)
 const snackbarMsg = ref('')
+const snackbarTone = ref<NoticeTone>('info')
+const snackbarTimeout = ref(4200)
+const current = ref<Notice | null>(null)
+const queue: Notice[] = []
+let transitionTimer: ReturnType<typeof setTimeout> | undefined
 
-export function showSnackbar(msg: string) {
-    snackbarMsg.value = msg
+function showNext() {
+    if (snackbar.value || current.value || queue.length === 0) return
+    current.value = queue.shift() ?? null
+    if (!current.value) return
+
+    snackbarMsg.value = current.value.message
+    snackbarTone.value = current.value.tone
+    snackbarTimeout.value = current.value.timeout
     snackbar.value = true
 }
 
+export function showSnackbar(message: string, tone: NoticeTone = 'info', timeout = 4200) {
+    const normalized = message.trim()
+    if (!normalized) return
+    queue.push({ message: normalized, tone, timeout })
+    showNext()
+}
+
+export function dismissSnackbar() {
+    snackbar.value = false
+}
+
+watch(snackbar, open => {
+    if (open) return
+    if (transitionTimer) clearTimeout(transitionTimer)
+    transitionTimer = setTimeout(() => {
+        current.value = null
+        showNext()
+    }, 160)
+})
+
 export function useUi() {
-    return { snackbar, snackbarMsg, showSnackbar }
+    return {
+        snackbar,
+        snackbarMsg,
+        snackbarTone,
+        snackbarTimeout,
+        showSnackbar,
+        dismissSnackbar,
+    }
 }

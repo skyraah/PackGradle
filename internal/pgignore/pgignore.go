@@ -38,6 +38,16 @@ func Ensure(projectPath string) (created bool, err error) {
 	return true, nil
 }
 
+// CoreExcluded 判断顶层条目是否为必须排除的项目核心文件/目录。
+// 这些条目不参与一键关联，且不受 .pgignore 规则影响（即使规则文件损坏/清空也不会误建链）。
+func CoreExcluded(name string) bool {
+	switch name {
+	case ".git", ".cache", "index.toml", "pack.toml", "packgradle.toml", ".pgignore":
+		return true
+	}
+	return false
+}
+
 // Matcher 封装 .pgignore 规则匹配
 type Matcher struct {
 	gi *gitignore.GitIgnore

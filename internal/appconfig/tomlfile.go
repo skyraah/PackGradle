@@ -21,17 +21,18 @@ func ReadToml(path string, v any) error {
 	return nil
 }
 
-// WriteTomlAtomic 原子写入 TOML：先写临时文件再重命名，
+// WriteTomlAtomic 原子写入 TOML：先写唯一临时文件再重命名，
 // 避免中断导致配置/缓存文件损坏。父目录不存在时自动创建。
+// 临时文件使用 CreateTemp 保证并发写入同一目标时不会互相覆盖对方的临时文件。
 func WriteTomlAtomic(path string, v any) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return errs.NewDetail("err.file.mkdir", err.Error(), filepath.Dir(path))
 	}
-	tmp := path + ".tmp"
-	f, err := os.Create(tmp)
+	f, err := os.CreateTemp(filepath.Dir(path), filepath.Base(path)+".*.tmp")
 	if err != nil {
 		return errs.NewDetail("err.file.write", err.Error(), path)
 	}
+	tmp := f.Name()
 	if err := toml.NewEncoder(f).Encode(v); err != nil {
 		f.Close()
 		os.Remove(tmp)

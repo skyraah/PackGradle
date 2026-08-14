@@ -174,7 +174,7 @@ const hasDiff = computed(
                             :key="'v' + v.id"
                             density="compact"
                             :title="v.id"
-                            :subtitle="'项目 ' + v.project_version + ' → 实例 ' + v.instance_version"
+                            :subtitle="t('prism.metaVersionDiffText', [v.project_version, v.instance_version])"
                         />
                     </div>
                     <div v-else class="text-body-2 text-medium-emphasis py-6 text-center">

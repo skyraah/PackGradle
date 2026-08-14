@@ -4,6 +4,7 @@ import (
 	"packgradle/internal/appconfig"
 	"packgradle/internal/errs"
 	"packgradle/internal/fsutil"
+	"packgradle/internal/junction"
 	"packgradle/internal/packwiz"
 	"packgradle/internal/prism"
 )
@@ -75,12 +76,49 @@ func (s *PrismService) loadLinkedProjectPack(projectName string) (*linkedProject
 	return lp, nil
 }
 
-// junctionTargets 判断 instSide 是否为指向 projSide 的 junction
-func (s *PrismService) junctionTargets(instSide, projSide string) bool {
-	isJ, err := s.junctions.IsJunction(instSide)
+// removeProjectLinkTargets 清理某项目在其关联实例侧的全部已建链接：
+// 目录 junction（含 files 模式的文件硬链接）+ 顶层文件硬链接。
+// 定位实例目录失败时返回错误（调用方应保留配置供重试，而不是静默清空后留下孤儿链接）；
+// 实例本身已不存在时视为无链接可清（链接随实例目录一起消失）。
+func removeProjectLinkTargets(mgr *appconfig.ConfigManager, jm junction.Manager, entry appconfig.ProjectEntry, pc appconfig.ProjectConfig) error {
+	if pc.Instance == "" {
+		return nil
+	}
+	if len(pc.DirLinks) == 0 && len(pc.FileLinks) == 0 {
+		return nil
+	}
+	instDir, _, err := resolveInstancesDir(mgr.Get())
+	if err != nil {
+		return err
+	}
+	instances, err := prism.ScanInstances(instDir)
+	if err != nil {
+		return err
+	}
+	inst, ok := findInstanceByID(instances, pc.Instance)
+	if !ok {
+		return nil // 实例已删除：链接已随之消失
+	}
+	for _, dl := range pc.DirLinks {
+		if err := removeDirLinkTargets(jm, inst, entry.Path, dl); err != nil {
+			return err
+		}
+	}
+	removeHardlinkFiles(inst, entry.Path, pc.FileLinks)
+	return nil
+}
+
+// junctionPointsTo 判断 instSide 是否为指向 projSide 的 junction
+func junctionPointsTo(jm junction.Manager, instSide, projSide string) bool {
+	isJ, err := jm.IsJunction(instSide)
 	if err != nil || !isJ {
 		return false
 	}
-	target, err := s.junctions.TargetOf(instSide)
+	target, err := jm.TargetOf(instSide)
 	return err == nil && fsutil.SamePath(target, projSide)
+}
+
+// junctionTargets 判断 instSide 是否为指向 projSide 的 junction
+func (s *PrismService) junctionTargets(instSide, projSide string) bool {
+	return junctionPointsTo(s.junctions, instSide, projSide)
 }

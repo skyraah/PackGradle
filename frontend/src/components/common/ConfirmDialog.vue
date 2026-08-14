@@ -46,7 +46,7 @@ function close() {
         max-width="480"
         @update:model-value="emit('update:modelValue', $event)"
     >
-        <v-card elevation="8">
+        <v-card class="dialog-card" elevation="8">
             <v-card-title class="d-flex align-center pt-5">
                 <v-icon v-if="icon" :icon="icon" :color="iconColor" class="mr-2" />
                 {{ title }}

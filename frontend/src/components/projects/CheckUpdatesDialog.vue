@@ -1,7 +1,7 @@
 <script setup lang="ts">
 // 更新检查对话框：packwiz update 检查结果展示 + 应用全部 / 单 mod 更新。
 // 打开即检查；应用（全部或单个）后自动重查以刷新列表。
-import { ref, watch } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { PackwizService } from '../../../bindings/packgradle/internal/service'
 import type { PackProject, UpdateCheckResult, ModUpdateInfo } from '../../../bindings/packgradle/internal/packwiz'
@@ -27,31 +27,74 @@ const applyingAll = ref(false)
 const updating = ref('') // 正在单更的 mod 名
 const output = ref('')
 const outputTitle = ref('')
+const mutating = computed(() => applyingAll.value || updating.value !== '')
+const busy = computed(() => checking.value || mutating.value)
+let checkGeneration = 0
+let checkPending = false
 
 watch(
-    () => props.modelValue,
-    open => {
-        if (open) void runCheck()
+    () => [props.modelValue, props.project?.name] as const,
+    ([open]) => {
+        checkGeneration++
+        if (!open) {
+            checkPending = false
+            result.value = null
+            output.value = ''
+            outputTitle.value = ''
+            return
+        }
+
+        result.value = null
+        output.value = ''
+        outputTitle.value = ''
+        void runCheck()
     },
 )
 
 async function runCheck() {
-    if (!props.project) return
+    const projectName = props.project?.name
+    if (!projectName) return
+    if (checking.value) {
+        checkPending = true
+        return
+    }
+
+    const generation = checkGeneration
     checking.value = true
     try {
-        result.value = await PackwizService.CheckUpdates(props.project.name)
-        const upd = result.value?.updates?.length ?? 0
-        const err = result.value?.errors?.length ?? 0
-        showSnackbar(err > 0 ? t('projects.checkDoneWithErrors', [upd, err]) : t('projects.checkDone', [upd]))
+        const next = await PackwizService.CheckUpdates(projectName)
+        if (generation !== checkGeneration || !props.modelValue || props.project?.name !== projectName) return
+
+        result.value = next
+        const upd = next?.updates?.length ?? 0
+        const err = next?.errors?.length ?? 0
+        showSnackbar(
+            err > 0 ? t('projects.checkDoneWithErrors', [upd, err]) : t('projects.checkDone', [upd]),
+            err > 0 ? 'warning' : 'success',
+        )
     } catch (e) {
-        showSnackbar(errText(e))
+        if (generation === checkGeneration) showSnackbar(errText(e), 'error')
     } finally {
         checking.value = false
+        if (checkPending && props.modelValue) {
+            checkPending = false
+            void runCheck()
+        }
     }
 }
 
+// update 输出中的 name 是显示名；packwiz 单 mod 更新要求 .pw.toml 文件名（mod id/slug）。
+// 用父级项目数据把显示名反查为 mod id，显示名与 id 不一致时也能正确更新。
+function modIDForUpdate(displayName: string): string {
+    const mods = props.project?.mods ?? []
+    const byName = mods.find(m => m.name === displayName)
+    if (byName) return byName.id
+    const byID = mods.find(m => m.id === displayName)
+    return byID?.id ?? ''
+}
+
 async function applyAll() {
-    if (!props.project) return
+    if (!props.project || busy.value) return
     applyingAll.value = true
     try {
         const r = await PackwizService.UpdateMods(props.project.name, '')
@@ -60,26 +103,31 @@ async function applyAll() {
         emit('changed')
         await runCheck()
     } catch (e) {
-        showSnackbar(errText(e))
+        showSnackbar(errText(e), 'error')
     } finally {
         applyingAll.value = false
     }
 }
 
 async function updateOne(u: ModUpdateInfo) {
-    if (!props.project) return
-    updating.value = u.name
+    if (!props.project || busy.value) return
+    const modID = modIDForUpdate(u.name)
+    if (!modID) {
+        showSnackbar(t('projects.updateOneNotFound', [u.name]), 'warning')
+        return
+    }
+    updating.value = modID
     try {
-        const r = await PackwizService.UpdateMods(props.project.name, u.name)
+        const r = await PackwizService.UpdateMods(props.project.name, modID)
         if (r && !r.ok) {
-            showSnackbar(displayText(r.output || t('projects.outputFailed')))
+            showSnackbar(displayText(r.output || t('projects.outputFailed')), 'error')
         } else {
-            showSnackbar(t('projects.updateOneDone', [u.name]))
+            showSnackbar(t('projects.updateOneDone', [u.name]), 'success')
         }
         emit('changed')
         await runCheck()
     } catch (e) {
-        showSnackbar(errText(e))
+        showSnackbar(errText(e), 'error')
     } finally {
         updating.value = ''
     }
@@ -87,8 +135,13 @@ async function updateOne(u: ModUpdateInfo) {
 </script>
 
 <template>
-    <v-dialog :model-value="modelValue" max-width="680" @update:model-value="emit('update:modelValue', $event)">
-        <v-card elevation="8">
+    <v-dialog
+        :model-value="modelValue"
+        :persistent="mutating"
+        max-width="680"
+        @update:model-value="emit('update:modelValue', $event)"
+    >
+        <v-card class="dialog-card" elevation="8">
             <v-card-title class="d-flex align-center pt-5">
                 <v-icon icon="mdi-update" color="primary" class="mr-2" />
                 {{ t('projects.checkDialogTitle') }}
@@ -127,8 +180,8 @@ async function updateOne(u: ModUpdateInfo) {
                                 size="small"
                                 variant="tonal"
                                 color="primary"
-                                :loading="updating === u.name"
-                                :disabled="applyingAll || updating !== ''"
+                                :loading="updating === modIDForUpdate(u.name)"
+                                :disabled="checking || applyingAll || (updating !== '' && updating !== modIDForUpdate(u.name))"
                                 @click="updateOne(u)"
                             >
                                 {{ t('projects.updateOne') }}
@@ -157,12 +210,15 @@ async function updateOne(u: ModUpdateInfo) {
             </v-card-text>
             <v-card-actions class="px-5 pb-4">
                 <v-spacer />
-                <v-btn variant="text" @click="emit('update:modelValue', false)">{{ t('projects.close') }}</v-btn>
+                <v-btn variant="text" :disabled="mutating" @click="emit('update:modelValue', false)">
+                    {{ t('projects.close') }}
+                </v-btn>
                 <v-btn
                     v-if="(result?.updates?.length ?? 0) > 0"
                     color="primary"
                     variant="flat"
                     :loading="applyingAll"
+                    :disabled="checking || updating !== ''"
                     @click="applyAll"
                 >
                     {{ t('projects.applyAll') }}

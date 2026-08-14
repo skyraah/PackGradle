@@ -4,6 +4,7 @@
 import { ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { PrismService } from '../../../bindings/packgradle/internal/service'
+import type { LinkResult } from '../../../bindings/packgradle/internal/prism'
 import { showSnackbar } from '../../stores/ui'
 import { errText } from '../../utils/errors'
 
@@ -60,7 +61,13 @@ async function save() {
             (await PrismService.SelectInstanceFiles(props.project, props.dir, selectedFiles.value)) ?? []
         const ok = results.filter(r => r.status === 'linked').length
         const skipped = results.filter(r => r.status === 'skipped').length
-        showSnackbar(t('prism.dirLinkSelectDone', [ok, skipped]))
+        const failed = results.filter(r => r.status === 'error').length
+        if (failed > 0) {
+            const detail = (results.find(r => r.status === 'error') as LinkResult | undefined)?.detail
+            showSnackbar(t('prism.dirLinkSelectDoneWithErrors', [ok, skipped, failed, detail ? ' ' + detail : '']))
+        } else {
+            showSnackbar(t('prism.dirLinkSelectDone', [ok, skipped]))
+        }
         emit('changed')
         emit('update:modelValue', false)
     } catch (e) {

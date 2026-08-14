@@ -92,7 +92,7 @@ async function fetchModVersion(mod: ModInfo) {
         const updated = await PackwizService.FetchModVersion(project.value.name, mod.id)
         const target = project.value.mods?.find(m => m.id === mod.id)
         if (target && updated) Object.assign(target, updated)
-        showSnackbar(t('projects.versionFetched', [updated?.name ?? mod.name]))
+        showSnackbar(t('projects.versionFetched', [updated?.name ?? mod.name]), 'success')
     } catch (e) {
         handleApiKeyError(e)
     } finally {
@@ -106,7 +106,7 @@ async function fetchAllVersions() {
     try {
         const results = (await PackwizService.FetchAllModVersions(project.value.name)) ?? []
         const ok = results.filter(r => r.ok).length
-        showSnackbar(t('projects.versionsFetched', [ok, results.length]))
+        showSnackbar(t('projects.versionsFetched', [ok, results.length]), 'success')
         await loadProjects(true)
     } catch (e) {
         handleApiKeyError(e)
@@ -121,10 +121,10 @@ async function confirmRemove() {
     removing.value = true
     try {
         setProjects(await PackwizService.RemoveProject(project.value.name))
-        showSnackbar(t('projects.removed', [project.value.name]))
+        showSnackbar(t('projects.removed', [project.value.name]), 'success')
         router.push('/projects')
     } catch (e) {
-        showSnackbar(t('projects.removeFailed', [errText(e)]))
+        showSnackbar(t('projects.removeFailed', [errText(e)]), 'error')
     } finally {
         removing.value = false
     }
@@ -134,7 +134,7 @@ async function copyPath() {
     if (!project.value) return
     try {
         await navigator.clipboard.writeText(project.value.path)
-        showSnackbar(t('common.copied'))
+        showSnackbar(t('common.copied'), 'success')
     } catch {
         // 剪贴板不可用时静默忽略（WebView 权限差异）
     }

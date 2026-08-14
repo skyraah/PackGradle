@@ -111,11 +111,11 @@ async function importProject() {
     importing.value = true
     try {
         const proj = await PackwizService.ImportProject(String(picked))
-        showSnackbar(t('projects.imported', [proj.name, (proj.mods ?? []).length]))
+        showSnackbar(t('projects.imported', [proj.name, (proj.mods ?? []).length]), 'success')
         await loadProjects(true)
         openProject(proj.name)
     } catch (e) {
-        showSnackbar(t('projects.importFailed', [errText(e)]))
+        showSnackbar(t('projects.importFailed', [errText(e)]), 'error')
     } finally {
         importing.value = false
     }
@@ -190,8 +190,15 @@ async function importProject() {
                     <v-card-text>
                         <v-row>
                             <v-col v-for="card in envCards" :key="card.key" cols="12" sm="6">
-                                <v-card variant="flat" color="surface-bright" class="hover-card env-card" @click="router.push(card.to)">
-                                    <v-card-text class="d-flex align-center">
+                                <div
+                                    class="surface-tile hover-card env-card"
+                                    role="button"
+                                    tabindex="0"
+                                    @click="router.push(card.to)"
+                                    @keyup.enter="router.push(card.to)"
+                                    @keyup.space.prevent="router.push(card.to)"
+                                >
+                                    <div class="d-flex align-center">
                                         <v-avatar
                                             rounded="lg"
                                             size="40"
@@ -206,8 +213,8 @@ async function importProject() {
                                             <div class="text-subtitle-2 env-text">{{ card.text }}</div>
                                         </div>
                                         <v-icon icon="mdi-chevron-right" size="small" class="text-medium-emphasis" />
-                                    </v-card-text>
-                                </v-card>
+                                    </div>
+                                </div>
                             </v-col>
                         </v-row>
                     </v-card-text>
@@ -332,8 +339,7 @@ async function importProject() {
 
 <style scoped>
 .env-card {
-    border: 1px solid rgba(255, 255, 255, 0.06);
-    border-radius: 14px;
+    min-height: 70px;
 }
 .env-text {
     white-space: nowrap;
@@ -341,7 +347,7 @@ async function importProject() {
     text-overflow: ellipsis;
 }
 .checklist-item {
-    border-radius: 10px;
+    border-radius: 6px;
     cursor: pointer;
 }
 </style>

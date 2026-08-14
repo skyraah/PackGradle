@@ -28,7 +28,7 @@ export function CheckUpdates(projectName: string): $CancellablePromise<packwiz$0
 
 /**
  * FetchAllModVersions 批量获取项目中所有 CurseForge 源 mod 的版本（并发上限 8），
- * 结果写入本地缓存并逐条返回
+ * 结果一次性合并写入本地缓存并逐条返回（避免逐条 Upsert 全量重写缓存文件）
  */
 export function FetchAllModVersions(projectName: string): $CancellablePromise<$models.ModVersionResult[] | null> {
     return $Call.ByID(316089995, projectName);

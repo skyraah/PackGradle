@@ -59,7 +59,7 @@ func (s *PackwizService) FetchModVersion(projectName, modID string) (packwiz.Mod
 }
 
 // FetchAllModVersions 批量获取项目中所有 CurseForge 源 mod 的版本（并发上限 8），
-// 结果写入本地缓存并逐条返回
+// 结果一次性合并写入本地缓存并逐条返回（避免逐条 Upsert 全量重写缓存文件）
 func (s *PackwizService) FetchAllModVersions(projectName string) ([]ModVersionResult, error) {
 	proj, err := s.findProject(projectName)
 	if err != nil {
@@ -80,6 +80,12 @@ func (s *PackwizService) FetchAllModVersions(projectName string) ([]ModVersionRe
 	}
 
 	results := make([]ModVersionResult, len(targets))
+	type fetchedEntry struct {
+		key   string
+		entry curseforge.CfFileCache
+	}
+	fetched := make([]fetchedEntry, len(targets))
+	fetchedOK := make([]bool, len(targets))
 	store := s.cfCacheStore(proj)
 	sem := make(chan struct{}, 8)
 	var wg sync.WaitGroup
@@ -94,14 +100,34 @@ func (s *PackwizService) FetchAllModVersions(projectName string) ([]ModVersionRe
 				results[i] = ModVersionResult{ID: m.ID, Name: m.Name, OK: false, Error: err.Error()}
 				return
 			}
-			if err := store.Upsert(curseforge.CacheKey(m.CfProjectID, m.CfFileID), entry); err != nil {
-				results[i] = ModVersionResult{ID: m.ID, Name: m.Name, OK: false, Error: err.Error()}
-				return
-			}
-			results[i] = ModVersionResult{ID: m.ID, Name: m.Name, Version: entry.DisplayName, OK: true}
+			fetched[i] = fetchedEntry{key: curseforge.CacheKey(m.CfProjectID, m.CfFileID), entry: entry}
+			fetchedOK[i] = true
 		}(i, m)
 	}
 	wg.Wait()
+
+	entries := make(map[string]curseforge.CfFileCache, len(targets))
+	for i, ok := range fetchedOK {
+		if !ok {
+			continue
+		}
+		entries[fetched[i].key] = fetched[i].entry
+	}
+	if saveErr := store.UpsertMany(entries); saveErr != nil {
+		for i, ok := range fetchedOK {
+			if ok {
+				m := targets[i]
+				results[i] = ModVersionResult{ID: m.ID, Name: m.Name, OK: false, Error: saveErr.Error()}
+			}
+		}
+		return results, nil
+	}
+	for i, ok := range fetchedOK {
+		if ok {
+			m := targets[i]
+			results[i] = ModVersionResult{ID: m.ID, Name: m.Name, Version: fetched[i].entry.DisplayName, OK: true}
+		}
+	}
 	return results, nil
 }
 

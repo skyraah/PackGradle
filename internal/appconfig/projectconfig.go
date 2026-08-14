@@ -2,9 +2,29 @@ package appconfig
 
 import (
 	"path/filepath"
+	"sync"
 
 	"packgradle/internal/errs"
 )
+
+// projectLocks 为每个项目目录提供一把独立锁：项目级配置的“读-改-写”
+// 必须整体在锁内完成，否则并发操作会以旧配置覆盖彼此（丢更新）。
+var projectLocks sync.Map // projectPath(已 Clean) → *sync.Mutex
+
+func projectLock(projectPath string) *sync.Mutex {
+	actual, _ := projectLocks.LoadOrStore(filepath.Clean(projectPath), &sync.Mutex{})
+	return actual.(*sync.Mutex)
+}
+
+// WithProjectConfigLock 在项目级配置锁内执行 fn。
+// 约定：LoadProjectConfig / SaveProjectConfig 自身不加锁（否则死锁），
+// 所有涉及项目级配置的读-改-写调用方都通过本函数串行化。
+func WithProjectConfigLock(projectPath string, fn func() error) error {
+	mu := projectLock(projectPath)
+	mu.Lock()
+	defer mu.Unlock()
+	return fn()
+}
 
 // 项目级配置：每个 packwiz 项目目录下的 packgradle.toml。
 // 与项目相关的配置（Prism 实例关联、目录同步关联）随项目走，

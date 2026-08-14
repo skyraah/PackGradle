@@ -84,11 +84,11 @@ async function importProject() {
     importing.value = true
     try {
         const proj = await PackwizService.ImportProject(String(picked))
-        showSnackbar(t('projects.imported', [proj.name, (proj.mods ?? []).length]))
+        showSnackbar(t('projects.imported', [proj.name, (proj.mods ?? []).length]), 'success')
         await load(true)
         openDetail(proj)
     } catch (e) {
-        showSnackbar(t('projects.importFailed', [errText(e)]))
+        showSnackbar(t('projects.importFailed', [errText(e)]), 'error')
     } finally {
         importing.value = false
     }
@@ -106,10 +106,10 @@ async function confirmRemove() {
     removing.value = null
     try {
         setProjects(await PackwizService.RemoveProject(proj.name))
-        showSnackbar(t('projects.removed', [proj.name]))
+        showSnackbar(t('projects.removed', [proj.name]), 'success')
         await load(true)
     } catch (e) {
-        showSnackbar(t('projects.removeFailed', [errText(e)]))
+        showSnackbar(t('projects.removeFailed', [errText(e)]), 'error')
     }
 }
 
@@ -133,7 +133,7 @@ async function fetchAllVersions(proj: PackProject) {
     try {
         const results = (await PackwizService.FetchAllModVersions(proj.name)) ?? []
         const ok = results.filter(r => r.ok).length
-        showSnackbar(t('projects.versionsFetched', [ok, results.length]))
+        showSnackbar(t('projects.versionsFetched', [ok, results.length]), 'success')
         await load(true)
     } catch (e) {
         handleApiKeyError(e)
@@ -319,7 +319,7 @@ watch(projectsVersion, () => {
     max-width: 360px;
 }
 .project-card {
-    border-radius: 14px;
+    border-radius: 8px;
 }
 .project-path {
     white-space: nowrap;

@@ -172,13 +172,16 @@ func (m *ConfigManager) SetPrismInstancesDir(dir string) error {
 
 // MigrateLegacyProjectConfigs 将旧版全局 config.toml 中的 [[links]] / [[dir_links]]
 // 一次性迁移到各项目目录下的 packgradle.toml，随后清空全局旧字段。
-// 幂等：无旧数据时直接返回 nil。
+// 幂等：无旧数据时直接返回 nil；追加前对既有目录关联去重，
+// 部分失败重跑不会产生重复条目。
 func (m *ConfigManager) MigrateLegacyProjectConfigs() error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if len(m.cfg.LegacyLinks) == 0 && len(m.cfg.LegacyDirLinks) == 0 {
 		return nil
 	}
+
+	handled := map[string]bool{}
 	for _, l := range m.cfg.LegacyLinks {
 		entry, ok := findProjectEntry(m.cfg.Projects, l.Project)
 		if !ok {
@@ -193,7 +196,7 @@ func (m *ConfigManager) MigrateLegacyProjectConfigs() error {
 		}
 		for _, dl := range m.cfg.LegacyDirLinks {
 			if dl.Project == l.Project {
-				pc.DirLinks = append(pc.DirLinks, ProjectDirLink{
+				appendLegacyDirLink(&pc.DirLinks, ProjectDirLink{
 					ProjectDir:  dl.ProjectDir,
 					InstanceDir: dl.InstanceDir,
 				})
@@ -202,10 +205,44 @@ func (m *ConfigManager) MigrateLegacyProjectConfigs() error {
 		if err := SaveProjectConfig(entry.Path, pc); err != nil {
 			return err
 		}
+		handled[l.Project] = true
 	}
+	// [[dir_links]] 中不属于任何 [[links]] 的项目也要迁移（不遗漏旧数据）
+	for _, dl := range m.cfg.LegacyDirLinks {
+		if handled[dl.Project] {
+			continue
+		}
+		entry, ok := findProjectEntry(m.cfg.Projects, dl.Project)
+		if !ok {
+			continue
+		}
+		pc, err := LoadProjectConfig(entry.Path)
+		if err != nil {
+			return err
+		}
+		appendLegacyDirLink(&pc.DirLinks, ProjectDirLink{
+			ProjectDir:  dl.ProjectDir,
+			InstanceDir: dl.InstanceDir,
+		})
+		if err := SaveProjectConfig(entry.Path, pc); err != nil {
+			return err
+		}
+		handled[dl.Project] = true
+	}
+
 	m.cfg.LegacyLinks = nil
 	m.cfg.LegacyDirLinks = nil
 	return m.save()
+}
+
+// appendLegacyDirLink 迁移用追加：同一 (project_dir, instance_dir) 已存在时不重复
+func appendLegacyDirLink(links *[]ProjectDirLink, link ProjectDirLink) {
+	for _, l := range *links {
+		if l.ProjectDir == link.ProjectDir && l.InstanceDir == link.InstanceDir {
+			return
+		}
+	}
+	*links = append(*links, link)
 }
 
 // findProjectEntry 在项目列表中按名称查找

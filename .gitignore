@@ -1,5 +1,7 @@
 .task
 .zcode
+/.gocache/
+/.gotmp/
 bin
 frontend/dist
 frontend/node_modules

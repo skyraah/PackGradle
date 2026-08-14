@@ -20,6 +20,16 @@ func makeInstance(t *testing.T, instancesDir, id, cfgName, mmcPack string) {
 	}
 }
 
+// scanMust 调用 ScanInstances 并断言无错误（测试便捷包装）
+func scanMust(t *testing.T, instancesDir string) []Instance {
+	t.Helper()
+	got, err := ScanInstances(instancesDir)
+	if err != nil {
+		t.Fatalf("ScanInstances 不应失败: %v", err)
+	}
+	return got
+}
+
 // 标准实例：forge + instgroups 分组 + name 显示名
 func TestScanInstancesBasic(t *testing.T) {
 	instancesDir := t.TempDir()
@@ -36,7 +46,7 @@ func TestScanInstancesBasic(t *testing.T) {
 	mustWriteFile(t, filepath.Join(instancesDir, "instgroups.json"),
 		`{"formatVersion": "1", "groups": {"git": {"instances": ["Collapse"]}}}`)
 
-	got := ScanInstances(instancesDir)
+	got := scanMust(t, instancesDir)
 	if len(got) != 1 {
 		t.Fatalf("应扫描到 1 个实例，实际 %d: %+v", len(got), got)
 	}
@@ -78,7 +88,7 @@ func TestLoaderUIDMapping(t *testing.T) {
 				{"uid": "`+c.uid+`", "version": "9.9.9"}
 			]
 		}`)
-		got := ScanInstances(instancesDir)
+		got := scanMust(t, instancesDir)
 		if len(got) != 1 || got[0].Modloader != c.loader || got[0].ModloaderVersion != "9.9.9" {
 			t.Errorf("uid %s → loader=%q, 实际 %+v", c.uid, c.loader, got)
 		}
@@ -90,7 +100,7 @@ func TestLoaderUIDMapping(t *testing.T) {
 		"formatVersion": 1,
 		"components": [{"uid": "net.minecraft", "version": "1.20.4"}]
 	}`)
-	got := ScanInstances(instancesDir)
+	got := scanMust(t, instancesDir)
 	if len(got) != 1 || got[0].Modloader != "" {
 		t.Errorf("vanilla 实例 Modloader 应为空，实际 %+v", got)
 	}
@@ -100,7 +110,7 @@ func TestLoaderUIDMapping(t *testing.T) {
 func TestNameFallbackToDir(t *testing.T) {
 	instancesDir := t.TempDir()
 	makeInstance(t, instancesDir, "NoName", "", "")
-	got := ScanInstances(instancesDir)
+	got := scanMust(t, instancesDir)
 	if len(got) != 1 || got[0].Name != "NoName" {
 		t.Errorf("name 缺失应回退目录名，实际 %+v", got)
 	}
@@ -110,7 +120,7 @@ func TestNameFallbackToDir(t *testing.T) {
 func TestBadMMCPackTolerated(t *testing.T) {
 	instancesDir := t.TempDir()
 	makeInstance(t, instancesDir, "bad", "BadPack", `{"formatVersion": 1, "components": [`)
-	got := ScanInstances(instancesDir)
+	got := scanMust(t, instancesDir)
 	if len(got) != 1 {
 		t.Fatalf("坏实例也应出现在列表，实际 %d", len(got))
 	}
@@ -130,7 +140,7 @@ func TestBadMMCPackTolerated(t *testing.T) {
 func TestNameWithSpacesAndBrackets(t *testing.T) {
 	instancesDir := t.TempDir()
 	makeInstance(t, instancesDir, "[Client]Create-Delight-Remake-v0.4.8.15", "整合包 测试", "")
-	got := ScanInstances(instancesDir)
+	got := scanMust(t, instancesDir)
 	if len(got) != 1 || got[0].Name != "整合包 测试" {
 		t.Errorf("含空格/中文 name 解析失败: %+v", got)
 	}
@@ -140,9 +150,16 @@ func TestNameWithSpacesAndBrackets(t *testing.T) {
 func TestNoInstGroups(t *testing.T) {
 	instancesDir := t.TempDir()
 	makeInstance(t, instancesDir, "a", "A", "")
-	got := ScanInstances(instancesDir)
+	got := scanMust(t, instancesDir)
 	if len(got) != 1 || got[0].Group != "" {
 		t.Errorf("无 instgroups.json 时 Group 应为空，实际 %+v", got)
+	}
+}
+
+// 实例根目录不存在：应返回错误而不是空列表（避免误报“未找到实例”）
+func TestScanInstancesMissingDirReturnsError(t *testing.T) {
+	if got, err := ScanInstances(filepath.Join(t.TempDir(), "missing")); err == nil {
+		t.Fatalf("目录不存在应返回错误，实际 got=%v err=nil", got)
 	}
 }
 
@@ -151,7 +168,7 @@ func TestInstancesSorted(t *testing.T) {
 	instancesDir := t.TempDir()
 	makeInstance(t, instancesDir, "zeta", "", "")
 	makeInstance(t, instancesDir, "Alpha", "", "")
-	got := ScanInstances(instancesDir)
+	got := scanMust(t, instancesDir)
 	if len(got) != 2 || got[0].ID != "Alpha" || got[1].ID != "zeta" {
 		t.Errorf("应按名称排序: %+v", got)
 	}

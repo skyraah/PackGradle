@@ -13,11 +13,12 @@ import (
 
 // ScanInstances 扫描实例根目录下全部实例。
 // 有效实例 = 含 instance.cfg 的一级子目录（目录名即实例 ID）；
-// 单个实例解析失败时错误落入 Instance.Error，不中断整个列表（同 ListProjects 容错哲学）。
-func ScanInstances(instancesDir string) []Instance {
+// 单个实例解析失败时错误落入 Instance.Error，不中断整个列表（同 ListProjects 容错哲学）；
+// 实例根目录读取失败（权限/IO 错误）时返回错误，由调用方透出，避免误报“空列表”。
+func ScanInstances(instancesDir string) ([]Instance, error) {
 	entries, err := os.ReadDir(instancesDir)
 	if err != nil {
-		return nil
+		return nil, errs.NewDetail("err.prism.scan_failed", err.Error(), instancesDir)
 	}
 	groups := parseInstGroups(filepath.Join(instancesDir, "instgroups.json"))
 
@@ -33,7 +34,7 @@ func ScanInstances(instancesDir string) []Instance {
 		instances = append(instances, parseInstance(dir, e.Name(), groups))
 	}
 	sortInstances(instances)
-	return instances
+	return instances, nil
 }
 
 // parseInstance 解析单个实例目录：instance.cfg（name）+ mmc-pack.json（版本信息）

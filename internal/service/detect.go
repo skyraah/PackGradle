@@ -1,6 +1,7 @@
 package service
 
 import (
+	"log"
 	"os"
 	"path/filepath"
 	"strings"
@@ -74,9 +75,11 @@ func (s *EnvService) finishDetection(info *ToolInfo, savedPath string) {
 		info.EnvDir = filepath.Dir(info.Path)
 		info.EnvOK = envutil.InUserPath(info.EnvDir)
 		// 程序检测到的路径同样持久化，方便用户查看/修改；
-		// 值未变化时跳过写入。
+		// 值未变化时跳过写入；写入失败记录日志（检测结果仍可用，但重启后可能丢失）
 		if strings.TrimSpace(savedPath) != info.Path {
-			_ = s.config.SetToolPath(info.Name, info.Path)
+			if err := s.config.SetToolPath(info.Name, info.Path); err != nil {
+				log.Printf("检测到 %s 路径后回写 config 失败: %v", info.Name, err)
+			}
 		}
 	}
 }

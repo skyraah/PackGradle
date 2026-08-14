@@ -221,6 +221,45 @@ func TestParseProjectErrors(t *testing.T) {
 	}
 }
 
+// index.file 越界（绝对路径 / ..）应拒绝，不读取项目外的文件
+func TestParseProjectRejectsEscapingIndexPath(t *testing.T) {
+	dir := t.TempDir()
+	for _, indexFile := range []string{"../outside.toml", `C:\outside.toml`} {
+		packToml := filepath.Join(dir, "pack.toml")
+		content := "name = \"proj\"\n[index]\nfile = \"" + indexFile + "\"\n"
+		if err := os.WriteFile(packToml, []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := ParseProject(packToml); err == nil {
+			t.Errorf("index.file=%q 应拒绝", indexFile)
+		}
+	}
+}
+
+// index.toml 中越界的 mods/ 条目应忽略，不读取项目外的文件
+func TestParseProjectSkipsEscapingModEntries(t *testing.T) {
+	dir := t.TempDir()
+	mustWriteFile(t, filepath.Join(dir, "pack.toml"), "name = \"proj\"\n[index]\nfile = \"index.toml\"\n")
+	mustWriteFile(t, filepath.Join(dir, "index.toml"), `
+[[files]]
+file = "mods/../../outside.pw.toml"
+metafile = true
+[[files]]
+file = "mods/ok.pw.toml"
+metafile = true
+`)
+	mustWriteFile(t, filepath.Join(dir, "outside.pw.toml"), `name = "Outside"`)
+	mustWriteFile(t, filepath.Join(dir, "mods", "ok.pw.toml"), `name = "OK"`)
+
+	proj, err := ParseProject(filepath.Join(dir, "pack.toml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(proj.Mods) != 1 || proj.Mods[0].ID != "ok" {
+		t.Fatalf("越界条目应忽略，只保留合法 mods/ 条目: %+v", proj.Mods)
+	}
+}
+
 func mustWriteFile(t *testing.T, path, content string) {
 	t.Helper()
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {

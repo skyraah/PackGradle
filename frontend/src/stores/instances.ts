@@ -7,21 +7,31 @@ import type { PrismOverview } from '../../bindings/packgradle/internal/service'
 const overview = ref<PrismOverview | null>(null)
 const loaded = ref(false)
 let inflight: Promise<PrismOverview> | null = null
+let refreshAfterInflight = false
 
 export async function loadOverview(force = false): Promise<PrismOverview> {
     if (!force && loaded.value && overview.value) return overview.value
-    if (!inflight) {
-        inflight = PrismService.Overview()
-            .then(ov => {
-                overview.value = ov
-                loaded.value = true
-                return ov
-            })
-            .finally(() => {
-                inflight = null
-            })
+    if (inflight) {
+        if (force) refreshAfterInflight = true
+        return inflight
     }
-    return inflight
+    const task = PrismService.Overview().then(ov => {
+        overview.value = ov
+        loaded.value = true
+        return ov
+    })
+    inflight = task
+    try {
+        return await task
+    } finally {
+        if (inflight === task) {
+            inflight = null
+            if (refreshAfterInflight) {
+                refreshAfterInflight = false
+                void loadOverview(true).catch(() => {})
+            }
+        }
+    }
 }
 
 export function invalidateOverview() {

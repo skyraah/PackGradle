@@ -1,52 +1,51 @@
 // Vuetify 实例：主题与组件默认值集中在此。
-// 深色主题为默认（石板底 + 祖母绿主色，契合整合包开发工具气质），
-// 亮色主题同步提供，为后续主题切换留好扩展位。
+// 色板与控件形状贴近 Windows 11 Fluent，同时保留 Vuetify 的成熟交互行为。
 import 'vuetify/styles'
 import { createVuetify } from 'vuetify'
 import * as components from 'vuetify/components'
 import * as directives from 'vuetify/directives'
 
 const dark = {
-    background: '#0D1017',
-    surface: '#151A23',
-    'surface-bright': '#1B212C',
-    'surface-variant': '#1E2633',
-    'on-surface-variant': '#93A0B4',
-    'on-background': '#E7ECF4',
-    'on-surface': '#E7ECF4',
-    primary: '#4ADE80',
-    'on-primary': '#0A1B10',
-    secondary: '#818CF8',
-    'on-secondary': '#12132B',
-    error: '#F87171',
-    'on-error': '#2C0B0B',
-    warning: '#FBBF24',
-    'on-warning': '#241A02',
-    info: '#60A5FA',
-    'on-info': '#08182E',
-    success: '#34D399',
-    'on-success': '#052015',
+    background: '#202020',
+    surface: '#2B2B2B',
+    'surface-bright': '#323232',
+    'surface-variant': '#393939',
+    'on-surface-variant': '#C8C8C8',
+    'on-background': '#FFFFFF',
+    'on-surface': '#FFFFFF',
+    primary: '#4CC2FF',
+    'on-primary': '#00364E',
+    secondary: '#C3A7FF',
+    'on-secondary': '#27164A',
+    error: '#FF99A4',
+    'on-error': '#5A0010',
+    warning: '#FCE100',
+    'on-warning': '#433800',
+    info: '#60CDFF',
+    'on-info': '#00364E',
+    success: '#6CCB5F',
+    'on-success': '#0C3B08',
 }
 
 const light = {
-    background: '#F5F7FA',
-    surface: '#FFFFFF',
+    background: '#F3F3F3',
+    surface: '#FBFBFB',
     'surface-bright': '#FFFFFF',
-    'surface-variant': '#E8EDF4',
-    'on-surface-variant': '#5A6A7E',
-    'on-background': '#161B22',
-    'on-surface': '#161B22',
-    primary: '#16A34A',
+    'surface-variant': '#EDEDED',
+    'on-surface-variant': '#5D5D5D',
+    'on-background': '#1B1B1B',
+    'on-surface': '#1B1B1B',
+    primary: '#0067C0',
     'on-primary': '#FFFFFF',
-    secondary: '#4F46E5',
+    secondary: '#8764B8',
     'on-secondary': '#FFFFFF',
-    error: '#DC2626',
+    error: '#C42B1C',
     'on-error': '#FFFFFF',
-    warning: '#D97706',
+    warning: '#9D5D00',
     'on-warning': '#FFFFFF',
-    info: '#2563EB',
+    info: '#0067C0',
     'on-info': '#FFFFFF',
-    success: '#059669',
+    success: '#0F7B0F',
     'on-success': '#FFFFFF',
 }
 
@@ -61,8 +60,11 @@ export default createVuetify({
         },
     },
     defaults: {
-        // 无阴影 + 描边的圆角卡片：扁平现代的观感；对话框内卡片显式传 elevation 以保持浮层感
-        VCard: { rounded: 'lg', elevation: 0, border: 'sm' },
-        VTextField: { variant: 'outlined' },
+        VBtn: { rounded: 'md' },
+        VCard: { rounded: 'md', elevation: 0, border: 'sm' },
+        VChip: { rounded: 'sm' },
+        VListItem: { rounded: 'md' },
+        VMenu: { offset: 6 },
+        VTextField: { variant: 'outlined', rounded: 'md' },
     },
 })
