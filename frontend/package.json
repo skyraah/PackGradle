@@ -15,6 +15,7 @@
     "@wailsio/runtime": "latest",
     "vue": "^3.5.41",
     "vue-i18n": "^11.4.8",
+    "vue-router": "4",
     "vuetify": "^4.1.8"
   },
   "devDependencies": {

@@ -3,6 +3,8 @@
 bin
 frontend/dist
 frontend/node_modules
+# Yarn 4 安装状态（node-modules 链接器下仅剩 install-state）
+frontend/.yarn/
 build/linux/appimage/build
 build/windows/nsis/MicrosoftEdgeWebview2Setup.exe
 # Mobile generated (per-machine; overlays hold absolute paths)

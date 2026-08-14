@@ -1,137 +1,152 @@
-# PackGradle 前端结构与操作逻辑（原型）
+# PackGradle 前端结构与操作逻辑
 
-> 原型文档：记录前端目录结构与各页面操作逻辑（原型表格），供需求对齐与后续开发参考。
-> 更新日期：2026-08-13（重构版）。后端调用均经 Wails 生成的绑定（`frontend/bindings/packgradle/internal/`，勿手改），文案唯一来源 `src/locales/zh-CN.json`。
-> 关联文档：`docs/REQUIREMENTS.md`（需求状态与验收标准）。
+> 结构文档：记录前端目录结构、路由与各页面操作逻辑，供需求对齐与后续开发参考。
+> 更新日期：2026-08-15（路由化重构版）。后端调用均经 Wails 生成的绑定（frontend/bindings/packgradle/internal/，勿手改），
+> 文案唯一来源 src/locales/zh-CN.json。关联文档：docs/REQUIREMENTS.md（需求状态与验收标准）。
 
 ## 1. 目录结构
 
 | 路径 | 职责 |
 | --- | --- |
-| `src/main.ts` | 应用入口：Vue + Vuetify（dark 主题）+ vue-i18n |
-| `src/App.vue` | 根布局：顶栏 + 常驻导航抽屉 + `v-main` 三视图切换（v-if，无 vue-router） |
-| `src/nav.ts` | 视图切换状态（`currentView` + `navigate()`）+ **跨视图数据版本号**（`projectsVersion` + `bumpProjectsVersion()`，无 Pinia） |
-| `src/i18n.ts` | 全局 i18n（zh-CN），导出全局 `t` 供非组件模块使用 |
-| `src/locales/zh-CN.json` | 全部界面文案（错误码 `err.*` 也在此翻译；缺失键返回键名便于发现遗漏） |
-| `src/composables/useSnackbar.ts` | 共享 snackbar 状态与 `show(msg)`（各视图自持一套实例） |
-| `src/composables/useApiKeyGuide.ts` | CurseForge API Key 错误分流：Key 相关错误码弹引导框，其余走 snackbar |
-| `src/utils/errors.ts` | 错误码 → 用户可读文本：解析 `e.cause` 与数据字段中的错误码 JSON 两条路径 |
-| `src/utils/cf.ts` | CurseForge 展示工具：loader chip、side 颜色、releaseType/日期格式化、`isCfMod` |
-| `src/views/EnvView.vue` | 环境页：packwiz / Prism Launcher 检测与路径配置、CF API Key |
-| `src/views/ProjectsView.vue` | 项目页：导入/移除、packwiz refresh、CF 版本获取、更新检查与应用 |
-| `src/views/PrismView.vue` | Prism 页：实例目录定位、项目↔实例关联、目录同步（junction/文件级）、meta 推送/拉取/差异 |
-| `bindings/packgradle/internal/service/` | Wails 生成的 `EnvService` / `PackwizService` / `PrismService` 绑定（37 方法） |
+| src/main.ts | 应用入口：Vue + Vuetify（dark 主题）+ vue-i18n + vue-router |
+| src/App.vue | 根布局：顶栏（页面标题 + Wails 拖拽区）+ rail 导航抽屉（路由 meta 驱动）+ 全局 snackbar 与 API Key 引导弹窗 |
+| src/router/index.ts | 路由表（hash 历史，适配 Wails 静态资产服务器）；侧栏导航项由路由 meta（titleKey/icon）生成 |
+| src/plugins/vuetify.ts | 主题（深色石板底 + 祖母绿主色）与组件默认值（圆角描边卡片、outlined 输入框） |
+| src/stores/ | 模块级共享状态（无 Pinia）：projects（项目缓存 + projectsVersion 跨视图版本号）、instances（Prism Overview 缓存）、env（工具检测 + API Key）、apiKeyGuide（API Key 错误分流）、ui（全局 snackbar） |
+| src/components/common/ | 通用组件：PageHeader / ConfirmDialog（通用确认，替代 Wails 原生 Question）/ OutputDialog（CLI 输出）/ EmptyState |
+| src/components/projects/ | 项目域：ModsTable（mod 表格 + 搜索 + side 过滤）、CheckUpdatesDialog（更新检查 + 应用全部 + 单 mod 更新） |
+| src/components/prism/ | Prism 域：LinkDialog（关联 + 程序创建实例）、DirLinksDialog（目录同步 + 一键关联 + .pgignore 引导 + 手动链接 + 模式切换）、FileSelectDialog（文件级同步选择）、MetaDiffDialog（差异三区 + 单 mod 推送/拉取） |
+| src/views/ | 页面（路由懒加载）：Dashboard / Projects / ProjectDetail / Instances / Settings |
+| src/utils/ | errors.ts（错误码渲染）、cf.ts（loader chip / side 颜色 / 日期与发布类型） |
+| src/locales/zh-CN.json | 全部界面文案（错误码 err.* 也在此翻译；缺失键返回键名便于发现遗漏） |
+| bindings/packgradle/internal/service/ | Wails 生成的 EnvService / PackwizService / PrismService 绑定（37 方法，本次重构未改动） |
 
-## 2. 共享机制
+## 2. 路由与共享机制
+
+| 路由 | 页面 | 说明 |
+| --- | --- | --- |
+| / | 工作台 | 环境健康卡 + 快速开始清单 + 项目/关联概览（数据全部来自共享缓存） |
+| /projects | 项目列表 | 卡片 + 搜索 + 溢出菜单；keep-alive 保持存活（返回详情后保留搜索/滚动状态） |
+| /projects/:name | 项目详情 | 项目信息 + mod 管理（搜索 / side 过滤 / 版本获取）+ 刷新与更新检查；URL 参数为项目名 |
+| /instances | Prism 联动 | 实例目录定位 + 关联列表（meta 推送/拉取/差异 + 目录同步）+ 实例列表 |
+| /settings | 设置 | packwiz / Prism Launcher 检测与 PATH 配置 + CurseForge API Key |
+| 兜底 | — | 未匹配路径重定向到 / |
 
 | 机制 | 说明 |
 | --- | --- |
-| 视图切换 | `nav.ts` 的 `currentView` ref，`navigate(key)` 可跨页跳转（如引导去配置 API Key） |
-| **跨视图刷新** | `projectsVersion` ref：PrismView 拉取 meta 改变项目 mods 后 `bumpProjectsVersion()`；ProjectsView `watch(projectsVersion)` 自动 `load()`。避免视图间直接耦合 |
-| 错误提示 | Go 端只返回错误码（`errs.AppError`）；`errors.ts` 统一解析两条路径：① Wails 调用异常的 `e.cause` ② 数据字段文本（`RefreshResult.Output` / `PackProject.Error` / `LinkResult.Detail` 等），非结构化文本（packwiz CLI 输出）原样返回 |
-| API Key 分流 | `useApiKeyGuide.handleError(e, show)`：错误码为 `err.cf.api_key_missing` / `err.cf.unauthorized` 时弹 `apiKeyDialog`，点「去配置」→ `navigate('env')`；其余错误走 snackbar |
-| 确认对话框 | 一律自定义 `v-dialog`（构建版 Wails 原生 `Dialogs.Question` 会挂起）；`Dialogs.OpenFile` 选择文件/目录可用，取消时以异常返回需静默忽略 |
-| 加载状态 | 行级/全局 `loading` ref 绑定到按钮与卡片，防止重复提交；meta 类操作按项目/按 mod 粒度互斥（`metaBusy` / `diffBusy`） |
+| 路由 | vue-router hash 历史：Wails 用 AssetFileServerFS 托管静态资源，hash 模式深链/刷新不 404；页面懒加载按视图拆 chunk |
+| 共享缓存 | stores/projects（ListProjects 结果缓存，工作台/列表/详情/联动共用，并发共享同一请求）、stores/instances（Prism Overview 一次返回实例+关联）、stores/env（工具检测 + API Key） |
+| 跨视图刷新 | projectsVersion ref：meta 拉取改变项目 mods 后 bumpProjectsVersion() + invalidateProjects()；ProjectsView / ProjectDetailView watch 后强制重载 |
+| 全局反馈 | stores/ui 单例 snackbar（App.vue 渲染，视图不各自持有一套）；stores/apiKeyGuide 应用级 API Key 引导弹窗，错误码 err.cf.api_key_missing / err.cf.unauthorized 弹引导，其余走 snackbar |
+| 错误契约 | Go 端只出错误码；errors.ts 双路径解析（e.cause 与数据字段文本），非结构化文本（packwiz CLI 输出）原样返回 |
+| 确认对话框 | 一律自定义 v-dialog（构建版 Wails 原生 Question 会挂起）；Dialogs.OpenFile 可用，取消以异常返回需静默忽略 |
 
-## 3. EnvView（环境配置）
+## 3. 工作台（/）
+
+| 区块 | 数据来源 | 交互 |
+| --- | --- | --- |
+| 快捷操作 | — | 导入 pack.toml（文件对话框 → ImportProject → 跳转详情页）、去关联实例、环境设置 |
+| 快速开始清单 | Detect + API Key + 项目缓存 + Overview | 5 步工作流（packwiz → Prism → API Key → 项目 → 关联），未完成项点击跳转对应页，进度条 + n/m 计数 |
+| 环境健康卡 | 同上 | packwiz / Prism / API Key / 实例数 四卡，展示检测来源或状态，点击跳转设置或联动页 |
+| 我的项目 | projects 缓存 | 前 5 个项目（loader / mod 数），点击进详情，查看全部 → /projects |
+| 关联概览 | Overview.links | 前 5 条关联（项目 → 实例 + 有效性），查看全部 → /instances |
+
+数据装载：loadTools / loadApiKey / loadProjects / loadOverview 四个既有调用 Promise.allSettled 并发执行，个别失败不影响其余展示。
+
+## 4. 项目列表（/projects）与项目详情（/projects/:name）
 
 | 操作 | UI 入口 | 前端逻辑 | 后端调用 | 反馈 |
 | --- | --- | --- | --- | --- |
-| 加载/刷新 | 进入页面 / 刷新按钮 | `load()`：检测并渲染工具卡片 | `EnvService.Detect()` | 卡片显示来源（`tool.source.*`）与 PATH 状态 chip；有工具未找到时弹引导框（会话内仅一次，`dismissed`） |
-| 自动配置 PATH | 「自动配置」按钮 | 仅当存在已找到的工具时可用 | `EnvService.Configure()` | snackbar：新增 PATH 项 `env.pathConfigured` / 无变化 `env.pathNoChange`；返回后刷新卡片 |
-| 浏览选择路径 | 输入框旁文件夹图标 | `Dialogs.OpenFile`（可选文件或目录），选中回填 `tool.path` | — | 取消选择静默忽略 |
-| 保存工具路径 | 「保存」按钮 / 回车 | — | `EnvService.SetToolPath(name, path)` | snackbar `env.pathSaved`，返回最新工具列表 |
-| 缺失工具弹窗保存 | 弹窗底部「保存」 | 逐个 `savePath()` 后关闭弹窗 | 同上（逐工具） | 同 `env.pathSaved` |
-| 配置 API Key | API Key 卡片「保存」/ 回车 | 明文/密码切换显示；空值=清除 | `EnvService.SetApiKey(key)` | snackbar：`env.apiKeySaved` / `env.apiKeyCleared` |
-| 读取 API Key | 页面加载 | `onMounted` 回填输入框 | `EnvService.GetApiKey()` | 已配置 chip 状态 |
+| 导入项目 | 页头「导入 pack.toml」 | 文件对话框过滤 pack.toml；成功后跳转详情页 | PackwizService.ImportProject | snackbar projects.imported；失败 projects.importFailed |
+| 搜索 | 搜索框 | 按名称过滤（本地） | — | 无匹配显示 projects.noMatch |
+| 打开详情 | 卡片点击 /「打开详情」 | 路由跳转 /projects/:name | — | — |
+| packwiz refresh | 卡片溢出菜单 / 详情页按钮 | — | PackwizService.RefreshProject | OutputDialog 展示 CLI 输出；随后刷新 |
+| 批量获取版本 | 同上 | 单项目互斥 loading | PackwizService.FetchAllModVersions | snackbar 成功数/总数；API Key 错误走应用级引导 |
+| 检查更新 | 卡片溢出菜单 / 详情页按钮 | CheckUpdatesDialog 打开即检查 | PackwizService.CheckUpdates | 结果列表（可更新 / 失败跳过 / 全最新）+ CLI 输出 |
+| 应用全部更新 | 更新对话框 | 应用后自动重查刷新列表 | PackwizService.UpdateMods(name, '') | 输出内嵌展示；emit changed → 父级重载 |
+| 单 mod 更新 | 更新对话框每行「更新」 | 逐行 loading，更新后自动重查 | PackwizService.UpdateMods(name, modName) | snackbar projects.updateOneDone（打通原 GAP-3 死路径） |
+| 移除项目 | 溢出菜单 / 详情页 | ConfirmDialog 确认（仅移除注册表，不动磁盘） | PackwizService.RemoveProject | snackbar projects.removed；详情页移除后返回列表 |
+| mod 管理 | 详情页 | ModsTable：搜索 + side 过滤（全部/客户端/服务端/通用）+ 版本列（本地优先，CF 缓存回填）+ 单 mod 获取版本 | PackwizService.FetchModVersion | 成功就地 Object.assign 更新行 |
 
-## 4. ProjectsView（项目管理）
+详情页路由参数为项目名：挂载时确保缓存就绪（未命中则强制重载），项目不存在显示 EmptyState 引导返回；projectsVersion 变更自动重载。
 
-| 操作 | UI 入口 | 前端逻辑 | 后端调用 | 反馈 |
-| --- | --- | --- | --- | --- |
-| 加载列表 | 进入页面 / 刷新按钮 / **watch(projectsVersion)** | 跨视图数据变更（Prism 页拉取 meta）后自动刷新 | `PackwizService.ListProjects()` | 项目卡片：loader / MC 版本 / mod 数；解析失败显示错误 chip 与原因 |
-| 导入项目 | 「导入项目」按钮 | `Dialogs.OpenFile` 过滤 `pack.toml`；成功后展开该卡片 | `PackwizService.ImportProject(packTomlPath)` | snackbar `projects.imported`；失败 `projects.importFailed` |
-| 移除项目 | 行内删除图标 | 先弹自定义确认框（`removeDialog`） | `PackwizService.RemoveProject(name)` | 刷新列表；失败 `projects.removeFailed` |
-| packwiz refresh | 行内刷新图标 | — | `PackwizService.RefreshProject(name)` | 命令输出弹窗（成功显示 `packwiz refresh` 成功文案）；随后刷新列表 |
-| 获取单个 mod 版本 | mod 行下载图标（仅 CF 源 mod 显示） | 成功后就地 `Object.assign` 更新该行（不整表刷新） | `PackwizService.FetchModVersion(project, modId)` | snackbar `projects.versionFetched`；失败走 `handleError` 分流 |
-| 批量获取版本 | 行内云下载图标 | 单行获取按钮在此期间禁用 | `PackwizService.FetchAllModVersions(project)` | snackbar `projects.versionsFetched`（成功数/总数）；随后刷新列表 |
-| 检查更新 | 行内更新图标 | 检查期间该行按钮 loading | `PackwizService.CheckUpdates(project)` | 检查结果弹窗：失败 alert / 全最新 / 可更新列表 / 失败跳过列表 / CLI 输出；snackbar `projects.checkDone(WithErrors)` |
-| 应用全部更新 | 检查结果弹窗「应用全部更新」 | 仅在存在可更新项时显示 | `PackwizService.UpdateMods(project, '')` | 命令输出弹窗，关闭检查弹窗，刷新列表 |
-
-## 5. PrismView（Prism 联动）
+## 5. Prism 联动（/instances）
 
 ### 5.1 实例目录与实例列表
 
 | 操作 | UI 入口 | 前端逻辑 | 后端调用 | 反馈 |
 | --- | --- | --- | --- | --- |
-| 定位 | 进入页面 | `load()`：先取实例目录，再列实例 | `PrismService.InstancesDir()` / `ListInstances()` | 定位失败显示手动输入引导；错误码 `err.prism.not_found` 时附「去配置」按钮 → `navigate('env')` |
-| 手动指定目录 | 浏览按钮 / 保存 / 清除 | 空串=恢复自动定位 | `PrismService.SetInstancesPath(path)` | snackbar `prism.manualPathSaved` / `prism.manualPathCleared`；保存后重试定位 |
-| 实例列表 | 查看 | 渲染实例名/路径/分组/loader/MC 版本 | `PrismService.ListInstances()` | 解析失败实例显示错误 chip 与原因 |
+| 定位 | 进入页面 / 刷新 | loadOverview（一次返回实例目录 + 实例 + 关联） | PrismService.Overview | 定位失败显示原因；err.prism.not_found 附「去配置」→ /settings |
+| 手动指定目录 | 浏览 / 保存 / 恢复自动检测 | 空串 = 自动定位 | PrismService.SetInstancesPath | snackbar；保存后强制重载 Overview |
+| 实例列表 | 卡片网格 | 名称/分组/加载器/MC/路径，解析失败实例内嵌错误 | （Overview.instances） | 错误 chip + 原因 |
 
-### 5.2 项目 ↔ 实例关联
-
-| 操作 | UI 入口 | 前端逻辑 | 后端调用 | 反馈 |
-| --- | --- | --- | --- | --- |
-| 新建关联 | 「关联项目」按钮 | 打开前刷新项目列表（过滤解析失败项）；选项目自动匹配同名实例（不区分大小写） | `PrismService.LinkProject(project, instanceId)` | snackbar `prism.linkCreated`；刷新关联列表 |
-| 程序创建实例 | 关联弹窗「基于项目创建实例」 | 创建后重扫实例列表并选中新实例 | `PrismService.CreateInstance(project)` | snackbar `prism.instanceCreated` |
-| 解除关联 | 关联行「解除」 | — | `PrismService.UnlinkProject(project)` | snackbar `prism.linkRemoved` |
-
-### 5.3 目录同步关联（junction / 文件级）
+### 5.2 关联与 meta（关联列表为工作区核心，子组件拆分）
 
 | 操作 | UI 入口 | 前端逻辑 | 后端调用 | 反馈 |
 | --- | --- | --- | --- | --- |
-| 打开管理框 | 关联行「同步目录」 | 载入已关联目录与候选目录（已添加的剔除） | `PrismService.ListDirLinks` / `ListProjectDirs` | 目录行显示模式 chip（整目录/文件级）与目标 `→ minecraft/<instance_dir>` |
-| 添加目录 | 候选下拉 + 「添加」 | — | `PrismService.AddDirLink(project, dir)` | snackbar `prism.dirLinkAdded`；刷新 |
-| 移除目录 | 目录行「移除」 | — | `PrismService.RemoveDirLink(project, dir)` | snackbar `prism.dirLinkRemoved`；刷新 |
-| 一键关联 | 「一键关联全部」按钮 | 先查 `.pgignore`：缺失则弹自定义询问框（生成默认规则并继续 / 不生成直接关联 / 取消） | `HasPGIgnore` → `EnsurePGIgnore`（可选）→ `CreateAllLinks(project)` | 结果列表按状态 chip（linked/existing/manual/skipped/error）；snackbar `linkAllDone(WithManual)` 统计 |
-| 手动链接 | 目录行「手动链接」（仅整目录模式） | 弹确认框：实例侧已有内容时复制并入项目目录再建链 | `PrismService.ManualLinkDir(project, dir)` | snackbar `prism.manualLinkDone`；`status=error` 时展示 detail |
-| 切文件级同步 | 目录行「切换为文件级同步」（仅整目录模式） | — | `PrismService.SetDirLinkMode(project, dir, 'files')` | snackbar `prism.dirLinkModeFiles` |
-| 切回整目录 | 目录行「切换为整目录同步」（仅文件级模式） | — | `PrismService.SetDirLinkMode(project, dir, '')` | snackbar `prism.dirLinkModeJunction` |
-| 选择同步文件 | 目录行「选择同步文件」（仅文件级模式） | **从实例侧读取文件列表** + 当前已勾选；支持全选/清空/逐项勾选 | `PrismService.ListInstanceDirFiles(project, dir)` | 文件选择弹窗 |
-| 保存勾选 | 弹窗「保存」 | 勾选文件**移动到项目目录**后硬链接同步 | `PrismService.SelectInstanceFiles(project, dir, files)` | snackbar `prism.dirLinkSelectDone`（成功/跳过）；关闭弹窗并刷新 |
+| 新建关联 | 页头「关联项目」 | LinkDialog：打开前刷新项目缓存；选项目自动匹配同名实例；可基于项目信息创建实例 | PrismService.LinkProject / CreateInstance | snackbar；emit changed → 强制重载 Overview |
+| 推送 meta | 关联行「推送 meta」 | 按项目互斥 loading | PrismService.PushMeta(project, '') | snackbar 数量 |
+| 拉取 meta | 关联行「拉取 meta」 | ConfirmDialog 确认（覆盖同名 pw.toml） | PrismService.PullMeta(project, '') | snackbar；成功后自动 packwiz refresh → 重载 Overview → bumpProjectsVersion + invalidateProjects；refresh 失败仅提示 |
+| 查看差异 | 关联行「查看差异」 | MetaDiffDialog：打开即重算并刷新缓存；三区列表；单 mod 拉取需确认 | PrismService.MetaDiff / PullMeta / PushMeta | 单拉取后同样走 refresh + 缓存失效链并刷新差异 |
+| 解除关联 | 关联行「解除」 | ConfirmDialog（提示目录链接将被删除） | PrismService.UnlinkProject | snackbar；重载 Overview |
 
-### 5.4 meta 推送 / 拉取 / 差异（REQ-3.5）
+### 5.3 目录同步关联（DirLinksDialog / FileSelectDialog）
 
 | 操作 | UI 入口 | 前端逻辑 | 后端调用 | 反馈 |
 | --- | --- | --- | --- | --- |
-| 推送全部 | 关联行「推送 meta」 | — | `PrismService.PushMeta(project, '')` | snackbar `prism.metaPushed`（数量） |
-| 拉取全部 | 关联行「拉取 meta」 | 弹确认框（覆盖项目同名 pw.toml、移除 x-prismlauncher 字段与 download.url） | `PrismService.PullMeta(project, '')` | snackbar `prism.metaPulled`；**成功后自动 packwiz refresh（`RefreshProject`）→ `load()` 刷新本页 → `bumpProjectsVersion()` 通知项目页**；refresh 失败提示 `prism.metaRefreshFailed` |
-| 查看差异 | 关联行「查看差异」 | 打开对话框时**重新计算并刷新缓存**（每次查看都更新，不做实时监听） | `PrismService.MetaDiff(project)` | 差异对话框：标题显示计算时间 `prism.metaFetchedAt`；三区列表 |
-| 差异-单拉取 | 差异框「实例独有」每项「拉取」 | 弹确认框（覆盖项目同名 pw.toml） | `PrismService.PullMeta(project, modId)` | snackbar `prism.metaOneDone`；**自动 refresh + load() + bump + 刷新差异** |
-| 差异-单推送 | 差异框「项目独有」每项「推送」 | — | `PrismService.PushMeta(project, modId)` | snackbar `prism.metaOneDone`；刷新差异 |
-| 差异-版本对比 | 差异框「版本差异」区 | 只读展示：`项目 {pv} → 实例 {iv}` | — | — |
+| 打开管理框 | 关联行「同步目录」 | 载入已关联目录 + 候选目录（已添加剔除），两个查询并发 | ListDirLinks + ListProjectDirs | 目录行：模式 chip（整目录/文件级）+ 目标路径 |
+| 添加目录 | 候选下拉 + 添加 | — | PrismService.AddDirLink | snackbar；刷新 |
+| 移除目录 | 目录行「移除」 | — | PrismService.RemoveDirLink | snackbar；刷新 |
+| 一键关联 | 「一键关联全部」 | 先查 .pgignore：缺失弹三选询问（生成并继续 / 不生成直接关联 / 取消） | HasPGIgnore → EnsurePGIgnore（可选）→ CreateAllLinks | 结果列表按状态 chip；snackbar 统计 |
+| 手动链接 | 目录行「手动链接」（整目录模式） | ConfirmDialog 确认复制并入后建链 | PrismService.ManualLinkDir | snackbar / detail 错误展示 |
+| 模式切换 | 目录行「切换为文件级/整目录同步」 | — | PrismService.SetDirLinkMode | snackbar；刷新 |
+| 选择同步文件 | 目录行「选择同步文件」（文件级） | FileSelectDialog：实例侧文件列表 + 当前勾选；全选/清空/逐项勾选 | PrismService.ListInstanceDirFiles | 文件选择弹窗 |
+| 保存勾选 | 弹窗「保存」 | 勾选文件移动到项目目录后硬链接回实例侧 | PrismService.SelectInstanceFiles | snackbar 成功/跳过；emit changed → 父级刷新 |
 
-**差异三区定义**（`MetaDiff`）：`instance_only`（实例 `mods/.index` 有、项目 index.toml 无，可拉取）/ `project_only`（项目有、实例无，可推送）/ `version_diff`（双端版本不一致，只读展示）。
+### 5.4 meta 差异三区（MetaDiff）
 
-## 6. 确认/引导对话框清单
+instance_only（实例有、项目无，可拉取）/ project_only（项目有、实例无，可推送）/ version_diff（双端版本不一致，只读展示）。差异每次查看时重算并写入 .cache/metadiff.cache，不做实时监听。
 
-| 对话框 | 所属视图 | 触发条件 | 选项与结果 |
+## 6. 设置（/settings）
+
+| 操作 | UI 入口 | 前端逻辑 | 后端调用 | 反馈 |
+| --- | --- | --- | --- | --- |
+| 检测工具 | 进入页面 / 刷新 | 结果走 stores/env 缓存（工作台同源） | EnvService.Detect | 工具卡：状态 chip（已配置/未加入 PATH/未检测到）+ 来源提示；有工具未找到弹引导框（会话内一次） |
+| 一键配置 PATH | 页头「一键配置环境变量」 | 仅当存在已找到的工具时可用 | EnvService.Configure | snackbar 新增目录 / 无变化；返回后更新缓存 |
+| 手动指定路径 | 工具卡输入框（浏览 / 保存 / 回车） | 空串清除 | EnvService.SetToolPath | snackbar；更新缓存 |
+| API Key | API Key 卡（明文切换 / 保存 / 回车） | 空串清除 | EnvService.SetApiKey | snackbar 已保存 / 已清除；工作台健康卡联动 |
+
+## 7. 对话框清单
+
+| 对话框 | 所属 | 触发条件 | 选项与结果 |
 | --- | --- | --- | --- |
-| 缺失工具引导 | EnvView | 检测后存在未找到的工具（会话内仅一次） | 取消：本次会话不再提示；保存：逐个保存路径 |
-| 移除项目确认 | ProjectsView | 点击删除图标 | 取消 / 确认删除并刷新列表 |
-| 更新检查结果 | ProjectsView | 点击检查更新图标 | 查看结果；有可更新项时「应用全部更新」 |
-| 命令输出 | ProjectsView | refresh / 应用更新完成 | 展示 packwiz CLI 输出（可滚动 `<pre>`） |
-| API Key 引导 | ProjectsView（useApiKeyGuide） | CF 版本获取遇 `err.cf.api_key_missing` / `err.cf.unauthorized` | 关闭 / 「去配置」跳转环境页 |
-| 关联项目 | PrismView | 点击「关联项目」 | 选择项目+实例；支持程序创建实例 |
-| .pgignore 询问 | PrismView | 一键关联时项目无 `.pgignore` | 取消 / 不生成直接关联 / 生成默认规则后关联 |
-| 手动链接确认 | PrismView | 目录行点击「手动链接」 | 取消 / 确认复制并入并建链 |
-| 文件级同步选择 | PrismView | 目录行点击「选择同步文件」 | 全选/清空/勾选后保存（保存即移动并入+硬链接） |
-| 拉取 meta 确认 | PrismView | 关联行「拉取 meta」 | 取消 / 确认拉取全部 |
-| 单拉取确认 | PrismView | 差异框「实例独有」项点「拉取」 | 取消 / 确认拉取单个 |
-| meta 差异 | PrismView | 关联行「查看差异」 | 查看三区；实例独有项可单拉取、项目独有项可单推送；关闭 |
+| 缺失工具引导 | Settings | 检测后存在未找到的工具（会话内一次） | 取消 / 逐个保存路径 |
+| API Key 引导 | App（应用级） | CF 版本获取遇 err.cf.api_key_missing / unauthorized | 关闭 / 去设置页 |
+| 移除项目确认 | Projects / ProjectDetail | 移除操作 | 取消 / 确认移除（仅注册表） |
+| 更新检查结果 | CheckUpdatesDialog | 检查更新 | 单 mod 更新 / 应用全部 / 关闭；输出内嵌展示 |
+| 命令输出 | OutputDialog | packwiz refresh | 展示 CLI 输出 |
+| 关联项目 | LinkDialog | 点击关联项目 | 选项目 + 实例（自动匹配）/ 程序创建实例 / 关联 |
+| .pgignore 询问 | DirLinksDialog | 一键关联时项目无 .pgignore | 取消 / 不生成直接关联 / 生成后关联 |
+| 手动链接确认 | DirLinksDialog | 目录行手动链接 | 取消 / 确认复制并入并建链 |
+| 文件级同步选择 | FileSelectDialog | 目录行选择同步文件 | 全选/清空/勾选后保存 |
+| 拉取 meta 确认 | Instances | 关联行拉取 meta | 取消 / 确认拉取全部 |
+| 单拉取确认 | MetaDiffDialog | 差异「实例独有」项拉取 | 取消 / 确认拉取单个 |
+| meta 差异 | MetaDiffDialog | 查看差异 | 三区查看 + 逐项推送/拉取 + 刷新 |
+| 解除关联确认 | Instances | 关联行解除 | 取消 / 确认解除（删除已建链接） |
 
-## 7. 错误处理路径
+## 8. 错误处理路径
 
 | 路径 | 场景 | 处理 |
 | --- | --- | --- |
-| `errText(e)` | Wails 调用异常 | 解析 `e.cause` 中的错误码 JSON → i18n 翻译（缺失键返回键名便于发现遗漏）；非结构化错误取 message |
-| `displayText(s)` | 数据字段中的错误文本 | 错误码 JSON → 翻译；packwiz CLI 输出等原样展示（`LinkResult.Detail` 也用此路径） |
-| `handleError(e, show)` | CF 版本获取 | API Key 错误码弹引导框，其余 snackbar |
+| errText(e) | Wails 调用异常 | 解析 e.cause 错误码 JSON → i18n 翻译；非结构化取 message |
+| displayText(s) | 数据字段中的错误文本 | 错误码 JSON → 翻译；packwiz CLI 输出原样展示 |
+| handleApiKeyError(e) | CF 版本获取 | API Key 错误码弹应用级引导，其余走全局 snackbar |
 
-## 8. 注意点（原型阶段）
+## 9. 注意点
 
-- meta 拉取依赖 packwiz CLI 的 `refresh` 使 index.toml 收录新 pw.toml（差异以 index.toml 为权威）；refresh 失败仅提示不阻断。
-- 差异计算为「查看时重算 + 刷新 `.cache/metadiff.cache`」，无实时监听（性能考虑）；跨会话/跨进程读取可依赖缓存文件。
-- 单 mod 版本获取成功后为就地更新行数据，不触发整表刷新；批量获取则整表刷新。
-- 前端所有确认类交互已规避 Wails 原生 `Dialogs.Question`（构建版挂起），仅 `Dialogs.OpenFile` 可用。
-- `openFileSelect` / `openDirLinks` / `loadProjects` 等前置查询缺少 `catch`：异常时无用户提示（unhandled rejection），原型阶段待补。
+- meta 拉取依赖 packwiz CLI 的 refresh 使 index.toml 收录新 pw.toml（差异以 index.toml 为权威）；refresh 失败仅提示不阻断。
+- 差异计算为「查看时重算 + 刷新 .cache/metadiff.cache」，无实时监听。
+- 单 mod 版本获取成功后就地更新行数据；批量获取整表刷新。
+- 前端所有确认类交互已规避 Wails 原生 Dialogs.Question，仅 Dialogs.OpenFile 可用。
+- 后端 37 方法契约本次未改动（工作台用四个既有调用并发组装；单 mod 更新复用 UpdateMods 非空分支）。
+- 新增页面：在 router/index.ts 注册路由并写 meta（titleKey/icon）即可自动出现在侧栏与顶栏标题。

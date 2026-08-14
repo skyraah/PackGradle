@@ -1,0 +1,73 @@
+/* PackGradle 全局样式：仅应用级外壳与滚动条，组件样式一律走 Vuetify 类。 */
+
+html,
+body {
+    margin: 0;
+    padding: 0;
+}
+
+/* 桌面应用质感：默认禁止文本选择（输入控件除外） */
+body {
+    overflow: hidden;
+    user-select: none;
+    -webkit-user-select: none;
+}
+
+input,
+textarea {
+    user-select: text;
+    -webkit-user-select: text;
+}
+
+/* Wails v3 窗口拖拽：--wails-draggable 继承，拖拽区内部不要放交互控件 */
+.app-drag {
+    --wails-draggable: drag;
+}
+
+.app-no-drag {
+    --wails-draggable: no-drag;
+}
+
+/* 顶栏与侧栏的描边 */
+.shell-bar {
+    border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.shell-drawer {
+    border-right: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+/* 细滚动条 */
+::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+}
+
+::-webkit-scrollbar-track {
+    background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+    background: rgba(255, 255, 255, 0.12);
+    border-radius: 8px;
+    border: 2px solid transparent;
+    background-clip: content-box;
+}
+
+::-webkit-scrollbar-thumb:hover {
+    background-color: rgba(255, 255, 255, 0.22);
+    background-clip: content-box;
+}
+
+/* 可点击卡片：悬浮微抬升 + 主色描边 */
+.hover-card {
+    cursor: pointer;
+    transition:
+        transform 0.12s ease,
+        border-color 0.12s ease;
+}
+
+.hover-card:hover {
+    transform: translateY(-2px);
+    border-color: rgba(74, 222, 128, 0.4) !important;
+}

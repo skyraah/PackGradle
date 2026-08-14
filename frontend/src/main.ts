@@ -1,20 +1,12 @@
 import { createApp } from 'vue'
 
-import 'vuetify/styles'
 import '@mdi/font/css/materialdesignicons.css'
-import { createVuetify } from 'vuetify'
-import * as components from 'vuetify/components'
-import * as directives from 'vuetify/directives'
+import '@fontsource/roboto'
+import './assets/main.css'
 
 import App from './App.vue'
 import i18n from './i18n'
+import router from './router'
+import vuetify from './plugins/vuetify'
 
-const vuetify = createVuetify({
-    components,
-    directives,
-    theme: {
-        defaultTheme: 'dark',
-    },
-})
-
-createApp(App).use(i18n).use(vuetify).mount('#app')
+createApp(App).use(i18n).use(vuetify).use(router).mount('#app')
