@@ -1,14 +1,15 @@
 <script setup lang="ts">
-// meta 差异对话框：每次打开重新计算并刷新缓存，三区展示（实例独有/项目独有/版本差异），
-// 支持逐 mod 拉取/推送；拉取成功后自动 packwiz refresh + 全端缓存失效。
+// meta 差异对话框：三区展示（实例独有/项目独有/版本差异），全部可操作闭环。
+// 单 mod 拉取保留确认；操作后经任务中心，拉取后自动 refresh + 全端缓存失效。
 import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { PrismService, PackwizService } from '../../../bindings/packgradle/internal/service'
+import { PackwizService, PrismService } from '../../api'
 import type { MetaDiff } from '../../../bindings/packgradle/internal/prism'
 import { bumpProjectsVersion, invalidateProjects } from '../../stores/projects'
 import { loadOverview } from '../../stores/instances'
+import { runTask } from '../../stores/taskCenter'
 import { showSnackbar } from '../../stores/ui'
-import { errText } from '../../utils/errors'
+import { displayText, errText } from '../../utils/errors'
 import ConfirmDialog from '../common/ConfirmDialog.vue'
 
 const { t } = useI18n()
@@ -24,9 +25,10 @@ const emit = defineEmits<{
 
 const diff = ref<MetaDiff | null>(null)
 const loading = ref(false)
-const diffBusy = ref('') // 单操作中的 mod id
+const diffBusy = ref('')
 const pullOneDialog = ref(false)
 const pullOneTarget = ref('')
+const pullOneError = ref('')
 
 watch(
     () => props.modelValue,
@@ -35,11 +37,12 @@ watch(
     },
 )
 
-async function refreshDiff() {
+async function refreshDiff(propagateError = false) {
     loading.value = true
     try {
         diff.value = await PrismService.MetaDiff(props.project)
     } catch (e) {
+        if (propagateError) throw e
         showSnackbar(errText(e))
     } finally {
         loading.value = false
@@ -48,25 +51,42 @@ async function refreshDiff() {
 
 function askPullOne(id: string) {
     pullOneTarget.value = id
+    pullOneError.value = ''
     pullOneDialog.value = true
 }
 
 async function confirmPullOne() {
     const id = pullOneTarget.value
-    if (!id) return
-    pullOneDialog.value = false
-    pullOneTarget.value = ''
+    if (!id || diffBusy.value) return
     diffBusy.value = id
+    pullOneError.value = ''
+    let refreshFailed = false
     try {
-        await PrismService.PullMeta(props.project, id)
-        showSnackbar(t('prism.metaOneDone', [t('prism.metaPullOne'), id]))
-        await refreshProjectIndex()
-        await loadOverview(true) // 刷新实例/关联列表
-        bumpProjectsVersion() // 拉取改变了项目 mods，通知项目页刷新
-        invalidateProjects() // 共享项目缓存失效
-        await refreshDiff()
-    } catch (e) {
-        showSnackbar(errText(e))
+        const result = await runTask({
+            title: t('tasks.metaPullOne', [id]),
+            kind: 'meta',
+            run: async () => {
+                await PrismService.PullMeta(props.project, id)
+                try {
+                    const refreshed = await PackwizService.RefreshProject(props.project)
+                    if (!refreshed.ok) throw new Error(displayText(refreshed.output))
+                    await loadOverview(true)
+                    await refreshDiff(true)
+                } catch (e) {
+                    refreshFailed = true
+                    showSnackbar(errText(e), 'warning')
+                }
+                bumpProjectsVersion()
+                invalidateProjects()
+                return t('prism.metaOneDone', [t('prism.metaPullOne'), id])
+            },
+            warn: () => refreshFailed,
+            onError: message => (pullOneError.value = message),
+        })
+        if (result !== null) {
+            pullOneDialog.value = false
+            pullOneTarget.value = ''
+        }
     } finally {
         diffBusy.value = ''
     }
@@ -74,27 +94,25 @@ async function confirmPullOne() {
 
 async function pushOne(id: string) {
     diffBusy.value = id
+    let refreshFailed = false
     try {
-        await PrismService.PushMeta(props.project, id)
-        showSnackbar(t('prism.metaOneDone', [t('prism.metaPushOne'), id]))
-        await refreshDiff()
-    } catch (e) {
-        showSnackbar(errText(e))
+        await runTask({
+            title: t('tasks.metaPushOne', [id]),
+            kind: 'meta',
+            run: async () => {
+                await PrismService.PushMeta(props.project, id)
+                try {
+                    await refreshDiff(true)
+                } catch (e) {
+                    refreshFailed = true
+                    showSnackbar(errText(e), 'warning')
+                }
+                return t('prism.metaOneDone', [t('prism.metaPushOne'), id])
+            },
+            warn: () => refreshFailed,
+        })
     } finally {
         diffBusy.value = ''
-    }
-}
-
-// refreshProjectIndex 执行 packwiz refresh 收录新拉取的 pw.toml（差异以 index.toml 为权威）。
-// 失败时提示，不阻断主流程。
-async function refreshProjectIndex() {
-    try {
-        const result = await PackwizService.RefreshProject(props.project)
-        if (result && !result.ok) {
-            showSnackbar(t('prism.metaRefreshFailed'))
-        }
-    } catch (e) {
-        showSnackbar(t('prism.metaRefreshFailed') + ': ' + errText(e))
     }
 }
 
@@ -104,7 +122,6 @@ function diffFetchedText(): string {
     return t('prism.metaFetchedAt', [ts])
 }
 
-// 差异三区（模板安全访问：null 时为空数组）
 const diffInstanceOnly = computed(() => diff.value?.instance_only ?? [])
 const diffProjectOnly = computed(() => diff.value?.project_only ?? [])
 const diffVersionDiff = computed(() => diff.value?.version_diff ?? [])
@@ -115,7 +132,7 @@ const hasDiff = computed(
 
 <template>
     <v-dialog :model-value="modelValue" max-width="680" @update:model-value="emit('update:modelValue', $event)">
-        <v-card elevation="8">
+        <v-card class="dialog-card" elevation="8">
             <v-card-title class="d-flex align-center pt-5">
                 <v-icon icon="mdi-compare-horizontal" color="primary" class="mr-2" />
                 {{ t('prism.metaDiffTitle') }}
@@ -165,7 +182,7 @@ const hasDiff = computed(
                             </template>
                         </v-list-item>
 
-                        <!-- 版本差异 -->
+                        <!-- 版本差异：可操作（拉取以实例为准 / 推送以项目为准） -->
                         <v-list-subheader v-if="diffVersionDiff.length > 0" class="text-caption text-warning">
                             {{ t('prism.metaDiffVersionDiff') }}（{{ diffVersionDiff.length }}）
                         </v-list-subheader>
@@ -175,7 +192,33 @@ const hasDiff = computed(
                             density="compact"
                             :title="v.id"
                             :subtitle="t('prism.metaVersionDiffText', [v.project_version, v.instance_version])"
-                        />
+                        >
+                            <template #append>
+                                <v-btn
+                                    size="small"
+                                    variant="text"
+                                    class="mr-1"
+                                    prepend-icon="mdi-arrow-down-bold-outline"
+                                    :loading="diffBusy === v.id"
+                                    :disabled="diffBusy !== ''"
+                                    :title="t('prism.metaPullTip')"
+                                    @click="askPullOne(v.id)"
+                                >
+                                    {{ t('prism.metaPullOne') }}
+                                </v-btn>
+                                <v-btn
+                                    size="small"
+                                    variant="text"
+                                    prepend-icon="mdi-arrow-up-bold-outline"
+                                    :loading="diffBusy === v.id"
+                                    :disabled="diffBusy !== ''"
+                                    :title="t('prism.metaPushTip')"
+                                    @click="pushOne(v.id)"
+                                >
+                                    {{ t('prism.metaPushOne') }}
+                                </v-btn>
+                            </template>
+                        </v-list-item>
                     </div>
                     <div v-else class="text-body-2 text-medium-emphasis py-6 text-center">
                         <v-icon icon="mdi-check-circle-outline" color="success" size="32" class="mb-2" />
@@ -188,15 +231,19 @@ const hasDiff = computed(
                 <v-btn variant="tonal" @click="emit('update:modelValue', false)">{{ t('common.close') }}</v-btn>
             </v-card-actions>
         </v-card>
-    </v-dialog>
 
-    <!-- 单 mod 拉取确认 -->
-    <ConfirmDialog
-        v-model="pullOneDialog"
-        :title="t('prism.metaPullOneConfirmTitle')"
-        :text="t('prism.metaPullOneConfirmText', [pullOneTarget])"
-        :confirm-text="t('prism.metaPullOne')"
-        icon="mdi-alert-outline"
-        @confirm="confirmPullOne"
-    />
+        <!-- 单 mod 拉取确认（后果说明） -->
+        <ConfirmDialog
+            v-model="pullOneDialog"
+            :title="t('prism.metaPullOneConfirmTitle')"
+            :text="t('prism.metaPullOneConfirmText', [pullOneTarget])"
+            :consequences="[t('prism.metaPullC1'), t('prism.metaPullC3')]"
+            :confirm-text="t('prism.metaPullOne')"
+            icon="mdi-arrow-down-bold-outline"
+            icon-color="primary"
+            :loading="diffBusy === pullOneTarget && pullOneTarget !== ''"
+            :error="pullOneError"
+            @confirm="confirmPullOne"
+        />
+    </v-dialog>
 </template>

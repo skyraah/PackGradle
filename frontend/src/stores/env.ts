@@ -1,18 +1,31 @@
 // 环境配置缓存：工具检测结果与 CurseForge API Key。
-// 工作台与设置页共用，设置页保存后直接更新缓存，工作台立即可见。
 import { ref } from 'vue'
-import { EnvService } from '../../bindings/packgradle/internal/service'
+import { EnvService } from '../api'
 import type { ToolInfo } from '../../bindings/packgradle/internal/service'
 
 const tools = ref<ToolInfo[]>([])
 const loaded = ref(false)
 let inflight: Promise<ToolInfo[]> | null = null
-let refreshAfterInflight = false
+let queuedRefresh: Promise<ToolInfo[]> | null = null
 
 export async function loadTools(force = false): Promise<ToolInfo[]> {
     if (!force && loaded.value) return tools.value
     if (inflight) {
-        if (force) refreshAfterInflight = true
+        if (force) {
+            if (!queuedRefresh) {
+                const current = inflight
+                queuedRefresh = current
+                    .catch(() => tools.value)
+                    .then(() => {
+                        if (inflight === current) inflight = null
+                        return loadTools(true)
+                    })
+                    .finally(() => {
+                        queuedRefresh = null
+                    })
+            }
+            return queuedRefresh
+        }
         return inflight
     }
     const task = EnvService.Detect().then(list => {
@@ -26,10 +39,6 @@ export async function loadTools(force = false): Promise<ToolInfo[]> {
     } finally {
         if (inflight === task) {
             inflight = null
-            if (refreshAfterInflight) {
-                refreshAfterInflight = false
-                void loadTools(true).catch(() => {})
-            }
         }
     }
 }
@@ -47,10 +56,16 @@ export async function loadApiKey(): Promise<string> {
     return apiKey.value
 }
 
+// 保存 API Key：成功后才写缓存，避免脏值污染全局状态
+export async function saveApiKey(key: string): Promise<void> {
+    await EnvService.SetApiKey(key)
+    apiKey.value = key
+}
+
 export function setApiKeyValue(v: string) {
     apiKey.value = v
 }
 
 export function useEnv() {
-    return { tools, apiKey, loaded, loadTools, setTools, loadApiKey, setApiKeyValue }
+    return { tools, apiKey, loaded, loadTools, setTools, loadApiKey, saveApiKey, setApiKeyValue }
 }

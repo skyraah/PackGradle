@@ -3,8 +3,7 @@
 // 保存 = 勾选文件移动到项目目录并硬链接回实例侧。
 import { ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { PrismService } from '../../../bindings/packgradle/internal/service'
-import type { LinkResult } from '../../../bindings/packgradle/internal/prism'
+import { PrismService } from '../../api'
 import { showSnackbar } from '../../stores/ui'
 import { errText } from '../../utils/errors'
 
@@ -20,7 +19,6 @@ const props = defineProps<{
 
 const emit = defineEmits<{
     (e: 'update:modelValue', v: boolean): void
-    /** 保存成功，父级应刷新目录关联列表 */
     (e: 'changed'): void
 }>()
 
@@ -28,14 +26,18 @@ const loading = ref(false)
 const saving = ref(false)
 const allFiles = ref<string[]>([])
 const selectedFiles = ref<string[]>([])
+const targetProject = ref('')
+const targetDir = ref('')
 
 watch(
     () => props.modelValue,
     async open => {
         if (!open) return
+        targetProject.value = props.project
+        targetDir.value = props.dir
         loading.value = true
         try {
-            allFiles.value = (await PrismService.ListInstanceDirFiles(props.project, props.dir)) ?? []
+            allFiles.value = (await PrismService.ListInstanceDirFiles(targetProject.value, targetDir.value)) ?? []
             selectedFiles.value = [...props.files]
         } catch (e) {
             showSnackbar(errText(e))
@@ -55,19 +57,13 @@ function toggleFile(f: string, checked: boolean | null) {
 }
 
 async function save() {
+    if (saving.value) return
     saving.value = true
     try {
-        const results =
-            (await PrismService.SelectInstanceFiles(props.project, props.dir, selectedFiles.value)) ?? []
+        const results = (await PrismService.SelectInstanceFiles(targetProject.value, targetDir.value, selectedFiles.value)) ?? []
         const ok = results.filter(r => r.status === 'linked').length
         const skipped = results.filter(r => r.status === 'skipped').length
-        const failed = results.filter(r => r.status === 'error').length
-        if (failed > 0) {
-            const detail = (results.find(r => r.status === 'error') as LinkResult | undefined)?.detail
-            showSnackbar(t('prism.dirLinkSelectDoneWithErrors', [ok, skipped, failed, detail ? ' ' + detail : '']))
-        } else {
-            showSnackbar(t('prism.dirLinkSelectDone', [ok, skipped]))
-        }
+        showSnackbar(t('prism.dirLinkSelectDone', [ok, skipped]), 'success')
         emit('changed')
         emit('update:modelValue', false)
     } catch (e) {
@@ -76,18 +72,23 @@ async function save() {
         saving.value = false
     }
 }
+
+function updateOpen(v: boolean) {
+    if (!v && saving.value) return
+    emit('update:modelValue', v)
+}
 </script>
 
 <template>
-    <v-dialog :model-value="modelValue" max-width="560" @update:model-value="emit('update:modelValue', $event)">
-        <v-card elevation="8">
+    <v-dialog :model-value="modelValue" :persistent="saving" max-width="560" @update:model-value="updateOpen">
+        <v-card class="dialog-card" elevation="8">
             <v-card-title class="d-flex align-center pt-5">
                 <v-icon icon="mdi-file-check-outline" color="primary" class="mr-2" />
-                {{ t('prism.dirLinkFilesTitle') }} · {{ dir }}
+                {{ t('prism.dirLinkFilesTitle') }} · {{ targetDir }}
             </v-card-title>
             <v-card-text>
                 <div class="text-body-2 text-medium-emphasis mb-3">
-                    {{ t('prism.dirLinkFilesHint', [dir]) }}
+                    {{ t('prism.dirLinkFilesHint', [targetDir]) }}
                 </div>
                 <div class="d-flex align-center mb-2 ga-2">
                     <v-btn size="small" variant="tonal" @click="selectedFiles = [...allFiles]">
@@ -120,7 +121,7 @@ async function save() {
             </v-card-text>
             <v-card-actions class="px-5 pb-4">
                 <v-spacer />
-                <v-btn variant="text" @click="emit('update:modelValue', false)">{{ t('prism.linkCancel') }}</v-btn>
+                <v-btn variant="text" :disabled="saving" @click="updateOpen(false)">{{ t('prism.linkCancel') }}</v-btn>
                 <v-btn color="primary" variant="flat" :loading="saving" @click="save">{{ t('common.save') }}</v-btn>
             </v-card-actions>
         </v-card>
@@ -129,7 +130,7 @@ async function save() {
 
 <style scoped>
 .file-list {
-    border: 1px solid rgba(255, 255, 255, 0.08);
-    border-radius: 10px;
+    border: 1px solid var(--pg-border);
+    border-radius: 12px;
 }
 </style>

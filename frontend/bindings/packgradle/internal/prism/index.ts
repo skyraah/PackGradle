@@ -7,5 +7,6 @@ export type {
     LinkResult,
     LinkView,
     MetaDiff,
+    ModsWatchEvent,
     VersionDiffItem
 } from "./models.js";

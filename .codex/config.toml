@@ -1,0 +1,23 @@
+[features]
+multi_agent = true
+
+[agents]
+max_threads = 4
+max_depth = 1
+job_max_runtime_seconds = 1800
+
+[agents.frontend_product]
+description = "实现和评审 PackGradle 的 Vue/Vuetify 产品界面、交互流程、状态管理与 i18n；前端任务优先委派。"
+config_file = "agents/frontend_product.toml"
+
+[agents.contract_integrator]
+description = "维护 Go 服务、Wails DTO/事件、生成 bindings 与前端 API 之间的契约一致性；跨端接口变更优先委派。"
+config_file = "agents/contract_integrator.toml"
+
+[agents.test_engineer]
+description = "设计并执行 Go/前端回归测试，检查边界条件、数据安全和未覆盖风险；功能完成后的独立验证优先委派。"
+config_file = "agents/test_engineer.toml"
+
+[agents.project_code_docs]
+description = "检查、实现和验证 PackGradle 仓库内的代码与文档；适合范围明确的通用维护、文档同步和低成本仓库扫描。"
+config_file = "agents/project-code-docs.toml"

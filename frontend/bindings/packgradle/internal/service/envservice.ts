@@ -20,6 +20,14 @@ import { Call as $Call, CancellablePromise as $CancellablePromise } from "@wails
 import * as $models from "./models.js";
 
 /**
+ * ConfigExists 判断全局 config.toml 是否已在磁盘上（首次运行检测，
+ * 前端据此决定是否弹出首次引导）。任何一次配置保存都会让文件出现。
+ */
+export function ConfigExists(): $CancellablePromise<boolean> {
+    return $Call.ByID(634800189);
+}
+
+/**
  * Configure 将检测到的工具所在目录写入用户级 PATH（幂等），
  * 返回配置后的最新检测结果与实际新增的目录列表（由前端渲染提示文案）
  */
@@ -39,6 +47,14 @@ export function Detect(): $CancellablePromise<$models.ToolInfo[] | null> {
  */
 export function GetApiKey(): $CancellablePromise<string> {
     return $Call.ByID(758417042);
+}
+
+/**
+ * MarkConfigCreated 立即将当前配置落盘（首次引导完成/跳过后调用），
+ * 使下次启动 ConfigExists 返回 true、不再重复引导。
+ */
+export function MarkConfigCreated(): $CancellablePromise<void> {
+    return $Call.ByID(3564884324);
 }
 
 /**

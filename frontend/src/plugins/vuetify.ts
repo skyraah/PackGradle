@@ -1,18 +1,18 @@
 // Vuetify 实例：主题与组件默认值集中在此。
-// 色板与控件形状贴近 Windows 11 Fluent，同时保留 Vuetify 的成熟交互行为。
+// PCL2 向视觉：高饱和强调色、圆润卡片、醒目的选中态与 chip 色块。
 import 'vuetify/styles'
 import { createVuetify } from 'vuetify'
 import * as components from 'vuetify/components'
 import * as directives from 'vuetify/directives'
 
 const dark = {
-    background: '#202020',
-    surface: '#2B2B2B',
-    'surface-bright': '#323232',
-    'surface-variant': '#393939',
-    'on-surface-variant': '#C8C8C8',
-    'on-background': '#FFFFFF',
-    'on-surface': '#FFFFFF',
+    background: '#1E1F24',
+    surface: '#26272E',
+    'surface-bright': '#2F3038',
+    'surface-variant': '#383943',
+    'on-surface-variant': '#C9CAD1',
+    'on-background': '#F2F3F5',
+    'on-surface': '#F2F3F5',
     primary: '#4CC2FF',
     'on-primary': '#00364E',
     secondary: '#C3A7FF',
@@ -28,24 +28,24 @@ const dark = {
 }
 
 const light = {
-    background: '#F3F3F3',
-    surface: '#FBFBFB',
+    background: '#F2F3F5',
+    surface: '#FFFFFF',
     'surface-bright': '#FFFFFF',
-    'surface-variant': '#EDEDED',
-    'on-surface-variant': '#5D5D5D',
-    'on-background': '#1B1B1B',
-    'on-surface': '#1B1B1B',
-    primary: '#0067C0',
+    'surface-variant': '#ECEEF2',
+    'on-surface-variant': '#5D616B',
+    'on-background': '#1B1D22',
+    'on-surface': '#1B1D22',
+    primary: '#0A84D6',
     'on-primary': '#FFFFFF',
     secondary: '#8764B8',
     'on-secondary': '#FFFFFF',
-    error: '#C42B1C',
+    error: '#D13438',
     'on-error': '#FFFFFF',
-    warning: '#9D5D00',
+    warning: '#986F0B',
     'on-warning': '#FFFFFF',
-    info: '#0067C0',
+    info: '#0A84D6',
     'on-info': '#FFFFFF',
-    success: '#0F7B0F',
+    success: '#107C10',
     'on-success': '#FFFFFF',
 }
 
@@ -60,11 +60,12 @@ export default createVuetify({
         },
     },
     defaults: {
-        VBtn: { rounded: 'md' },
-        VCard: { rounded: 'md', elevation: 0, border: 'sm' },
-        VChip: { rounded: 'sm' },
-        VListItem: { rounded: 'md' },
+        VBtn: { rounded: 'lg' },
+        VCard: { rounded: 'xl', elevation: 0, border: 'sm' },
+        VChip: { rounded: 'md' },
+        VListItem: { rounded: 'lg' },
         VMenu: { offset: 6 },
-        VTextField: { variant: 'outlined', rounded: 'md' },
+        VTextField: { variant: 'outlined', rounded: 'lg' },
+        VSelect: { variant: 'outlined', rounded: 'lg' },
     },
 })

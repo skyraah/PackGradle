@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 
 	"packgradle/internal/appconfig"
 	"packgradle/internal/errs"
@@ -20,6 +21,11 @@ import (
 type PrismService struct {
 	config    *appconfig.ConfigManager
 	junctions junction.Manager
+
+	// mods 目录实时监听（项目 mods ↔ 实例 mods/.index）
+	watchMu       sync.Mutex
+	modsWatch     *modsWatcher
+	emitModsEvent func(prism.ModsWatchEvent) // 测试注入用；nil = 走 Wails Event.Emit
 }
 
 func NewPrismService(config *appconfig.ConfigManager) *PrismService {
@@ -65,7 +71,11 @@ func (s *PrismService) SetInstancesPath(path string) error {
 	if path != "" && !fsutil.IsDir(path) {
 		return errs.New("err.prism.path_invalid", path)
 	}
-	return s.config.SetPrismInstancesPath(path)
+	if err := s.config.SetPrismInstancesPath(path); err != nil {
+		return err
+	}
+	s.refreshModsWatch()
+	return nil
 }
 
 // GetInstancesPath 返回用户手动指定的实例根目录（空串 = 未指定，走自动定位）
@@ -110,7 +120,7 @@ func (s *PrismService) LinkProject(projectName, instanceID string) error {
 	if err := s.ensureInstanceExists(instanceID); err != nil {
 		return err
 	}
-	return appconfig.WithProjectConfigLock(entry.Path, func() error {
+	err := appconfig.WithProjectConfigLock(entry.Path, func() error {
 		pc, err := appconfig.LoadProjectConfig(entry.Path)
 		if err != nil {
 			return err
@@ -124,6 +134,11 @@ func (s *PrismService) LinkProject(projectName, instanceID string) error {
 		pc.Instance = instanceID
 		return appconfig.SaveProjectConfig(entry.Path, pc)
 	})
+	if err != nil {
+		return err
+	}
+	s.refreshModsWatch()
+	return nil
 }
 
 // UnlinkProject 解除项目关联（连同其目录关联与已建链接）
@@ -132,7 +147,7 @@ func (s *PrismService) UnlinkProject(projectName string) error {
 	if !ok {
 		return errs.New("err.proj.not_found", projectName)
 	}
-	return appconfig.WithProjectConfigLock(entry.Path, func() error {
+	err := appconfig.WithProjectConfigLock(entry.Path, func() error {
 		pc, err := appconfig.LoadProjectConfig(entry.Path)
 		if err != nil {
 			return err
@@ -150,6 +165,11 @@ func (s *PrismService) UnlinkProject(projectName string) error {
 		pc.FileLinks = nil
 		return appconfig.SaveProjectConfig(entry.Path, pc)
 	})
+	if err != nil {
+		return err
+	}
+	s.refreshModsWatch()
+	return nil
 }
 
 // GetLinks 返回全部项目 ↔ 实例关联的组装视图（读取各项目 packgradle.toml，

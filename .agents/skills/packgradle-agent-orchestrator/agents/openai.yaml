@@ -1,0 +1,4 @@
+interface:
+  display_name: "PackGradle Agent Orchestrator"
+  short_description: "Route PackGradle work across constrained project agents"
+  default_prompt: "Use $packgradle-agent-orchestrator to select, dispatch, and constrain the right PackGradle project agents."

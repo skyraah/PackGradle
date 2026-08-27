@@ -236,3 +236,14 @@ export function SetInstancesPath(path: string): $CancellablePromise<void> {
 export function UnlinkProject(projectName: string): $CancellablePromise<void> {
     return $Call.ByID(3915257647, projectName);
 }
+
+/**
+ * WatchMods 让 mods 目录监听覆盖当前全部已关联项目（幂等，可重复调用）：
+ * 监听项目 <project>/mods 与实例 <instance>/minecraft/mods/.index，
+ * 任一侧变化后防抖执行一次 MetaDiff，并以 "packgradle:mods-diff"
+ * 事件将 prism.ModsWatchEvent 发到前端。
+ * 返回当前已进入监听的项目名（按名称排序）。
+ */
+export function WatchMods(): $CancellablePromise<string[] | null> {
+    return $Call.ByID(14188713);
+}

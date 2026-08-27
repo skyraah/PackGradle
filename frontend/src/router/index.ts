@@ -30,6 +30,13 @@ const projectDetail: RouteRecordRaw = {
     meta: { titleKey: 'nav.projectDetail' },
 }
 
+const dev: RouteRecordRaw = {
+    path: '/dev',
+    name: 'dev',
+    component: () => import('../views/DevView.vue'),
+    meta: { titleKey: 'nav.dev', icon: 'mdi-rocket-launch-outline' },
+}
+
 const instances: RouteRecordRaw = {
     path: '/instances',
     name: 'instances',
@@ -45,11 +52,15 @@ const settings: RouteRecordRaw = {
 }
 
 // 侧栏导航项（不含详情页等二级路由）
-export const navRoutes: RouteRecordRaw[] = [dashboard, projects, instances, settings]
+export const navRoutes: RouteRecordRaw[] = [dashboard, projects, dev, instances, settings]
 
 const router = createRouter({
     history: createWebHashHistory(),
     routes: [...navRoutes, projectDetail, { path: '/:pathMatch(.*)*', redirect: '/' }],
+    // 返回时恢复滚动位置（keep-alive 视图由组件自身状态保留）
+    scrollBehavior(_to, _from, savedPosition) {
+        return savedPosition ?? { top: 0 }
+    },
 })
 
 export default router

@@ -1,11 +1,12 @@
 <script setup lang="ts">
-// 关联项目对话框：选择 packwiz 项目 + Prism 实例（同名自动匹配），
-// 支持基于项目信息程序创建实例。
+// 关联项目对话框：选择 packwiz 项目 + Prism 实例（同名自动匹配），支持程序创建实例。
 import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { PrismService } from '../../../bindings/packgradle/internal/service'
+import { PrismService } from '../../api'
 import type { Instance } from '../../../bindings/packgradle/internal/prism'
 import { loadProjects, projects } from '../../stores/projects'
+import { loadOverview } from '../../stores/instances'
+import { runTask } from '../../stores/taskCenter'
 import { showSnackbar } from '../../stores/ui'
 import { errText } from '../../utils/errors'
 
@@ -18,7 +19,6 @@ const props = defineProps<{
 
 const emit = defineEmits<{
     (e: 'update:modelValue', v: boolean): void
-    /** 关联或创建实例成功，父级应刷新 Overview */
     (e: 'changed'): void
 }>()
 
@@ -27,10 +27,10 @@ const selInstance = ref('')
 const linking = ref(false)
 const creating = ref(false)
 const preparing = ref(false)
+const linkError = ref('')
 
 const linkableProjects = computed(() => projects.value.filter(p => !p.error))
 
-// 打开前强制刷新项目列表（排除解析失败的项目）
 watch(
     () => props.modelValue,
     async open => {
@@ -52,10 +52,10 @@ watch(
         }
         selProject.value = ''
         selInstance.value = ''
+        linkError.value = ''
     },
 )
 
-// 选择项目时自动匹配同名实例（不区分大小写）
 function matchInstance(projectName: string): string {
     const name = projectName.toLowerCase()
     return props.instances.find(i => i.id.toLowerCase() === name || i.name.toLowerCase() === name)?.id ?? ''
@@ -65,39 +65,74 @@ const matchedInstanceId = computed(() => (selProject.value ? matchInstance(selPr
 const matchHintVisible = computed(() => selProject.value !== '' && matchedInstanceId.value !== '')
 
 async function doLink() {
-    if (!selProject.value || !selInstance.value) return
+    const projectName = selProject.value
+    const instanceID = selInstance.value
+    if (!projectName || !instanceID || linking.value || creating.value) return
     linking.value = true
+    linkError.value = ''
+    let refreshFailed = false
     try {
-        await PrismService.LinkProject(selProject.value, selInstance.value)
-        showSnackbar(t('prism.linkCreated', [selProject.value, selInstance.value]))
-        emit('update:modelValue', false)
-        emit('changed')
-    } catch (e) {
-        showSnackbar(errText(e))
+        const result = await runTask({
+            title: t('tasks.link', [projectName, instanceID]),
+            kind: 'link',
+            run: async () => {
+                await PrismService.LinkProject(projectName, instanceID)
+                try {
+                    await loadOverview(true)
+                } catch (e) {
+                    refreshFailed = true
+                    showSnackbar(errText(e), 'warning')
+                }
+                return t('prism.linkCreated', [projectName, instanceID])
+            },
+            warn: () => refreshFailed,
+            onError: message => (linkError.value = message),
+        })
+        if (result !== null) {
+            emit('update:modelValue', false)
+            emit('changed')
+        }
     } finally {
         linking.value = false
     }
 }
 
 async function doCreateInstance() {
-    if (!selProject.value) return
+    const projectName = selProject.value
+    if (!projectName || creating.value || linking.value) return
     creating.value = true
     try {
-        const inst = await PrismService.CreateInstance(selProject.value)
-        showSnackbar(t('prism.instanceCreated', [inst.id]))
-        emit('changed') // 父级重扫实例列表
+        const inst = await PrismService.CreateInstance(projectName)
+        try {
+            await loadOverview(true)
+        } catch (e) {
+            showSnackbar(errText(e), 'warning')
+        }
+        showSnackbar(t('prism.instanceCreated', [inst.id]), 'success')
+        emit('changed')
         selInstance.value = inst.id
     } catch (e) {
-        showSnackbar(errText(e))
+        // 实例已存在/版本缺失等：后端结构化错误直接提示
+        showSnackbar(errText(e), 'error')
     } finally {
         creating.value = false
     }
 }
+
+function updateOpen(v: boolean) {
+    if (!v && (linking.value || creating.value)) return
+    emit('update:modelValue', v)
+}
 </script>
 
 <template>
-    <v-dialog :model-value="modelValue" max-width="560" @update:model-value="emit('update:modelValue', $event)">
-        <v-card elevation="8">
+    <v-dialog
+        :model-value="modelValue"
+        :persistent="linking || creating"
+        max-width="560"
+        @update:model-value="updateOpen"
+    >
+        <v-card class="dialog-card" elevation="8">
             <v-card-title class="d-flex align-center pt-5">
                 <v-icon icon="mdi-link-variant" color="primary" class="mr-2" />
                 {{ t('prism.linkDialogTitle') }}
@@ -113,6 +148,7 @@ async function doCreateInstance() {
                     density="comfortable"
                     hide-details="auto"
                     class="mb-4"
+                    :disabled="linking || creating"
                     @update:model-value="selInstance = matchedInstanceId"
                 />
                 <v-alert v-if="matchHintVisible" type="info" variant="tonal" density="compact" class="mb-3">
@@ -126,22 +162,26 @@ async function doCreateInstance() {
                     :label="t('prism.linkInstance')"
                     density="comfortable"
                     hide-details="auto"
+                    :disabled="linking || creating"
                 />
                 <div v-if="instances.length === 0" class="text-caption text-medium-emphasis mt-3">
                     {{ t('prism.createInstanceHint') }}
                 </div>
+                <v-alert v-if="linkError" type="error" variant="tonal" density="compact" class="mt-3">
+                    {{ linkError }}
+                </v-alert>
             </v-card-text>
             <v-card-actions class="px-5 pb-4">
-                <v-btn v-if="selProject" variant="tonal" :loading="creating" @click="doCreateInstance">
+                <v-btn v-if="selProject" variant="tonal" :loading="creating" :disabled="linking" @click="doCreateInstance">
                     {{ t('prism.createInstanceBtn') }}
                 </v-btn>
                 <v-spacer />
-                <v-btn variant="text" @click="emit('update:modelValue', false)">{{ t('prism.linkCancel') }}</v-btn>
+                <v-btn variant="text" :disabled="linking || creating" @click="updateOpen(false)">{{ t('prism.linkCancel') }}</v-btn>
                 <v-btn
                     color="primary"
                     variant="flat"
                     :loading="linking"
-                    :disabled="!selProject || !selInstance"
+                    :disabled="creating || !selProject || !selInstance"
                     @click="doLink"
                 >
                     {{ t('prism.linkSubmit') }}

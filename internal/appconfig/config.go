@@ -77,6 +77,24 @@ func NewConfigManagerAt(path string) *ConfigManager {
 	return &ConfigManager{path: path}
 }
 
+// Exists 判断配置文件是否已存在于磁盘。
+// 首次运行时磁盘上尚无 config.toml（只有首次保存才会写出），用于前端首次引导判定。
+func (m *ConfigManager) Exists() bool {
+	m.mu.Lock()
+	path := m.path
+	m.mu.Unlock()
+	_, err := os.Stat(path)
+	return err == nil
+}
+
+// EnsureCreated 将当前配置写盘（已存在时同样重写，内容为当前内存态）。
+// 供首次引导完成/跳过后落一个 config.toml，下次启动不再弹出引导。
+func (m *ConfigManager) EnsureCreated() error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.save()
+}
+
 // Get 返回当前配置的快照
 func (m *ConfigManager) Get() Config {
 	m.mu.Lock()

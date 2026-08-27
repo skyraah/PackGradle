@@ -1,29 +1,64 @@
 <script setup lang="ts">
+// 应用壳层（PCL2 骨架）：左侧常显 icon rail + 顶栏（品牌/页面标题/任务中心/联动状态/主题）。
+// rail 选中态 = 浅色底块 + 左侧亮条；顶栏 bell 打开任务中心抽屉（操作历史唯一权威）。
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { useRoute } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import { useTheme } from 'vuetify'
+import { Events, Window } from '@wailsio/runtime'
+import { isMockEnabled, setMockEnabled } from './api'
 import { navRoutes } from './router'
 import { useUi } from './stores/ui'
 import { useApiKeyGuide } from './stores/apiKeyGuide'
+import { runningCount, unseenCount } from './stores/taskCenter'
+import { overview } from './stores/instances'
+import TaskCenterDrawer from './components/common/TaskCenterDrawer.vue'
+import OnboardingDialog from './components/common/OnboardingDialog.vue'
+import ConfirmDialog from './components/common/ConfirmDialog.vue'
 
 const { t } = useI18n()
 const route = useRoute()
+const router = useRouter()
 const vuetifyTheme = useTheme()
 const { snackbar, snackbarMsg, snackbarTone, snackbarTimeout, dismissSnackbar } = useUi()
 const { apiKeyDialog, goConfigApiKey } = useApiKeyGuide()
-const rail = ref(localStorage.getItem('packgradle.navigation.rail') === 'true')
 
-watch(rail, value => {
-    localStorage.setItem('packgradle.navigation.rail', String(value))
-})
+// 无边框窗口：标题栏控件全部自绘，需跟踪最大化状态以切换图标并去除圆角
+const wailsWindow = Window
+const isMaximised = ref(false)
+wailsWindow.IsMaximised().then((v: boolean) => (isMaximised.value = v)).catch(() => {})
+const offMaximise = Events.On(Events.Types.Windows.WindowMaximise, () => (isMaximised.value = true))
+const offUnMaximise = Events.On(Events.Types.Windows.WindowUnMaximise, () => (isMaximised.value = false))
 
-const noticeIcon = computed(() => ({
-    info: 'mdi-information-outline',
-    success: 'mdi-check-circle-outline',
-    warning: 'mdi-alert-outline',
-    error: 'mdi-alert-circle-outline',
-})[snackbarTone.value])
+function syncMaximisedClass() {
+    document.documentElement.classList.toggle('window-maximised', isMaximised.value)
+}
+watch(isMaximised, syncMaximisedClass)
+onMounted(syncMaximisedClass)
+
+function minimiseWindow() {
+    wailsWindow.Minimise()
+}
+
+function toggleMaximiseWindow() {
+    wailsWindow.ToggleMaximise()
+}
+
+function closeWindow() {
+    wailsWindow.Close()
+}
+
+const taskDrawer = ref(false)
+
+const noticeIcon = computed(
+    () =>
+        (({
+            info: 'mdi-information-outline',
+            success: 'mdi-check-circle-outline',
+            warning: 'mdi-alert-outline',
+            error: 'mdi-alert-circle-outline',
+        }) as Record<string, string>)[snackbarTone.value] ?? 'mdi-information-outline',
+)
 
 let colorScheme: MediaQueryList | null = null
 
@@ -40,7 +75,13 @@ onMounted(() => {
 
 onBeforeUnmount(() => {
     colorScheme?.removeEventListener('change', applySystemTheme)
+    offMaximise?.()
+    offUnMaximise?.()
 })
+
+function toggleTheme() {
+    vuetifyTheme.global.name.value = vuetifyTheme.global.name.value === 'dark' ? 'light' : 'dark'
+}
 
 interface NavItem {
     path: string
@@ -48,7 +89,7 @@ interface NavItem {
     titleKey: string
 }
 
-// 侧栏导航项直接由路由表生成：新增页面注册路由即自动出现
+// rail 导航项由路由表生成
 const navItems: NavItem[] = []
 for (const r of navRoutes) {
     const meta = r.meta as { titleKey?: unknown; icon?: unknown } | undefined
@@ -72,19 +113,26 @@ const pageTitle = computed(() => {
         ? base + ' · ' + route.params.name
         : base
 })
+
+// 联动状态指示：Prism 定位正常 → 绿；失败/未加载 → 中性
+const prismOk = computed(() => !!overview.value && !overview.value.locate_error)
+const bellBadge = computed(() => unseenCount.value)
+
+// —— Mock 数据层指示：启用时顶栏亮紫色徽标，点击一键切回真实后端 ——
+const mockMode = ref(isMockEnabled())
+const mockDialog = ref(false)
+
+function confirmDisableMock() {
+    mockDialog.value = false
+    setMockEnabled(false)
+    setTimeout(() => window.location.reload(), 300)
+}
 </script>
 
 <template>
     <v-app>
         <v-app-bar flat height="52" color="surface" class="shell-bar">
-            <v-btn
-                icon="mdi-menu"
-                variant="text"
-                class="app-no-drag shell-menu"
-                :title="t('common.toggleNavigation')"
-                @click="rail = !rail"
-            />
-            <div class="brand-lockup">
+            <div class="brand-lockup app-no-drag">
                 <span class="brand-mark"><v-icon icon="mdi-hammer-wrench" size="18" /></span>
                 <span class="brand-name">PackGradle</span>
             </div>
@@ -92,38 +140,82 @@ const pageTitle = computed(() => {
             <div v-if="pageTitle" class="text-body-2 text-medium-emphasis page-title">{{ pageTitle }}</div>
             <!-- Wails 拖拽区：占据顶栏中部空白，内部不放交互控件 -->
             <div class="app-drag align-self-stretch" style="flex: 1 1 auto; min-width: 24px"></div>
-            <v-chip size="small" variant="tonal" prepend-icon="mdi-connection" class="mr-2 app-no-drag integration-chip">
-                {{ t('app.integration') }}
+
+            <!-- Mock 模式指示（点击一键切回真实后端） -->
+            <v-chip
+                v-if="mockMode"
+                size="small"
+                variant="flat"
+                color="secondary"
+                prepend-icon="mdi-flask"
+                class="mr-1 app-no-drag"
+                :title="t('app.mockBadgeTip')"
+                @click="mockDialog = true"
+            >
+                MOCK
             </v-chip>
+
+            <!-- 联动状态指示（可点击跳联动页） -->
+            <v-chip
+                size="small"
+                variant="tonal"
+                :color="prismOk ? 'success' : 'grey'"
+                prepend-icon="mdi-link-variant"
+                class="mr-1 app-no-drag integration-chip"
+                :title="t('app.integrationTip')"
+                @click="router.push('/instances')"
+            >
+                {{ prismOk ? t('app.integrationOk') : t('app.integrationIdle') }}
+            </v-chip>
+
+            <!-- 任务中心入口 -->
+            <v-badge :content="bellBadge" :model-value="bellBadge > 0" color="primary" offset-x="4" offset-y="4">
+                <v-btn icon variant="text" class="app-no-drag" :title="t('tasks.title')" @click="taskDrawer = true">
+                    <v-icon :icon="runningCount > 0 ? 'mdi-bell-ring-outline' : 'mdi-bell-outline'" />
+                </v-btn>
+            </v-badge>
+
+            <v-btn
+                icon
+                variant="text"
+                class="app-no-drag"
+                :title="t('common.toggleTheme')"
+                @click="toggleTheme"
+            >
+                <v-icon :icon="vuetifyTheme.global.name.value === 'dark' ? 'mdi-white-balance-sunny' : 'mdi-weather-night'" />
+            </v-btn>
+
+            <!-- 无边框窗口控制按钮 -->
+            <div class="window-controls app-no-drag">
+                <v-btn icon variant="text" size="small" :title="t('app.minimise')" @click="minimiseWindow">
+                    <v-icon icon="mdi-minus" size="18" />
+                </v-btn>
+                <v-btn icon variant="text" size="small" :title="isMaximised ? t('app.restore') : t('app.maximise')" @click="toggleMaximiseWindow">
+                    <v-icon :icon="isMaximised ? 'mdi-window-restore' : 'mdi-window-maximize'" size="18" />
+                </v-btn>
+                <v-btn icon variant="text" size="small" class="window-close-btn" :title="t('app.close')" @click="closeWindow">
+                    <v-icon icon="mdi-close" size="18" />
+                </v-btn>
+            </div>
         </v-app-bar>
 
-        <v-navigation-drawer v-model:rail="rail" rail-width="60" width="220" permanent class="shell-drawer">
-            <v-list nav density="comfortable" class="py-3 px-2">
-                <v-tooltip
+        <!-- 左侧 icon rail（PCL2 骨架，常显不可收起） -->
+        <v-navigation-drawer width="68" permanent class="shell-rail">
+            <div class="pt-3">
+                <div
                     v-for="item in navItems"
                     :key="item.path"
-                    :text="t(item.titleKey)"
-                    location="right"
-                    :disabled="!rail"
+                    class="rail-item"
+                    :class="{ 'rail-active': activePath === item.path }"
+                    role="button"
+                    tabindex="0"
+                    @click="router.push(item.path)"
+                    @keyup.enter="router.push(item.path)"
                 >
-                    <template v-slot:activator="{ props }">
-                        <v-list-item
-                            v-bind="props"
-                            :to="item.path"
-                            :active="activePath === item.path"
-                            :prepend-icon="item.icon"
-                            :title="t(item.titleKey)"
-                            class="nav-item"
-                            color="primary"
-                        />
-                    </template>
-                </v-tooltip>
-            </v-list>
-            <template #append>
-                <div v-if="!rail" class="px-4 pb-4">
-                    <div class="shell-caption text-caption text-medium-emphasis">{{ t('app.tagline') }}</div>
+                    <v-icon :icon="item.icon" size="24" />
+                    <span class="rail-label">{{ t(item.titleKey) }}</span>
                 </div>
-            </template>
+            </div>
         </v-navigation-drawer>
 
         <v-main class="shell-main">
@@ -134,6 +226,24 @@ const pageTitle = computed(() => {
                 </keep-alive>
             </router-view>
         </v-main>
+
+        <!-- 任务中心抽屉 -->
+        <TaskCenterDrawer v-model="taskDrawer" />
+
+        <!-- 首次引导（仅未检测到 config.toml 时弹出一次） -->
+        <OnboardingDialog />
+
+        <!-- Mock 切回确认 -->
+        <ConfirmDialog
+            v-model="mockDialog"
+            :title="t('mock.confirmTitle')"
+            :text="t('mock.confirmText')"
+            :consequences="[t('mock.cOff1')]"
+            :confirm-text="t('mock.disable')"
+            icon="mdi-flask"
+            icon-color="secondary"
+            @confirm="confirmDisableMock"
+        />
 
         <!-- API Key 引导（全局）：项目相关操作遇到 Key 错误时在此弹出 -->
         <v-dialog v-model="apiKeyDialog" max-width="480">

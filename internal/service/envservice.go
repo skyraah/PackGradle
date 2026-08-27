@@ -73,3 +73,18 @@ func (s *EnvService) GetApiKey() string {
 func (s *EnvService) SetApiKey(key string) error {
 	return s.config.SetApiKey(strings.TrimSpace(key))
 }
+
+// ConfigExists 判断全局 config.toml 是否已在磁盘上（首次运行检测，
+// 前端据此决定是否弹出首次引导）。任何一次配置保存都会让文件出现。
+func (s *EnvService) ConfigExists() bool {
+	return s.config.Exists()
+}
+
+// MarkConfigCreated 立即将当前配置落盘（首次引导完成/跳过后调用），
+// 使下次启动 ConfigExists 返回 true、不再重复引导。
+func (s *EnvService) MarkConfigCreated() error {
+	if s.config.Exists() {
+		return nil
+	}
+	return s.config.EnsureCreated()
+}
