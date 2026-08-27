@@ -1,3 +1,121 @@
+/* ————————————————————————————————————————————————
+ * shadcn-vue 迁移准备层（Tailwind v4）
+ * - 令牌取自 docs/frontend/workspace-ux-prototype.html（概念风格：祖母绿 + 深墨蓝）
+ * - .v-theme--dark 选择器：迁移期 Vuetify 未移除时，应用内元素也能命中暗色令牌
+ * - Vuetify 样式未进 CSS layer，优先级天然高于 Tailwind 的 base/utilities layer，
+ *   迁移期两者共存时现有页面不受影响；Vuetify 移除后此块即唯一主题源
+ * ———————————————————————————————————————————————— */
+@import "tailwindcss";
+@import "tw-animate-css";
+
+@custom-variant dark (&:where(.dark, .dark *));
+
+:root {
+    --radius: 0.625rem;
+
+    /* 概念风格 · 亮色 */
+    --background: #f2f5f9;
+    --foreground: #17202b;
+    --card: #ffffff;
+    --card-foreground: #17202b;
+    --popover: #ffffff;
+    --popover-foreground: #17202b;
+    --primary: #16a34a;
+    --primary-foreground: #ffffff;
+    --secondary: #edf1f6;
+    --secondary-foreground: #17202b;
+    --muted: #e3e9f0;
+    --muted-foreground: #5a6675;
+    --accent: #e3e9f0;
+    --accent-foreground: #17202b;
+    --destructive: #dc2626;
+    --destructive-foreground: #ffffff;
+    --border: rgba(15, 23, 42, 0.14);
+    --input: rgba(15, 23, 42, 0.14);
+    --ring: #16a34a;
+
+    /* 原型扩展令牌（迁移保真用：bg-surface-2 / text-faint / bg-tint-primary …） */
+    --surface-2: #edf1f6;
+    --surface-3: #e3e9f0;
+    --rail: #ffffff;
+    --faint: #8b95a3;
+    --tint-primary: rgba(22, 163, 74, 0.1);
+    --tint-success: rgba(22, 163, 74, 0.1);
+    --tint-warning: rgba(180, 83, 9, 0.11);
+    --tint-error: rgba(220, 38, 38, 0.09);
+}
+
+.dark,
+.v-theme--dark {
+    /* 概念风格 · 暗色（应用默认） */
+    --background: #1b212d;
+    --foreground: #e9edf3;
+    --card: #222a37;
+    --card-foreground: #e9edf3;
+    --popover: #2a3240;
+    --popover-foreground: #e9edf3;
+    --primary: #4ade80;
+    --primary-foreground: #052e16;
+    --secondary: #2a3240;
+    --secondary-foreground: #e9edf3;
+    --muted: #2a3240;
+    --muted-foreground: #9aa6b6;
+    --accent: #333c4c;
+    --accent-foreground: #e9edf3;
+    --destructive: #f87171;
+    --destructive-foreground: #ffffff;
+    --border: rgba(148, 163, 184, 0.14);
+    --input: rgba(148, 163, 184, 0.14);
+    --ring: #4ade80;
+
+    --surface-2: #2a3240;
+    --surface-3: #333c4c;
+    --rail: #121720;
+    --faint: #6c7787;
+    --tint-primary: rgba(74, 222, 128, 0.13);
+    --tint-success: rgba(74, 222, 128, 0.13);
+    --tint-warning: rgba(251, 191, 36, 0.13);
+    --tint-error: rgba(248, 113, 113, 0.13);
+}
+
+@theme inline {
+    --font-sans: 'Segoe UI Variable Text', 'Segoe UI', system-ui, 'Microsoft YaHei UI', 'Microsoft YaHei', sans-serif;
+
+    --color-background: var(--background);
+    --color-foreground: var(--foreground);
+    --color-card: var(--card);
+    --color-card-foreground: var(--card-foreground);
+    --color-popover: var(--popover);
+    --color-popover-foreground: var(--popover-foreground);
+    --color-primary: var(--primary);
+    --color-primary-foreground: var(--primary-foreground);
+    --color-secondary: var(--secondary);
+    --color-secondary-foreground: var(--secondary-foreground);
+    --color-muted: var(--muted);
+    --color-muted-foreground: var(--muted-foreground);
+    --color-accent: var(--accent);
+    --color-accent-foreground: var(--accent-foreground);
+    --color-destructive: var(--destructive);
+    --color-destructive-foreground: var(--destructive-foreground);
+    --color-border: var(--border);
+    --color-input: var(--input);
+    --color-ring: var(--ring);
+
+    --color-surface-2: var(--surface-2);
+    --color-surface-3: var(--surface-3);
+    --color-rail: var(--rail);
+    --color-faint: var(--faint);
+    --color-tint-primary: var(--tint-primary);
+    --color-tint-success: var(--tint-success);
+    --color-tint-warning: var(--tint-warning);
+    --color-tint-error: var(--tint-error);
+
+    --radius-sm: calc(var(--radius) - 4px);
+    --radius-md: calc(var(--radius) - 2px);
+    --radius-lg: var(--radius);
+    --radius-xl: calc(var(--radius) + 4px);
+}
+
 /* PackGradle application shell — PCL2-inspired design tokens & shell styles. */
 
 :root {

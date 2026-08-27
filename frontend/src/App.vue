@@ -36,6 +36,12 @@ function syncMaximisedClass() {
 watch(isMaximised, syncMaximisedClass)
 onMounted(syncMaximisedClass)
 
+// shadcn-vue 主题令牌依赖 html.dark，随 Vuetify 当前主题同步（迁移期两套主题并存）
+function syncDarkClass() {
+    document.documentElement.classList.toggle('dark', vuetifyTheme.current.value.dark)
+}
+watch(() => vuetifyTheme.current.value, syncDarkClass, { immediate: true })
+
 function minimiseWindow() {
     wailsWindow.Minimise()
 }
