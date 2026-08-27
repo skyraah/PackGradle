@@ -27,3 +27,11 @@ _Avoid_: 下线（易被理解为可逆）、冻结
 **legacy 识别（Legacy Recognition）**:
 新栈在扫描与重绑定预检中把旧 Junction/TOML 关联识别为 legacy 输入且不自动覆盖的探测语义；只有识别，没有对应 UI 工具。
 _Avoid_: legacy 迁移、legacy 工具（已取消，见 ADR-0001）
+
+**修订号（Revision）**:
+一条 Relation 的策略代次；创建时即第 1 代，仅随 MappingPolicy 修改递增，不在 UI 展示（内部一致性字段）。见 ADR-0002。
+_Avoid_: 版本（指关系时）、策略集版本
+
+**策略集版本（Policy Set Version）**:
+MappingPolicy 模板自身的版本（如 default-v1 的 1），随模板演进变化；与关系修订号无关。
+_Avoid_: 修订号（指模板时）
