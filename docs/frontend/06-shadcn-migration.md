@@ -1,7 +1,7 @@
 # 06 · shadcn-vue 全量迁移准备（2026-08-28 就绪）
 
 > 状态：**基础设施已就绪，尚未迁移任何页面**。Vuetify 4 与 shadcn-vue（Tailwind v4）共存，
-> 从任何新页面/新组件起都可以直接用 shadcn-vue；旧页面按本文第 5 节顺序逐页替换。
+> 新页面一律直接用 shadcn-vue；旧页面**不逐页迁移**，保持 Vuetify 现状直至切换发布整体删除（见第 5 节，依 [ADR-0001](../adr/0001-p1-frontend-cutover-and-legacy-retirement.md) 修订）。
 
 ## 1. 已就绪的设施
 
@@ -59,15 +59,14 @@
 | v-tooltip | `Tooltip` |
 | v-progress-linear/circular | `Progress` / 手写 |
 
-## 5. 建议迁移顺序
+## 5. 切换发布与拆除（2026-08-28 依 ADR-0001 修订）
 
-1. **新页面/新功能直接用 shadcn-vue**（零回归风险）。
-2. 通用组件：`src/components/common/*`（ConfirmDialog、EmptyState、PageHeader…）→ 逐个替换。
-3. 业务视图：Dashboard → Settings → Instances → Projects → ProjectDetail（按复杂度升序，每页迁完跑一遍真实项目验证）。
-4. 壳层 App.vue（rail/顶栏）最后替换，替换时移除 `syncDarkClass` 里的 Vuetify 依赖、保留 `html.dark` 机制。
-5. **收尾拆除**：卸载 `vuetify`、`@mdi/font`、`@fontsource/roboto`（如不再用）、`plugins/vuetify.ts`、main.css 中 `--pg-*` 与 v-* 覆盖样式、main.ts 的 vuetify 装载；`.v-theme--dark` 令牌选择器一并删除。
+1. **新页面/新功能一律 shadcn-vue**（`@/components/ui/*`）：`/workspaces` 系列、新设置页等全部如此，零回归风险。
+2. **旧页面保持 Vuetify 现状**：不再逐页迁移 shadcn，仅缺陷修复；通用组件（`src/components/common/*`）只为仍存活的页面按需替换。
+3. **切换发布 = 旧栈整体删除 + Vuetify 收尾拆除**：P1 验收通过的发布中删除旧路由/页面/旧 store/旧 mocks，同发布卸载 `vuetify`、`@mdi/font`、`@fontsource/roboto`（如不再用）、`plugins/vuetify.ts`、main.css 中 `--pg-*` 与 v-* 覆盖样式、main.ts 的 vuetify 装载、`.v-theme--dark` 令牌选择器，并移除 `syncDarkClass` 的 Vuetify 依赖、保留 `html.dark` 机制。
 
 ## 6. 验证
 
 - 类型 + 构建：`yarn build:dev`（vue-tsc + vite build）。
+- 切换发布验收（ADR-0001）：生产构建 dist 中无 mock 痕迹（`packgradle.mock` 等），mock 区块与 MOCK 徽标仅 `import.meta.env.DEV` 渲染。
 - 已验证（2026-08-28）：CLI 添加 button/badge 成功；`yarn build:dev` 通过；产物 CSS 含亮/暗两套令牌与 `dark:` 变体规则。
