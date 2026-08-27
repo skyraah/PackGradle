@@ -8,9 +8,10 @@
 | 目录 | 内容 |
 | --- | --- |
 | [backend/](./backend/) | Go 后端架构、暴露给前端的服务方法与返回结构、internal 包与工具集 |
-| [frontend/](./frontend/) | Vue 前端架构、路由、组件、stores/utils 工具集（含系统对话框封装） |
+| [frontend/](./frontend/) | 工作区 UX 设计基线与可交互原型（新信息架构） |
 | [contract/](./contract/) | 前后端通信契约：Wails 绑定机制、错误协议、全部 DTO 数据结构 |
 | [development/](./development/) | 前后端开发约定、构建 / 调试 / 发布流程 |
+| [archive/](./archive/) | 已归档的历史文档：旧前端交付文档、设计讨论实录、旧审查报告与旧工作日志（仅历史参考，不作为决策依据） |
 
 ## 后端文档
 
@@ -21,11 +22,11 @@
 
 ## 前端文档
 
-1. [前端总览与目录结构](./frontend/01-overview.md)
-2. [路由表](./frontend/02-routes.md)
-3. [组件清单（props / emits / 行为）](./frontend/03-components.md)
-4. [Stores、工具函数与系统对话框](./frontend/04-stores-and-utils.md)
-5. [工作区 UX 交互原型设计](./frontend/05-workspace-ux-prototype.md)
+1. [工作区 UX 交互原型设计（设计基线）](./frontend/05-workspace-ux-prototype.md)
+2. [工作区交互原型（可交互 HTML，Round 1 / P1）](./frontend/workspace-ux-prototype.html)
+3. [shadcn-vue 迁移指南](./frontend/06-shadcn-migration.md)
+
+> 旧版前端交付文档（总览/路由/组件/stores 与 UI_UX_REVIEW）、重设计讨论实录（docs.md）、旧审查报告与旧工作日志已移入 [archive/](./archive/)，仅作历史参考。
 
 ## 通信契约文档
 
@@ -46,8 +47,8 @@
 
 ## 重要事实速览
 
-- 技术栈：Go 1.25 + Wails v3（beta.7），Vue 3 + TypeScript + Vite + Vuetify 4 + vue-i18n + vue-router（hash 模式）。
-- 后端向 Wails 注册 3 个服务：`EnvService`（7 个方法）、`PackwizService`（8 个方法）、`PrismService`（25 个方法），共 40 个可调用方法。
-- 前后端按契约直连真实绑定：mock 层已移除，文件/目录选择经 `utils/dialogs.ts`（`Dialogs.OpenFile`）。
+- 技术栈：Go 1.25 + Wails v3（beta.7），Vue 3 + TypeScript + Vite + vue-i18n + vue-router（hash 模式）；UI 层正从 Vuetify 4 迁移到 shadcn-vue + Tailwind v4（共存规则见 [frontend/06-shadcn-migration.md](./frontend/06-shadcn-migration.md)），视觉基准为 [概念风格.pdf](./概念风格.pdf)。
+- 后端向 Wails 注册 4 个服务：`EnvService`（7 个方法）、`PackwizService`（8 个方法）、`PrismService`（26 个方法）+ 新架构 `SyncService`（11 个方法），共 52 个可调用方法。
+- 前后端经 `src/api` 门面按契约调用真实绑定；mock 层（`src/mocks` 内存库）保留，可经设置页开关 / 顶栏 MOCK 徽标一键切换；文件/目录选择经 `utils/dialogs.ts`（`Dialogs.OpenFile`）。
 - 错误只以 `err.*` 错误码从 Go 端传递，文案统一在 `frontend/src/locales/zh-CN.json`（414 个键，其中 65 个 `err.*`）。
 - 持久化位置：全局 `%AppData%\PackGradle\config.toml`；项目级 `<项目目录>\packgradle.toml`。

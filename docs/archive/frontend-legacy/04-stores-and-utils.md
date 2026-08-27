@@ -1,3 +1,5 @@
+> ⚠️ **已归档（2026-08-28）**：本文描述的是旧版前端（工作区架构之前的旧信息架构）。后续设计与决策请以 [工作区 UX 原型设计](../../frontend/05-workspace-ux-prototype.md)、[工作区交互原型](../../frontend/workspace-ux-prototype.html) 与 [架构文档](../../architecture/) 为准，本文仅作历史参考，不再维护。
+
 # 前端 Stores、工具函数与系统对话框
 
 ## 1. Stores（模块级共享状态）
