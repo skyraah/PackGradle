@@ -35,3 +35,15 @@ _Avoid_: 版本（指关系时）、策略集版本
 **策略集版本（Policy Set Version）**:
 MappingPolicy 模板自身的版本（如 default-v1 的 1），随模板演进变化；与关系修订号无关。
 _Avoid_: 修订号（指模板时）
+
+**能力（Feature）**:
+当前版本/平台实际实现的功能开关；`feature=false` 的动作不注册，前端不渲染入口。见 `docs/contract/03-p1-contract.md` §2.1。
+_Avoid_: 功能（指单动作时）
+
+**可用性（Availability）**:
+单动作在当前工作区状态下的可执行性，由后端推导并携带原因码，前端不得自行推断。见 `docs/contract/03-p1-contract.md` §2.1。
+_Avoid_: 权限、是否可点
+
+**重绑（Rebind）**:
+把关系一端的根路径替换为新端点（Prepare 预检 + Apply 执行）；P1 下 Apply 后不继承基线、重走初始化，等价证明留 Phase 2。见 `docs/contract/03-p1-contract.md` §2.4。
+_Avoid_: 重新绑定（指 UI 文案时）
