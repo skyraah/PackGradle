@@ -100,13 +100,12 @@ func (c *Compiled) ModRuleID() string { return c.modRuleID }
 // FileRules 返回编译后的文件规则（声明顺序）。
 func (c *Compiled) FileRules() []CompiledFileRule { return c.fileRules }
 
-// Policy 返回原始策略。
-func (c *Compiled) Policy() model.MappingPolicy { return c.policy }
 
 // Compile 编译并校验 MappingPolicy（检视报告 P0-5 的编译器入口）：
 //   - 规则 ID 非空且唯一；方向、资源类型、物化、合并策略、运行时本地策略为合法枚举；
 //   - 前缀 root-relative（无绝对路径、'..'、'.'、盘符），文件规则两侧前缀必填；
-//   - mods/ 前缀恒由 mod 语义规则保留，文件规则不得进入；mod 规则前缀必须是 mods；
+//   - mods/ 前缀恒由 mod 语义规则保留，文件规则不得进入；mod 规则前缀必须是 mods
+//     且恰好一条（缺失时 mods 观察将带空 PolicyID、方向失控回退 bidirectional）；
 //   - include/exclude glob 编译证明（非法模式编译期拒绝）。
 //
 // 任一规则非法返回 *RuleError；扫描/保存策略前必须先通过本函数。
@@ -132,6 +131,9 @@ func Compile(p model.MappingPolicy) (*Compiled, error) {
 			}
 			c.fileRules = append(c.fileRules, *fr)
 		}
+	}
+	if modCount == 0 {
+		return nil, ruleErr("", "resource_kind", "", "缺少 mod 语义规则（mods/ 恒由语义适配器管理）")
 	}
 	if modCount > 1 {
 		return nil, ruleErr(c.modRuleID, "resource_kind", "mod", "mod 语义规则至多一条")
@@ -172,12 +174,8 @@ func compileRule(r *model.MappingRule, seenIDs map[string]bool, modCount *int) e
 	if model.ResourceKind(r.ResourceKind) == model.ResourceMod {
 		*modCount++
 		for _, field := range []string{"project_prefix", "runtime_prefix"} {
-			prefix := r.ProjectPrefix
-			if field == "runtime_prefix" {
-				prefix = r.RuntimePrefix
-			}
-			if got := normalizeRelPath(prefix); got != modsPrefix {
-				return ruleErr(r.ID, field, prefix, "mod 语义规则前缀必须是 "+modsPrefix)
+			if got := normalizeRelPath(rulePrefix(r, field)); got != modsPrefix {
+				return ruleErr(r.ID, field, rulePrefix(r, field), "mod 语义规则前缀必须是 "+modsPrefix)
 			}
 		}
 		// mod 规则不消费 include/exclude，但保持 glob 编译证明的 uniform 校验
@@ -187,22 +185,26 @@ func compileRule(r *model.MappingRule, seenIDs map[string]bool, modCount *int) e
 		}{{"include", r.Include}, {"exclude", r.Exclude}} {
 			for _, g := range field.patterns {
 				if _, err := CompileGlob(g); err != nil {
-					return ruleErr(r.ID, field.name, g, strings.TrimPrefix(err.Error(), "policy: "))
+					return ruleErr(r.ID, field.name, g, err.Error())
 				}
 			}
 		}
 		return nil
 	}
 	for _, field := range []string{"project_prefix", "runtime_prefix"} {
-		prefix := r.ProjectPrefix
-		if field == "runtime_prefix" {
-			prefix = r.RuntimePrefix
-		}
-		if err := validateFilePrefix(r.ID, field, prefix); err != nil {
+		if err := validateFilePrefix(r.ID, field, rulePrefix(r, field)); err != nil {
 			return err
 		}
 	}
 	return nil
+}
+
+// rulePrefix 取规则指定侧的前缀原始值。
+func rulePrefix(r *model.MappingRule, field string) string {
+	if field == "runtime_prefix" {
+		return r.RuntimePrefix
+	}
+	return r.ProjectPrefix
 }
 
 // validateFilePrefix 校验文件规则前缀：root-relative、非空、不进入 mods 保留前缀。
@@ -215,7 +217,7 @@ func validateFilePrefix(ruleID, field, prefix string) error {
 	}
 	normalized := normalizeRelPath(prefix)
 	if err := validateRelSegments(normalized, "前缀"); err != nil {
-		return ruleErr(ruleID, field, prefix, strings.TrimPrefix(err.Error(), "policy: "))
+		return ruleErr(ruleID, field, prefix, err.Error())
 	}
 	if normalized == modsPrefix || strings.HasPrefix(normalized, modsPrefix+"/") {
 		return ruleErr(ruleID, field, prefix, "mods 前缀恒由 mod 语义规则管理，文件规则不得进入")
@@ -233,14 +235,14 @@ func compileFileRule(r model.MappingRule) (*CompiledFileRule, error) {
 	for _, g := range r.Include {
 		glob, err := CompileGlob(g)
 		if err != nil {
-			return nil, ruleErr(r.ID, "include", g, strings.TrimPrefix(err.Error(), "policy: "))
+			return nil, ruleErr(r.ID, "include", g, err.Error())
 		}
 		fr.include = append(fr.include, glob)
 	}
 	for _, g := range r.Exclude {
 		glob, err := CompileGlob(g)
 		if err != nil {
-			return nil, ruleErr(r.ID, "exclude", g, strings.TrimPrefix(err.Error(), "policy: "))
+			return nil, ruleErr(r.ID, "exclude", g, err.Error())
 		}
 		fr.exclude = append(fr.exclude, glob)
 	}
@@ -249,9 +251,9 @@ func compileFileRule(r model.MappingRule) (*CompiledFileRule, error) {
 
 // ResolveFileRule 从候选规则中按「最具体优先」决议受管归属（检视报告 P0-5）：
 // 候选里指定端前缀最长者胜出；最长前缀并列时无法唯一决议，返回 winner=nil 与
-// 并列规则 ID 证据（字节序）。调用方应保证候选已通过 Matches 过滤。
-// 语义依据：两条不同前缀的规则同时命中同一路径当且仅当前缀嵌套，此时较长者
-// 更具体；等长且同命中意味着同前缀，只能靠 include/exclude 互斥区分，否则碰撞。
+// 并列规则 ID 证据（字节序）。
+// include/exclude 的互斥区分发生在上游候选收集阶段（调用方只把 Matches 命中的
+// 规则放入候选）；到达本函数仍并列的候选就是真正的碰撞，不做二次消解。
 func ResolveFileRule(side model.Side, cands []*CompiledFileRule) (winner *CompiledFileRule, collision []string) {
 	if len(cands) == 0 {
 		return nil, nil

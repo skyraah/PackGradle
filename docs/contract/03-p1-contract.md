@@ -174,9 +174,9 @@ type UpdateMappingPolicyInput struct {
 // 成功 → PolicyDTO；同时递增 relation_revision（ADR-0002：policy 修改是唯一递增源）。
 ```
 
-语义（按 ADR-0002 决议 5 注释）：`PolicyDTO.Revision`（策略集模板版本）与 `RelationDTO.Revision`（关系级策略代次）语义独立、互不驱动；两个数字都不进入用户可见文案或界面。写路径在 P1-POLICY 编译器落地前只做结构校验；编译器落地后 `UpdateMappingPolicy` 增加编译校验（`err.mapping.compile_failed` / `err.mapping.collision`，§3 预留）。
+语义（按 ADR-0002 决议 5 注释）：`PolicyDTO.Revision`（策略集模板版本）与 `RelationDTO.Revision`（关系级策略代次）语义独立、互不驱动；两个数字都不进入用户可见文案或界面。写路径在 P1-POLICY 编译器落地前只做结构校验；编译器已落地（T04，`internal/application/policy`），`UpdateMappingPolicy` 实现时必须先过编译校验（`err.mapping.compile_failed`，§3）。
 
-编译器已落地（T04，`internal/application/policy`）：编译期校验方向、资源类型、prefix、include/exclude（root-relative glob 编译证明）与 root 边界，违规返回 `*RuleError` → `err.mapping.compile_failed`（args {0}=rule_id，字段与原因进 detail）。规则决议为「最具体前缀优先」，最长前缀并列无法唯一决议时产出 `diag.mapping.collision` 诊断（证据：并列规则 ID + 命中路径），该路径从观察剔除；诊断随快照持久化，并经 `SyncPlan.diagnostics` / `SyncPlanDTO.diagnostics` 透出（证据性数据，不参与 PlanDigest/SnapshotDigest）。
+编译器落地实况（T04）：编译期校验方向、资源类型、prefix、include/exclude（root-relative glob 编译证明）与 root 边界，mod 语义规则恰好一条且前缀必须 mods；违规返回 `*RuleError` → `err.mapping.compile_failed`（args {0}=rule_id，字段与原因进 detail）。规则决议为「最具体前缀优先」，最长前缀并列无法唯一决议时产出 `diag.mapping.collision` 诊断（证据：并列规则 ID + 命中路径），该路径从观察剔除；诊断随快照持久化，并经 `SyncPlan.diagnostics` / `SyncPlanDTO.diagnostics` 透出（证据性数据，不参与 PlanDigest/SnapshotDigest）。
 
 ### 2.4 Rebind（Prepare/Apply）
 
@@ -302,8 +302,8 @@ type SyncPlanDTO struct {
 | `err.endpoint.instances_dir_not_found` | {0}=path | Prism 实例目录不可定位 |
 | `err.mapping.not_found` | {0}=relation_id | 关系无策略（理论上不可达） |
 | `err.mapping.stale_revision` | {0}=expected, {1}=actual | 乐观锁冲突 |
-| `err.mapping.compile_failed` | {0}=rule_id | 规则编译失败（P1-POLICY 后生效，预留） |
-| `err.mapping.collision` | {0}=resource_id | 多规则无法唯一决议（P1-POLICY 后生效，预留） |
+| `err.mapping.compile_failed` | {0}=rule_id | 规则编译失败（T04 已生效：字段与原因进 detail） |
+| `diag.mapping.collision` | {0}=rule_a, {1}=rule_b（证据另含命中路径 relative_path） | 扫描期多规则无法唯一决议，路径从观察剔除（诊断，非 err.*；随 Snapshot/Plan/DTO 透出，见 §2.3） |
 | `err.relation.rebind_prep_not_found` | {0}=preparation_id | 重绑预检不存在 |
 | `err.relation.rebind_prep_expired` | {0}=preparation_id | 重绑预检过期 |
 | `err.relation.rebind_invalid_side` | {0}=side | side 非 project/runtime |

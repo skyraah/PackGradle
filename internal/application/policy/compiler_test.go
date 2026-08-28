@@ -132,6 +132,21 @@ func TestCompileRejectsEmptyPolicyID(t *testing.T) {
 	}
 }
 
+func TestCompileRequiresModRule(t *testing.T) {
+	// 缺少 mod 语义规则 → mods/ 观察将带空 PolicyID、方向失控，编译期拒绝
+	p := model.MappingPolicy{
+		SchemaVersion: model.CurrentSchemaVersion,
+		PolicyID:      "p1",
+		Revision:      1,
+		Rules:         []model.MappingRule{validRule("config")},
+	}
+	_, err := Compile(p)
+	var re *RuleError
+	if !errors.As(err, &re) || re.Field != "resource_kind" {
+		t.Fatalf("缺少 mod 语义规则应编译失败, got %v", err)
+	}
+}
+
 func TestCompileNormalizesPrefixes(t *testing.T) {
 	r := validRule("cfg")
 	r.ProjectPrefix = "Config/"

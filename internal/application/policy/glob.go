@@ -24,18 +24,18 @@ type Glob struct {
 func CompileGlob(pattern string) (*Glob, error) {
 	slash := strings.ReplaceAll(pattern, "\\", "/")
 	if strings.HasPrefix(slash, "/") {
-		return nil, fmt.Errorf("policy: glob 模式为绝对路径: %q", pattern)
+		return nil, fmt.Errorf("glob 模式为绝对路径: %q", pattern)
 	}
 	p := normalizeRelPath(pattern)
 	if p == "" {
-		return nil, fmt.Errorf("policy: 空 glob 模式")
+		return nil, fmt.Errorf("空 glob 模式")
 	}
 	if err := validateRelSegments(p, "glob 模式"); err != nil {
 		return nil, err
 	}
 	re, err := translateGlob(p)
 	if err != nil {
-		return nil, fmt.Errorf("policy: glob 模式 %q 非法: %w", pattern, err)
+		return nil, fmt.Errorf("glob 模式 %q 非法: %w", pattern, err)
 	}
 	return &Glob{pattern: p, re: re}, nil
 }
@@ -69,12 +69,12 @@ func normalizeRelPath(p string) string {
 // （root 边界的编译期检查；运行时越界仍由 filesystem.Resolver 兜底）。
 func validateRelSegments(p, what string) error {
 	if strings.Contains(p, ":") {
-		return fmt.Errorf("policy: %s 含冒号（盘符或 ADS 路径不合法）: %q", what, p)
+		return fmt.Errorf("%s 含冒号（盘符或 ADS 路径不合法）: %q", what, p)
 	}
 	for _, seg := range strings.Split(p, "/") {
 		switch seg {
 		case "", ".", "..":
-			return fmt.Errorf("policy: %s 含非法段 %q: %q", what, seg, p)
+			return fmt.Errorf("%s 含非法段 %q: %q", what, seg, p)
 		}
 	}
 	return nil
