@@ -19,6 +19,17 @@ var (
 	ErrPreparationExpired = ports.ErrPreparationExpired
 	// ErrRelationNotFound 被引用的 Relation 不存在（FK 语义转换）。
 	ErrRelationNotFound = ports.ErrRelationNotFound
+	// ErrCrossRelation 被引用对象属于另一 Relation（完整性守卫拒绝）。
+	ErrCrossRelation = ports.ErrCrossRelation
+	// ErrSideMismatch 快照 side 与引用语义不符（完整性守卫拒绝）。
+	ErrSideMismatch = ports.ErrSideMismatch
+	// ErrDigestMismatch 持久化 digest 与重算值不一致（完整性守卫拒绝）。
+	ErrDigestMismatch = ports.ErrDigestMismatch
+	// ErrParentMismatch parent 对象属于另一 Relation（完整性守卫拒绝；
+	// 与 ErrCrossRelation 区分以定位装配错误发生在 parent 位）。
+	ErrParentMismatch = ports.ErrParentMismatch
+	// ErrPlanNotFound 被引用的计划不存在（任务 plan_id 外键语义转换）。
+	ErrPlanNotFound = ports.ErrPlanNotFound
 )
 
 // isUniqueViolation 判断是否 SQLite 唯一约束冲突。

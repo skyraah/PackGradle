@@ -37,6 +37,11 @@ func (r *PlanRepository) Insert(ctx context.Context, p model.SyncPlan) error {
 	}
 	defer tx.Rollback()
 
+	// 完整性守卫（P0-3）：引用对象同 Relation、side 正确、digest 链一致，与写入同事务。
+	if err := verifyPlanIntegrity(ctx, tx, p); err != nil {
+		return fmt.Errorf("sqlite: 写入计划 %s 完整性校验失败: %w", p.PlanID, err)
+	}
+
 	if _, err := tx.ExecContext(ctx, `
 INSERT INTO sync_plans(id, relation_id, kind, resolved_from_plan_id, base_baseline_id,
 	input_project_snapshot_id, input_runtime_snapshot_id, relation_revision,

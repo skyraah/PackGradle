@@ -15,11 +15,42 @@ type migration struct {
 	Version int
 	Name    string
 	Stmt    func() string
+	// DisableFK 在迁移事务期间关闭外键（foreign_keys 是事务外 PRAGMA，
+	// 由 applyMigration 在 BEGIN 前 OFF、COMMIT 后 ON）。关闭后由 Verify
+	// 的 foreign_key_check 兜底；默认 false 保持外键开启。
+	DisableFK bool
+	// Verify 在 COMMIT 前执行的自检；返回错误则整个迁移回滚。
+	Verify func(ctx context.Context, conn *sql.Conn) error
 }
 
 // migrations 是按版本升序排列的前向迁移列表，只能追加、不能修改历史条目。
 var migrations = []migration{
 	{Version: 1, Name: "initial schema", Stmt: func() string { return schemaV1 }},
+	{Version: 2, Name: "tasks plan/commit 引用约束", Stmt: func() string { return schemaV2 },
+		DisableFK: true,
+		Verify: func(ctx context.Context, conn *sql.Conn) error {
+			rows, err := conn.QueryContext(ctx, "PRAGMA foreign_key_check(tasks)")
+			if err != nil {
+				return fmt.Errorf("sqlite: foreign_key_check(tasks) 失败: %w", err)
+			}
+			defer rows.Close()
+			bad := 0
+			for rows.Next() {
+				var table string
+				var rowid, parent, fkid sql.NullInt64
+				if err := rows.Scan(&table, &rowid, &parent, &fkid); err != nil {
+					return fmt.Errorf("sqlite: 读取 foreign_key_check 结果: %w", err)
+				}
+				bad++
+			}
+			if err := rows.Err(); err != nil {
+				return fmt.Errorf("sqlite: 遍历 foreign_key_check 结果: %w", err)
+			}
+			if bad > 0 {
+				return fmt.Errorf("sqlite: tasks 表存在 %d 行悬挂引用（plan/commit/relation），迁移中止", bad)
+			}
+			return nil
+		}},
 }
 
 // SchemaVersion 返回当前代码支持的目标 schema 版本（= len(migrations)）。
@@ -87,6 +118,15 @@ func applyMigration(ctx context.Context, db *sql.DB, m migration) error {
 	}
 	defer conn.Close()
 
+	if m.DisableFK {
+		if _, err := conn.ExecContext(ctx, "PRAGMA foreign_keys=OFF"); err != nil {
+			return fmt.Errorf("sqlite: 迁移 v%d (%s) 关闭外键失败: %w", m.Version, m.Name, err)
+		}
+		defer func() {
+			_, _ = conn.ExecContext(context.Background(), "PRAGMA foreign_keys=ON")
+		}()
+	}
+
 	if _, err := conn.ExecContext(ctx, "BEGIN IMMEDIATE"); err != nil {
 		return fmt.Errorf("sqlite: 迁移 v%d (%s) BEGIN IMMEDIATE 失败: %w", m.Version, m.Name, err)
 	}
@@ -99,6 +139,11 @@ func applyMigration(ctx context.Context, db *sql.DB, m migration) error {
 
 	if _, err := conn.ExecContext(ctx, m.Stmt()); err != nil {
 		return fmt.Errorf("sqlite: 迁移 v%d (%s) DDL 失败: %w", m.Version, m.Name, err)
+	}
+	if m.Verify != nil {
+		if err := m.Verify(ctx, conn); err != nil {
+			return fmt.Errorf("sqlite: 迁移 v%d (%s) 自检失败: %w", m.Version, m.Name, err)
+		}
 	}
 	if _, err := conn.ExecContext(ctx, fmt.Sprintf("PRAGMA user_version=%d", m.Version)); err != nil {
 		return fmt.Errorf("sqlite: 迁移 v%d (%s) 写 user_version 失败: %w", m.Version, m.Name, err)

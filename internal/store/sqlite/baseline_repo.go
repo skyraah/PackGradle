@@ -44,6 +44,11 @@ func (r *BaselineRepository) Insert(ctx context.Context, b model.SyncBaseline) e
 	}
 	defer tx.Rollback()
 
+	// 完整性守卫（P0-3）：parent 同 Relation、digest 重算一致，与写入同事务。
+	if err := verifyBaselineIntegrity(ctx, tx, b); err != nil {
+		return fmt.Errorf("sqlite: 写入基线 %s 完整性校验失败: %w", b.BaselineID, err)
+	}
+
 	if _, err := tx.ExecContext(ctx, `
 INSERT INTO sync_baselines(id, relation_id, parent_id, created_at, baseline_digest, normalization_version)
 VALUES(?,?,?,?,?,?)`,

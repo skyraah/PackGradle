@@ -60,6 +60,11 @@ func (r *TaskRepository) Insert(ctx context.Context, t model.Task) error {
 		return fmt.Errorf("sqlite: 序列化任务 %s 问题: %w", t.TaskID, err)
 	}
 
+	// 完整性守卫（P0-3）：plan/commit 引用必须存在且属于任务自己的 Relation。
+	if err := verifyTaskIntegrity(ctx, r.db, t); err != nil {
+		return fmt.Errorf("sqlite: 写入任务 %s 完整性校验失败: %w", t.TaskID, err)
+	}
+
 	_, err = r.db.ExecContext(ctx, `
 INSERT INTO tasks(id, relation_id, kind, status, phase, sequence, outcome, can_cancel,
 	completed, total, message_key, message_args_json, plan_id, commit_id, created_at, updated_at, problem_json)
@@ -70,7 +75,7 @@ VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
 		t.CreatedAt, t.UpdatedAt, problemJSON)
 	if err != nil {
 		if isForeignKeyViolation(err) {
-			return fmt.Errorf("sqlite: 写入任务 %s: %w", t.TaskID, ErrRelationNotFound)
+			return fmt.Errorf("sqlite: 写入任务 %s: %w", t.TaskID, taskReferenceSentinel(ctx, r.db, t))
 		}
 		return fmt.Errorf("sqlite: 写入任务 %s: %w", t.TaskID, err)
 	}
@@ -89,6 +94,11 @@ func (r *TaskRepository) Update(ctx context.Context, t model.Task) error {
 		return fmt.Errorf("sqlite: 序列化任务 %s 问题: %w", t.TaskID, err)
 	}
 
+	// 完整性守卫（P0-3）：plan/commit 引用必须存在且属于任务自己的 Relation。
+	if err := verifyTaskIntegrity(ctx, r.db, t); err != nil {
+		return fmt.Errorf("sqlite: 更新任务 %s 完整性校验失败: %w", t.TaskID, err)
+	}
+
 	res, err := r.db.ExecContext(ctx, `
 UPDATE tasks SET status=?, outcome=?, phase=?, sequence=?, can_cancel=?,
 	completed=?, total=?, message_key=?, message_args_json=?, plan_id=?, commit_id=?,
@@ -98,6 +108,9 @@ WHERE id=? AND sequence<?`,
 		t.Completed, t.Total, t.MessageKey, argsJSON, nullString(t.PlanID), nullString(t.CommitID),
 		t.UpdatedAt, problemJSON, t.TaskID, t.Sequence)
 	if err != nil {
+		if isForeignKeyViolation(err) {
+			return fmt.Errorf("sqlite: 更新任务 %s: %w", t.TaskID, taskReferenceSentinel(ctx, r.db, t))
+		}
 		return fmt.Errorf("sqlite: 更新任务 %s: %w", t.TaskID, err)
 	}
 	if n, err := res.RowsAffected(); err == nil && n == 0 {

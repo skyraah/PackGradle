@@ -18,6 +18,12 @@ var (
 	ErrSequenceConflict   = errors.New("ports: 序号冲突（乐观锁拒绝）")
 	ErrPreparationExpired = errors.New("ports: 预检已过期或已消费")
 	ErrRelationNotFound   = errors.New("ports: 关系不存在")
+	// 完整性守卫哨兵（检视报告 P0-3）：repository 写入边界拒绝污染审计链的对象引用。
+	ErrCrossRelation  = errors.New("ports: 引用对象属于另一 Relation")
+	ErrSideMismatch   = errors.New("ports: 快照 side 与引用语义不符")
+	ErrDigestMismatch = errors.New("ports: 持久化 digest 与重算值不一致")
+	ErrParentMismatch = errors.New("ports: parent 对象属于另一 Relation")
+	ErrPlanNotFound   = errors.New("ports: 被引用的计划不存在")
 )
 
 // PageRequest 是列表分页参数（cursor page）。

@@ -11,6 +11,7 @@ import (
 
 	"packgradle/internal/application/ports"
 	"packgradle/internal/core/model"
+	"packgradle/internal/core/normalize"
 )
 
 // openTestDB 打开临时目录中的全新数据库并完成迁移，测试结束自动关闭。
@@ -142,15 +143,15 @@ func TestOpenAndMigrateFreshDB(t *testing.T) {
 	if err := Migrate(context.Background(), db, filepath.Join(dir, "backup")); err != nil {
 		t.Fatalf("全新库 Migrate 失败: %v", err)
 	}
-	if v := userVersion(t, db); v != 1 {
-		t.Errorf("user_version = %d, 期望 1", v)
+	if v := userVersion(t, db); v != 2 {
+		t.Errorf("user_version = %d, 期望 2", v)
 	}
 	var count int
 	if err := db.QueryRow("SELECT COUNT(*) FROM schema_migrations").Scan(&count); err != nil {
 		t.Fatalf("读取 schema_migrations 失败: %v", err)
 	}
-	if count != 1 {
-		t.Errorf("schema_migrations 行数 = %d, 期望 1", count)
+	if count != 2 {
+		t.Errorf("schema_migrations 行数 = %d, 期望 2", count)
 	}
 }
 
@@ -176,8 +177,8 @@ func TestMigrateReopenIdempotent(t *testing.T) {
 	if err := Migrate(context.Background(), db2, filepath.Join(dir, "backup")); err != nil {
 		t.Fatalf("重开 Migrate 应幂等: %v", err)
 	}
-	if v := userVersion(t, db2); v != 1 {
-		t.Errorf("重开后 user_version = %d, 期望 1", v)
+	if v := userVersion(t, db2); v != 2 {
+		t.Errorf("重开后 user_version = %d, 期望 2", v)
 	}
 }
 
@@ -427,7 +428,6 @@ func TestBaselineRoundTrip(t *testing.T) {
 		BaselineID:           "base_1",
 		RelationID:           relationID,
 		CreatedAt:            "2026-08-22T11:00:00Z",
-		BaselineDigest:       "sha256:base1",
 		NormalizationVersion: 1,
 		Resources: map[model.ResourceID]model.BaselineResource{
 			"mod:modrinth:AANobbMI": {
@@ -446,6 +446,12 @@ func TestBaselineRoundTrip(t *testing.T) {
 			},
 		},
 	}
+	// 守卫在 repository 边界重算校验，fixture 必须携带真实 digest
+	baselineDigest, err := normalize.BaselineDigest(b)
+	if err != nil {
+		t.Fatalf("重算基线 digest 失败: %v", err)
+	}
+	b.BaselineDigest = baselineDigest
 	if err := repo.Insert(ctx, b); err != nil {
 		t.Fatalf("Insert 基线失败: %v", err)
 	}
@@ -491,7 +497,6 @@ func TestPlanRoundTrip(t *testing.T) {
 		RelationRevision:           1,
 		PolicyDigest:               "sha256:policy",
 		ExpectedBindings:           model.ExpectedBindings{Project: "sha256:bp", Runtime: "sha256:br"},
-		PlanDigest:                 "sha256:plan1",
 		Status:                     model.PlanDraft,
 		ExpiresAt:                  "2026-08-22T13:00:00Z",
 		Operations: []model.PlannedOperation{
@@ -505,6 +510,12 @@ func TestPlanRoundTrip(t *testing.T) {
 		},
 		Summary: model.PlanSummary{ResourceTotal: 2, ConflictCount: 1},
 	}
+	// 守卫在 repository 边界重算校验，fixture 必须携带真实 digest
+	planDigest, err := normalize.PlanDigest(plan)
+	if err != nil {
+		t.Fatalf("重算计划 digest 失败: %v", err)
+	}
+	plan.PlanDigest = planDigest
 	if err := repo.Insert(ctx, plan); err != nil {
 		t.Fatalf("Insert 计划失败: %v", err)
 	}
