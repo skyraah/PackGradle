@@ -47,3 +47,11 @@ _Avoid_: 权限、是否可点
 **重绑（Rebind）**:
 把关系一端的根路径替换为新端点（Prepare 预检 + Apply 执行）；P1 下 Apply 后不继承基线、重走初始化，等价证明留 Phase 2。见 `docs/contract/03-p1-contract.md` §2.4。
 _Avoid_: 重新绑定（指 UI 文案时）
+
+**受控重查（Controlled Re-query）**:
+前端缓存失效后的唯一恢复通路：立即发起、进行中只标脏、结束后补刷一轮直至干净的全量重读管线；启动 bootstrap、漏包、失效事件、周期对账共用同一管线。见 `docs/contract/04-p1-event-protocol.md` §2.4。
+_Avoid_: 刷新、轮询（指事件恢复时）
+
+**事件流序号（Stream Sequence）**:
+后端事件流的持久化单调序号，仅用于前端检测漏包；与任务内序号、关系修订号互不相干。见 `docs/contract/04-p1-event-protocol.md` §2.2。
+_Avoid_: 序号（泛指时）、版本
