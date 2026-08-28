@@ -108,8 +108,15 @@ type TaskRepository interface {
 }
 
 // MappingRepository 管理 Relation 的 MappingPolicy（修订与 relation.revision 同事务联动）。
+// ADR-0002：创建时的初始 policy 写入不算修改，不递增 revision；
+// 之后每次 SavePolicy（修改）在同一事务内递增 relations.revision。
 type MappingRepository interface {
 	GetPolicy(ctx context.Context, relationID string) (model.MappingPolicy, error)
+	// CreatePolicy 写入创建时的初始 policy（INSERT，不递增 revision）；
+	// 关系不存在返回 ErrNotFound，已有 policy 返回 ErrDuplicate。
+	CreatePolicy(ctx context.Context, relationID string, p model.MappingPolicy) error
+	// SavePolicy 保存策略修改（UPSERT）并在同一事务内递增 relations.revision，
+	// 使旧 Plan 立即 stale（§8.3：映射修订与关系修订必须同事务联动）。
 	SavePolicy(ctx context.Context, relationID string, p model.MappingPolicy) error
 }
 

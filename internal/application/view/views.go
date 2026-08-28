@@ -148,6 +148,7 @@ type SyncPlanView struct {
 	Resolutions                []model.Resolution              `json:"resolutions,omitempty"`
 	ConfirmationRequirements   []model.ConfirmationRequirement `json:"confirmation_requirements"`
 	Summary                    model.PlanSummary               `json:"summary"`
+	Diagnostics                []model.Diagnostic              `json:"diagnostics"`
 }
 
 // TaskPage 是任务分页。

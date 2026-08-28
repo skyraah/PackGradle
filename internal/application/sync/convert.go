@@ -108,6 +108,10 @@ func PlanView(p model.SyncPlan) view.SyncPlanView {
 	if reqs == nil {
 		reqs = []model.ConfirmationRequirement{}
 	}
+	diags := p.Diagnostics
+	if diags == nil {
+		diags = []model.Diagnostic{}
+	}
 	return view.SyncPlanView{
 		SchemaVersion: p.SchemaVersion, PlanID: p.PlanID, RelationID: p.RelationID,
 		Kind: string(p.Kind), ResolvedFromPlanID: p.ResolvedFromPlanID,
@@ -126,6 +130,7 @@ func PlanView(p model.SyncPlan) view.SyncPlanView {
 		Resolutions:              resolutions,
 		ConfirmationRequirements: reqs,
 		Summary:                  p.Summary,
+		Diagnostics:              diags,
 	}
 }
 

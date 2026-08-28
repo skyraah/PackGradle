@@ -91,6 +91,7 @@ func TestScanPolicyPrefixEscapeSkipped(t *testing.T) {
 		ID: "escape", ResourceKind: "text_file",
 		ProjectPrefix: "linked", RuntimePrefix: "linked",
 		Direction: "bidirectional", Materialization: "copy", MergePolicy: "manual",
+		RuntimeLocalPolicy: "exclude",
 	})
 	report, err := New().Scan(context.Background(), gameDir, ports.ScanOptions{Policy: policy})
 	if err != nil {

@@ -2,6 +2,7 @@ package packwiz
 
 import (
 	"context"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -9,6 +10,7 @@ import (
 	"testing"
 
 	"packgradle/internal/application/ports"
+	apppolicy "packgradle/internal/application/policy"
 	"packgradle/internal/core/model"
 )
 
@@ -75,6 +77,7 @@ func TestScanPolicyPrefixEscapeSkipped(t *testing.T) {
 		ID: "escape", ResourceKind: "text_file",
 		ProjectPrefix: "linked", RuntimePrefix: "linked",
 		Direction: "bidirectional", Materialization: "copy", MergePolicy: "manual",
+		RuntimeLocalPolicy: "exclude",
 	})
 	report, err := New().Scan(context.Background(), dir, ports.ScanOptions{Policy: policy})
 	if err != nil {
@@ -90,25 +93,23 @@ func TestScanPolicyPrefixEscapeSkipped(t *testing.T) {
 	}
 }
 
-func TestScanPolicyPrefixDotDotEscape(t *testing.T) {
+func TestScanPolicyPrefixDotDotRejectedAtCompile(t *testing.T) {
+	// `..` 前缀是非法规则，编译期即拒绝（结构化 *RuleError），不再落到运行时诊断
 	dir := makeProject(t)
 	policy := modsOnlyPolicy()
 	policy.Rules = append(policy.Rules, model.MappingRule{
 		ID: "escape", ResourceKind: "text_file",
 		ProjectPrefix: "../outside", RuntimePrefix: "../outside",
 		Direction: "bidirectional", Materialization: "copy", MergePolicy: "manual",
+		RuntimeLocalPolicy: "exclude",
 	})
-	report, err := New().Scan(context.Background(), dir, ports.ScanOptions{Policy: policy})
-	if err != nil {
-		t.Fatal(err)
+	_, err := New().Scan(context.Background(), dir, ports.ScanOptions{Policy: policy})
+	var re *apppolicy.RuleError
+	if !errors.As(errors.Unwrap(err), &re) && !errors.As(err, &re) {
+		t.Fatalf("`..` 前缀应在编译期被拒绝: %v", err)
 	}
-	for _, o := range report.Observations {
-		if o.Kind != model.ResourceMod {
-			t.Fatalf("`..` 前缀不应产出文件观察: %+v", o)
-		}
-	}
-	if !hasDiag(report.Diagnostics, "diag.scan.path_escape") {
-		t.Fatalf("`..` 前缀应产生 path_escape 诊断: %+v", report.Diagnostics)
+	if re != nil && re.Field != "project_prefix" {
+		t.Errorf("RuleError.Field = %q, want project_prefix", re.Field)
 	}
 }
 
@@ -127,6 +128,7 @@ func TestScanPolicyPrefixLinkInsideRootFollowed(t *testing.T) {
 		ID: "config", ResourceKind: "text_file",
 		ProjectPrefix: "configLink", RuntimePrefix: "configLink",
 		Direction: "bidirectional", Materialization: "copy", MergePolicy: "manual",
+		RuntimeLocalPolicy: "exclude",
 	})
 	hashed := 0
 	fakeHash := func(ctx context.Context, abs string) (model.ContentRef, ports.FileFacts, error) {

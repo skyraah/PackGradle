@@ -24,6 +24,9 @@ const (
 	CodeRelationPrepNotFound    = "err.relation.preparation_not_found"
 	CodeRelationPrepExpired     = "err.relation.preparation_expired"
 	CodeMappingUnknownPolicy    = "err.mapping.unknown_policy"
+	// CodeMappingCompileFailed 是策略编译失败码（契约 03 §3：args {0}=rule_id；
+	// 字段与违规原因进 detail）。
+	CodeMappingCompileFailed    = "err.mapping.compile_failed"
 	CodeRelationScanRunning     = "err.scan.already_running"
 	CodeScanEndpointMissing     = "err.scan.endpoint_missing"
 	CodeScanAdapterFailed       = "err.scan.adapter_failed"
@@ -49,6 +52,10 @@ func (a *App) PrepareRelation(ctx context.Context, input model.PrepareRelationIn
 	pol, err := policy.Template(policySet)
 	if err != nil {
 		return view.RelationPreparationView{}, errs.New(CodeMappingUnknownPolicy, policySet)
+	}
+	// 编译期校验（检视报告 P0-5）：模板在写入预检前必须通过 policy 编译器
+	if cerr := policy.Validate(pol); cerr != nil {
+		return view.RelationPreparationView{}, policyCompileError(cerr)
 	}
 
 	checks := make([]model.PreparationCheck, 0, 6)
@@ -266,12 +273,8 @@ func (a *App) CreateRelation(ctx context.Context, preparationID string) (view.Re
 	if err := a.deps.Relations.Create(ctx, rel); err != nil {
 		return view.RelationView{}, err
 	}
-	if err := a.deps.Mappings.SavePolicy(ctx, rel.RelationID, prep.Policy); err != nil {
-		return view.RelationView{}, err
-	}
-	// SavePolicy 联动递增 relation revision，回读权威值
-	rel, err = a.deps.Relations.Get(ctx, rel.RelationID)
-	if err != nil {
+	// 初始 policy 直写（不递增 revision，ADR-0002：创建即第 1 代且已带 policy）
+	if err := a.deps.Mappings.CreatePolicy(ctx, rel.RelationID, prep.Policy); err != nil {
 		return view.RelationView{}, err
 	}
 	return relationView(rel, project, runtime), nil
@@ -280,6 +283,16 @@ func (a *App) CreateRelation(ctx context.Context, preparationID string) (view.Re
 func pathExists(p string) bool {
 	_, err := os.Stat(p)
 	return err == nil
+}
+
+// policyCompileError 把策略编译错误映射为 err.mapping.compile_failed 结构化错误
+// （契约 03 §3：args {0}=rule_id；违规字段与原因作为透传 detail）。
+func policyCompileError(err error) error {
+	var re *policy.RuleError
+	if errors.As(err, &re) {
+		return errs.NewDetail(CodeMappingCompileFailed, "field="+re.Field+": "+re.Reason, re.RuleID)
+	}
+	return errs.NewDetail(CodeMappingCompileFailed, err.Error())
 }
 
 // isAncestorOf 判断 a（清理后）是否为 b 的祖先或相等（大小写不敏感）。

@@ -369,6 +369,9 @@ type SyncPlan struct {
 	Resolutions                []Resolution              `json:"resolutions,omitempty"`
 	ConfirmationRequirements   []ConfirmationRequirement `json:"confirmation_requirements"`
 	Summary                    PlanSummary               `json:"summary"`
+	// Diagnostics 是输入快照携带的扫描/映射诊断（含 diag.mapping.collision 碰撞证据，
+	// 检视报告 P0-5）。证据性数据，不参与 PlanDigest。
+	Diagnostics []Diagnostic `json:"diagnostics"`
 }
 
 // ChangeKind / Change 是资源相对 base 的状态变化（诊断与摘要用）。

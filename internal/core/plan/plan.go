@@ -153,6 +153,8 @@ func BuildDraft(in BuildInput) (model.SyncPlan, error) {
 		Operations:                 ops,
 		Conflicts:                  conflicts,
 		Summary:                    summary,
+		// 诊断证据随计划透出（project 侧在前，保持确定性）；不参与 PlanDigest
+		Diagnostics: appendDiagnostics(in.Project.Diagnostics, in.Runtime.Diagnostics),
 	}
 	digest, err := normalize.PlanDigest(out)
 	if err != nil {
@@ -261,6 +263,7 @@ func Resolve(draft model.SyncPlan, project, runtime model.ObservedSnapshot, reso
 		Operations:                 ops,
 		Conflicts:                  draft.Conflicts, // 保留作证据
 		Resolutions:                sorted,
+		Diagnostics:                draft.Diagnostics,
 		Summary: model.PlanSummary{
 			ResourceTotal:   draft.Summary.ResourceTotal,
 			AdoptEqualCount: draft.Summary.AdoptEqualCount,
@@ -530,6 +533,15 @@ func detailDirection(detail string) string {
 		return strings.TrimPrefix(detail, "direction=")
 	}
 	return directionBidirectional
+}
+
+// appendDiagnostics 合并两侧快照诊断（project 在前）；诊断是证据性数据，
+// 不参与 PlanDigest。始终返回非 nil，保证 JSON 归一。
+func appendDiagnostics(project, runtime []model.Diagnostic) []model.Diagnostic {
+	out := make([]model.Diagnostic, 0, len(project)+len(runtime))
+	out = append(out, project...)
+	out = append(out, runtime...)
+	return out
 }
 
 // baseBaselineID 返回基线 ID；无基线为空。

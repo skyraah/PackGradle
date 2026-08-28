@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"packgradle/internal/adapters/filesystem"
+	"packgradle/internal/application/policy"
 	"packgradle/internal/application/ports"
 	"packgradle/internal/core/model"
 	"packgradle/internal/core/normalize"
@@ -35,9 +36,15 @@ func (s *Scanner) Name() string { return "packwiz" }
 func (s *Scanner) Version() string { return "1.0.0" }
 
 // Scan 扫描项目端点：index.toml 权威 mod 列表 + MappingPolicy 受管文件规则。
-// 全部端点内路径访问经 Resolver（realpath + root containment）强制入口。
+// 全部端点内路径访问经 Resolver（realpath + root containment）强制入口；
+// 映射策略先经 policy.Compile（编译期校验 + glob 编译 + 决议器），编译失败即错误。
 func (s *Scanner) Scan(ctx context.Context, root string, opts ports.ScanOptions) (model.ScanReport, error) {
 	report := model.ScanReport{}
+
+	compiled, cerr := policy.Compile(opts.Policy)
+	if cerr != nil {
+		return report, fmt.Errorf("packwiz: 映射策略编译失败: %w", cerr)
+	}
 
 	rslv, err := filesystem.NewResolver(root)
 	if err != nil {
@@ -63,7 +70,7 @@ func (s *Scanner) Scan(ctx context.Context, root string, opts ports.ScanOptions)
 	}
 
 	obs := make([]model.ResourceObservation, 0, len(idx.Files))
-	modPolicyID := findModRuleID(opts.Policy)
+	modPolicyID := compiled.ModRuleID()
 
 	for _, entry := range idx.Files {
 		if !isModMetafile(entry) {
@@ -140,8 +147,8 @@ func (s *Scanner) Scan(ctx context.Context, root string, opts ports.ScanOptions)
 		})
 	}
 
-	// 受管文件规则（text_file/binary_file）
-	fileObs, fileDiags, err := scanManagedFiles(ctx, rslv, opts)
+	// 受管文件规则（text_file/binary_file）：编译产物驱动，含碰撞决议
+	fileObs, fileDiags, err := scanManagedFiles(ctx, rslv, compiled, opts)
 	if err != nil {
 		return report, err
 	}
@@ -153,37 +160,34 @@ func (s *Scanner) Scan(ctx context.Context, root string, opts ports.ScanOptions)
 	return report, nil
 }
 
-// findModRuleID 找 mod 规则的 ID（资源观察的 PolicyID）。
-func findModRuleID(p model.MappingPolicy) string {
-	for _, r := range p.Rules {
-		if r.ResourceKind == string(model.ResourceMod) {
-			return r.ID
-		}
-	}
-	return ""
-}
-
-// scanManagedFiles 按 MappingPolicy 的文件规则扫描受管文件。
-// 前缀先经 Resolver 解析（越界/非法 → 诊断并跳过该规则），遍历自
-// 解析后的 realpath base 展开，逐项再做 containment 复核。
-func scanManagedFiles(ctx context.Context, rslv *filesystem.Resolver, opts ports.ScanOptions) ([]model.ResourceObservation, []model.Diagnostic, error) {
-	var obs []model.ResourceObservation
+// scanManagedFiles 按 MappingPolicy 的文件规则扫描受管文件，分两阶段：
+//  1. 逐规则经 Resolver 解析前缀并遍历，收集「路径 → 命中规则」候选
+//     （include/exclude 过滤在编译产物的 Matches 上进行）；
+//  2. 对每个路径按「最具体前缀优先」决议唯一规则后哈希观察；最长前缀并列
+//     无法唯一决议 → diag.mapping.collision（证据：并列规则 ID + 命中路径），
+//     该路径从观察中剔除，快照与计划保留诊断证据（检视报告 P0-5）。
+func scanManagedFiles(ctx context.Context, rslv *filesystem.Resolver, compiled *policy.Compiled, opts ports.ScanOptions) ([]model.ResourceObservation, []model.Diagnostic, error) {
 	var diags []model.Diagnostic
 
-	for _, rule := range opts.Policy.Rules {
-		kind := model.ResourceKind(rule.ResourceKind)
-		if kind != model.ResourceTextFile && kind != model.ResourceBinaryFile {
+	type candidate struct {
+		rule    *policy.CompiledFileRule
+		abs     string
+		relPath string // 原大小写的 root 相对路径（诊断与表示用）
+	}
+	cands := make(map[string][]candidate)
+
+	rules := compiled.FileRules()
+	for i := range rules {
+		rule := &rules[i]
+		prefix := rule.SidePrefix(model.SideProject)
+		if prefix == "" {
 			continue
 		}
-		if rule.ProjectPrefix == "" {
-			continue
-		}
-		prefix := strings.ToLower(strings.ReplaceAll(strings.Trim(rule.ProjectPrefix, "/"), "\\", "/"))
 		base, rerr := rslv.Resolve(prefix)
 		if rerr != nil {
 			diags = append(diags, model.Diagnostic{
 				Severity: "warning", Code: "diag.scan.path_escape",
-				Args: []string{rule.ProjectPrefix},
+				Args: []string{prefix},
 				Detail: "策略前缀解析后越出端点根目录，规则已忽略: " + rerr.Error(),
 			})
 			continue
@@ -217,86 +221,74 @@ func scanManagedFiles(ctx context.Context, rslv *filesystem.Resolver, opts ports
 			}
 			relSlash := filepath.ToSlash(relToRoot)
 			relLower := strings.ToLower(relSlash)
-			// mods/ 恒由 mod 语义规则管理
+			// mods/ 恒由 mod 语义规则管理（编译器亦拒绝文件规则进入 mods 前缀）
 			if relLower == "mods" || strings.HasPrefix(relLower, "mods/") {
 				return nil
 			}
-			if excludedByRule(relLower, rule) || !includedByRule(relLower, rule) {
+			if !rule.Matches(relLower) {
 				return nil
 			}
-			if opts.HashFile == nil {
-				diags = append(diags, model.Diagnostic{
-					Severity: "warning", Code: "diag.scan.hasher_missing",
-					Args: []string{relSlash}, RelativePath: relSlash,
-					Detail: "扫描选项未注入哈希函数，文件未纳入观察",
-				})
-				return nil
-			}
-			content, _, herr := opts.HashFile(ctx, path)
-			if herr != nil {
-				diags = append(diags, model.Diagnostic{
-					Severity: "warning", Code: "diag.scan.hash_failed",
-					Args: []string{relSlash}, RelativePath: relSlash, Detail: herr.Error(),
-				})
-				return nil
-			}
-			c := content
-			obs = append(obs, model.ResourceObservation{
-				ResourceID: model.ResourceID("file:" + relLower),
-				Kind:       kind,
-				Identity:   model.Identity{},
-				Representation: model.Representation{
-					RelativePath: relSlash,
-					Format:       formatOf(relSlash, kind),
-					Content:      &c,
-				},
-				PolicyID: rule.ID,
-			})
+			cands[relLower] = append(cands[relLower], candidate{rule: rule, abs: path, relPath: relSlash})
 			return nil
 		})
 		if err != nil {
-			return nil, diags, fmt.Errorf("packwiz: 扫描前缀 %s: %w", rule.ProjectPrefix, err)
+			return nil, diags, fmt.Errorf("packwiz: 扫描前缀 %s: %w", prefix, err)
 		}
+	}
+
+	var obs []model.ResourceObservation
+	paths := make([]string, 0, len(cands))
+	for p := range cands {
+		paths = append(paths, p)
+	}
+	sort.Strings(paths)
+	for _, p := range paths {
+		cs := cands[p]
+		ruleCands := make([]*policy.CompiledFileRule, len(cs))
+		for i, c := range cs {
+			ruleCands[i] = c.rule
+		}
+		winner, collision := policy.ResolveFileRule(model.SideProject, ruleCands)
+		if collision != nil {
+			diags = append(diags, model.Diagnostic{
+				Severity: "warning", Code: "diag.mapping.collision",
+				Args:     collision, RelativePath: cs[0].relPath,
+				ResourceID: model.ResourceID("file:" + p),
+				Detail:     "路径被多条映射规则同时命中且无法唯一决议，已从本次观察中剔除",
+			})
+			continue
+		}
+		if opts.HashFile == nil {
+			diags = append(diags, model.Diagnostic{
+				Severity: "warning", Code: "diag.scan.hasher_missing",
+				Args: []string{cs[0].relPath}, RelativePath: cs[0].relPath,
+				Detail: "扫描选项未注入哈希函数，文件未纳入观察",
+			})
+			continue
+		}
+		content, _, herr := opts.HashFile(ctx, cs[0].abs)
+		if herr != nil {
+			diags = append(diags, model.Diagnostic{
+				Severity: "warning", Code: "diag.scan.hash_failed",
+				Args: []string{cs[0].relPath}, RelativePath: cs[0].relPath, Detail: herr.Error(),
+			})
+			continue
+		}
+		c := content
+		kind := model.ResourceKind(winner.Rule.ResourceKind)
+		obs = append(obs, model.ResourceObservation{
+			ResourceID: model.ResourceID("file:" + p),
+			Kind:       kind,
+			Identity:   model.Identity{},
+			Representation: model.Representation{
+				RelativePath: cs[0].relPath,
+				Format:       formatOf(cs[0].relPath, kind),
+				Content:      &c,
+			},
+			PolicyID: winner.Rule.ID,
+		})
 	}
 	return obs, diags, nil
-}
-
-// excludedByRule：Exclude 任一 glob 命中文件或其祖先目录即排除。
-func excludedByRule(relLower string, rule model.MappingRule) bool {
-	for _, pattern := range rule.Exclude {
-		pattern = strings.ToLower(pattern)
-		if ok, _ := filepath.Match(pattern, relLower); ok {
-			return true
-		}
-		// 目录模式：命中任何祖先
-		parts := strings.Split(relLower, "/")
-		for i := 1; i < len(parts); i++ {
-			if ok, _ := filepath.Match(pattern, strings.Join(parts[:i], "/")); ok {
-				return true
-			}
-		}
-	}
-	return false
-}
-
-// includedByRule：Include 为空表示全收；非空时至少一项命中文件或祖先目录。
-func includedByRule(relLower string, rule model.MappingRule) bool {
-	if len(rule.Include) == 0 {
-		return true
-	}
-	for _, pattern := range rule.Include {
-		pattern = strings.ToLower(pattern)
-		if ok, _ := filepath.Match(pattern, relLower); ok {
-			return true
-		}
-		parts := strings.Split(relLower, "/")
-		for i := 1; i < len(parts); i++ {
-			if ok, _ := filepath.Match(pattern, strings.Join(parts[:i], "/")); ok {
-				return true
-			}
-		}
-	}
-	return false
 }
 
 func formatOf(relLower string, kind model.ResourceKind) string {

@@ -257,7 +257,7 @@ func errCode(t *testing.T, err error) string {
 
 func TestHeadlessFullChain(t *testing.T) {
 	projectRoot, instanceDir, dataRoot := makeFixtures(t)
-	app, _ := newStack(t, dataRoot)
+	app, db := newStack(t, dataRoot)
 	ctx := context.Background()
 
 	before := snapshotEndpoints(t, projectRoot, instanceDir)
@@ -266,8 +266,17 @@ func TestHeadlessFullChain(t *testing.T) {
 	if rel.Health != string(model.HealthHealthy) {
 		t.Fatalf("新建关系健康状态: %s", rel.Health)
 	}
-	if rel.PolicySet != "default-v1" || rel.Revision < 1 {
-		t.Fatalf("关系字段: %+v", rel)
+	// ADR-0002 决议 1/4：创建即第 1 代（初始 policy 写入不算修改，精确 == 1）
+	if rel.PolicySet != "default-v1" || rel.Revision != 1 {
+		t.Fatalf("创建后关系应精确 revision=1: %+v", rel)
+	}
+	// ADR-0002 决议 4：创建后 GetPolicy 可读且 policy 自身 Revision == 1
+	pol, err := sqlite.NewMappingRepository(db).GetPolicy(ctx, rel.RelationID)
+	if err != nil {
+		t.Fatalf("创建后应可读取初始 policy: %v", err)
+	}
+	if pol.PolicyID != "default-v1" || pol.Revision != 1 {
+		t.Fatalf("初始 policy 应为 default-v1 revision=1: %+v", pol)
 	}
 
 	scanAndWait(t, app, rel.RelationID)
@@ -354,6 +363,92 @@ func mapsEqual(a, b map[string]string) bool {
 		}
 	}
 	return true
+}
+
+// TestHeadlessMappingCollisionDiagnosticsFlow 验证 P0-5 诊断链路端到端：
+// 策略修改后双规则同前缀碰撞 → 扫描产生 diag.mapping.collision（证据：规则 ID +
+// 路径）→ 诊断持久化进 Snapshot → PrepareSync 后进 Plan（DTO 由 convert 直映）。
+func TestHeadlessMappingCollisionDiagnosticsFlow(t *testing.T) {
+	projectRoot, instanceDir, dataRoot := makeFixtures(t)
+	app, db := newStack(t, dataRoot)
+	ctx := context.Background()
+	rel := mustPrepareAndCreate(t, app, projectRoot, instanceDir)
+
+	// 项目/游戏目录各放一个 config 文件，两条规则同前缀无法唯一决议
+	writeFile(t, filepath.Join(projectRoot, "config", "notes.txt"), "hello")
+	writeFile(t, filepath.Join(instanceDir, "minecraft", "config", "notes.txt"), "hello")
+
+	// 策略修改（SavePolicy）→ revision == 2，双计数语义见 ADR-0002
+	mappings := sqlite.NewMappingRepository(db)
+	pol, err := mappings.GetPolicy(ctx, rel.RelationID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pol.Revision++
+	fileRule := func(id string) model.MappingRule {
+		return model.MappingRule{
+			ID: id, ResourceKind: "text_file",
+			ProjectPrefix: "config", RuntimePrefix: "config",
+			Direction: "bidirectional", Materialization: "copy", MergePolicy: "manual",
+			RuntimeLocalPolicy: "exclude",
+		}
+	}
+	pol.Rules = append(pol.Rules, fileRule("aaa"), fileRule("zzz"))
+	if err := mappings.SavePolicy(ctx, rel.RelationID, pol); err != nil {
+		t.Fatal(err)
+	}
+	rel2, err := app.GetWorkspace(ctx, rel.RelationID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rel2.Relation.Revision != 2 {
+		t.Fatalf("SavePolicy 修改后 revision = %d, 期望 2", rel2.Relation.Revision)
+	}
+
+	scanAndWait(t, app, rel.RelationID)
+	ws, err := app.GetWorkspace(ctx, rel.RelationID)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// 诊断持久化进快照
+	snaps := sqlite.NewSnapshotRepository(db)
+	snapP, err := snaps.Get(ctx, ws.LatestProjectSnapshot.SnapshotID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertCollisionDiag(t, snapP.Diagnostics, "file:config/notes.txt")
+
+	// 诊断进计划（快照 ID 输入，revision 回传权威值）
+	plan, err := app.PrepareSync(ctx, view.PrepareSyncInput{
+		RelationID:             rel.RelationID,
+		RelationRevision:       rel2.Relation.Revision,
+		InputProjectSnapshotID: ws.LatestProjectSnapshot.SnapshotID,
+		InputRuntimeSnapshotID: ws.LatestRuntimeSnapshot.SnapshotID,
+		RequestedExactness:     "exact",
+	})
+	if err != nil {
+		t.Fatalf("PrepareSync: %v", err)
+	}
+	assertCollisionDiag(t, plan.Diagnostics, "file:config/notes.txt")
+}
+
+// assertCollisionDiag 断言诊断列表含 mapping_collision 且证据完整。
+func assertCollisionDiag(t *testing.T, diags []model.Diagnostic, path string) {
+	t.Helper()
+	for _, d := range diags {
+		if d.Code != "diag.mapping.collision" {
+			continue
+		}
+		if d.ResourceID != model.ResourceID(path) {
+			t.Errorf("碰撞证据资源 ID = %q, 期望 %q", d.ResourceID, path)
+		}
+		if len(d.Args) != 2 || d.Args[0] != "aaa" || d.Args[1] != "zzz" {
+			t.Errorf("碰撞证据规则 ID = %v, 期望 [aaa zzz]", d.Args)
+		}
+		return
+	}
+	t.Fatalf("缺少 diag.mapping.collision 诊断: %+v", diags)
 }
 
 func TestHeadlessRepeatScanSameDigest(t *testing.T) {

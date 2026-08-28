@@ -257,7 +257,7 @@ func TestScanManagedFilesPolicy(t *testing.T) {
 	policy.Rules = append(policy.Rules, model.MappingRule{
 		ID: "config", ResourceKind: "text_file",
 		ProjectPrefix: "config", RuntimePrefix: "config",
-		Direction: "bidirectional", Materialization: "copy", MergePolicy: "manual",
+		Direction: "bidirectional", Materialization: "copy", MergePolicy: "manual", RuntimeLocalPolicy: "exclude",
 		Exclude: []string{"config/secret*"},
 	})
 	report, err = New().Scan(context.Background(), dir, ports.ScanOptions{Policy: policy, HashFile: fakeHash})

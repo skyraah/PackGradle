@@ -176,6 +176,8 @@ type UpdateMappingPolicyInput struct {
 
 语义（按 ADR-0002 决议 5 注释）：`PolicyDTO.Revision`（策略集模板版本）与 `RelationDTO.Revision`（关系级策略代次）语义独立、互不驱动；两个数字都不进入用户可见文案或界面。写路径在 P1-POLICY 编译器落地前只做结构校验；编译器落地后 `UpdateMappingPolicy` 增加编译校验（`err.mapping.compile_failed` / `err.mapping.collision`，§3 预留）。
 
+编译器已落地（T04，`internal/application/policy`）：编译期校验方向、资源类型、prefix、include/exclude（root-relative glob 编译证明）与 root 边界，违规返回 `*RuleError` → `err.mapping.compile_failed`（args {0}=rule_id，字段与原因进 detail）。规则决议为「最具体前缀优先」，最长前缀并列无法唯一决议时产出 `diag.mapping.collision` 诊断（证据：并列规则 ID + 命中路径），该路径从观察剔除；诊断随快照持久化，并经 `SyncPlan.diagnostics` / `SyncPlanDTO.diagnostics` 透出（证据性数据，不参与 PlanDigest/SnapshotDigest）。
+
 ### 2.4 Rebind（Prepare/Apply）
 
 ```go

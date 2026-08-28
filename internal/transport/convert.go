@@ -154,6 +154,13 @@ func planDTO(v view.SyncPlanView) SyncPlanDTO {
 	for _, r := range v.ConfirmationRequirements {
 		reqs = append(reqs, ConfirmationRequirementDTO{Code: r.Code, Severity: r.Severity, ResourceCount: r.ResourceCount})
 	}
+	diags := make([]DiagnosticDTO, 0, len(v.Diagnostics))
+	for _, d := range v.Diagnostics {
+		diags = append(diags, DiagnosticDTO{
+			Severity: d.Severity, Code: d.Code, Args: strs(d.Args), Detail: d.Detail,
+			ResourceID: string(d.ResourceID), RelativePath: d.RelativePath,
+		})
+	}
 	return SyncPlanDTO{
 		SchemaVersion: v.SchemaVersion, PlanID: v.PlanID, RelationID: v.RelationID,
 		Kind: v.Kind, ResolvedFromPlanID: v.ResolvedFromPlanID,
@@ -167,6 +174,7 @@ func planDTO(v view.SyncPlanView) SyncPlanDTO {
 		PlanDigest:       v.PlanDigest, Status: v.Status, ExpiresAt: v.ExpiresAt,
 		Operations: ops, Conflicts: conflicts, Resolutions: resolutions,
 		ConfirmationRequirements: reqs,
+		Diagnostics:              diags,
 		Summary: PlanSummaryDTO{
 			ResourceTotal: v.Summary.ResourceTotal, AdoptEqualCount: v.Summary.AdoptEqualCount,
 			CreateCount: v.Summary.CreateCount, ModifyCount: v.Summary.ModifyCount,

@@ -12,6 +12,7 @@ import (
 )
 
 // MappingRepository 是 ports.MappingRepository 的 SQLite 实现（mappings 表）。
+// 修订语义（ADR-0002）：CreatePolicy 写入创建时初始 policy 且不递增 revision；
 // SavePolicy 在同一事务内 UPSERT mappings 并递增 relations.revision，
 // 使旧 Plan 立即 stale（§8.3：映射修订与关系修订必须同事务联动）。
 type MappingRepository struct {
@@ -43,7 +44,32 @@ func (r *MappingRepository) GetPolicy(ctx context.Context, relationID string) (m
 	return p, nil
 }
 
-// SavePolicy 单事务保存策略（UPSERT）并递增 relations.revision。
+// CreatePolicy 写入创建时的初始 policy（INSERT，不递增 relations.revision，
+// ADR-0002 决议 1/6：创建时初始写入不算修改，Relation 出生即 revision=1 且已带
+// policy）。关系不存在返回 ErrNotFound；已有 policy 返回 ErrDuplicate。
+func (r *MappingRepository) CreatePolicy(ctx context.Context, relationID string, p model.MappingPolicy) error {
+	policyJSON, err := json.Marshal(p)
+	if err != nil {
+		return fmt.Errorf("sqlite: 序列化关系 %s 初始映射策略: %w", relationID, err)
+	}
+	if _, err := r.db.ExecContext(ctx, `
+INSERT INTO mappings(relation_id, policy_id, revision, policy_json, updated_at)
+VALUES(?,?,?,?,?)`,
+		relationID, p.PolicyID, p.Revision, string(policyJSON),
+		time.Now().UTC().Format(time.RFC3339)); err != nil {
+		if isForeignKeyViolation(err) {
+			return fmt.Errorf("sqlite: 写入关系 %s 初始映射策略: %w", relationID, ErrNotFound)
+		}
+		if isUniqueViolation(err) {
+			return fmt.Errorf("sqlite: 写入关系 %s 初始映射策略: %w", relationID, ErrDuplicate)
+		}
+		return fmt.Errorf("sqlite: 写入关系 %s 初始映射策略: %w", relationID, err)
+	}
+	return nil
+}
+
+// SavePolicy 单事务保存策略修改（UPSERT）并递增 relations.revision，
+// 使旧 Plan 立即 stale（§8.3）。初始写入请走 CreatePolicy（不递增）。
 // 关系不存在时 UPDATE 影响 0 行，整个事务回滚并返回 ErrNotFound。
 func (r *MappingRepository) SavePolicy(ctx context.Context, relationID string, p model.MappingPolicy) error {
 	policyJSON, err := json.Marshal(p)

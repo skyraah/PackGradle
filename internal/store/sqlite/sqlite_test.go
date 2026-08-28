@@ -702,6 +702,63 @@ func TestMappingSavePolicyBumpsRevision(t *testing.T) {
 	}
 }
 
+// TestMappingCreatePolicyInitialWriteNoBumpRevision 验证 ADR-0002 修订语义：
+// CreatePolicy 写入创建时初始 policy 且不递增 revision（创建即第 1 代）；
+// 重复初始写入被拒绝；其后的 SavePolicy（创建后的首次修改）才递增到 2。
+func TestMappingCreatePolicyInitialWriteNoBumpRevision(t *testing.T) {
+	db := openTestDB(t)
+	ctx := context.Background()
+	repo := NewMappingRepository(db)
+	relations := NewRelationRepository(db)
+	relationID := fixtureRelation(t, db, "m2")
+
+	policy := model.MappingPolicy{
+		SchemaVersion: model.CurrentSchemaVersion,
+		PolicyID:      "pol_m2",
+		Revision:      1,
+		Rules: []model.MappingRule{
+			{ID: "rule-mod", ResourceKind: "mod", ProjectPrefix: "mods/", RuntimePrefix: "mods/",
+				Direction: "bidirectional", Materialization: "copy", MergePolicy: "packwiz",
+				RuntimeLocalPolicy: "exclude"},
+		},
+	}
+	if err := repo.CreatePolicy(ctx, relationID, policy); err != nil {
+		t.Fatalf("CreatePolicy 失败: %v", err)
+	}
+	rel, err := relations.Get(ctx, relationID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rel.Revision != 1 {
+		t.Errorf("创建时初始写入后 revision = %d, 期望 1（不递增）", rel.Revision)
+	}
+	got, err := repo.GetPolicy(ctx, relationID)
+	if err != nil {
+		t.Fatalf("GetPolicy: %v", err)
+	}
+	if !reflect.DeepEqual(got, policy) {
+		t.Errorf("初始策略往返不一致:\n got  %+v\n want %+v", got, policy)
+	}
+
+	// 重复初始写入 → ErrDuplicate
+	if err := repo.CreatePolicy(ctx, relationID, policy); !errors.Is(err, ErrDuplicate) {
+		t.Errorf("重复 CreatePolicy 应返回 ErrDuplicate, got %v", err)
+	}
+	// 关系不存在 → ErrNotFound
+	if err := repo.CreatePolicy(ctx, "rel_none", policy); !errors.Is(err, ErrNotFound) {
+		t.Errorf("CreatePolicy 不存在关系应返回 ErrNotFound, got %v", err)
+	}
+
+	// 其后的 SavePolicy（创建后的首次修改）→ revision == 2
+	if err := repo.SavePolicy(ctx, relationID, policy); err != nil {
+		t.Fatalf("SavePolicy 失败: %v", err)
+	}
+	rel, _ = relations.Get(ctx, relationID)
+	if rel.Revision != 2 {
+		t.Errorf("首次修改后 revision = %d, 期望 2", rel.Revision)
+	}
+}
+
 // ---- preparation ----
 
 func TestPreparationLifecycle(t *testing.T) {

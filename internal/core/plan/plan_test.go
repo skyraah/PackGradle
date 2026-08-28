@@ -164,6 +164,56 @@ func assertPrecondition(t *testing.T, pc model.Precondition, side, existence, ex
 	}
 }
 
+// TestBuildDraftCarriesSnapshotDiagnostics 验证输入快照的诊断（含
+// mapping_collision 证据）随计划透出、Resolve 保留证据、且不参与 PlanDigest。
+func TestBuildDraftCarriesSnapshotDiagnostics(t *testing.T) {
+	proj := snapshot(model.SideProject, fileObs("file:a", "h1", ""))
+	proj.Diagnostics = []model.Diagnostic{
+		{
+			Severity: "warning", Code: "diag.mapping.collision",
+			Args: []string{"aaa", "zzz"}, RelativePath: "config/a.ini",
+			ResourceID: "file:config/a.ini",
+		},
+	}
+	rt := snapshot(model.SideRuntime, fileObs("file:a", "h1", ""))
+	rt.Diagnostics = []model.Diagnostic{
+		{Severity: "warning", Code: "diag.scan.hash_failed", Args: []string{"mods/x.jar"}},
+	}
+
+	draft, err := BuildDraft(buildInput(nil, proj, rt))
+	if err != nil {
+		t.Fatalf("BuildDraft 报错: %v", err)
+	}
+	if len(draft.Diagnostics) != 2 {
+		t.Fatalf("计划应携带 2 条诊断, got %d: %+v", len(draft.Diagnostics), draft.Diagnostics)
+	}
+	if draft.Diagnostics[0].Code != "diag.mapping.collision" || draft.Diagnostics[1].Code != "diag.scan.hash_failed" {
+		t.Errorf("诊断顺序应为 project 在前: %+v", draft.Diagnostics)
+	}
+	if draft.Diagnostics[0].Args[0] != "aaa" || draft.Diagnostics[0].Args[1] != "zzz" {
+		t.Errorf("碰撞证据丢失: %+v", draft.Diagnostics[0])
+	}
+
+	// digest 不受诊断影响：同操作、不同诊断 → 相同 PlanDigest
+	proj2 := snapshot(model.SideProject, fileObs("file:a", "h1", ""))
+	draft2, err := BuildDraft(buildInput(nil, proj2, snapshot(model.SideRuntime, fileObs("file:a", "h1", ""))))
+	if err != nil {
+		t.Fatalf("BuildDraft 报错: %v", err)
+	}
+	if draft.PlanDigest != draft2.PlanDigest {
+		t.Errorf("诊断不应影响 PlanDigest: %s vs %s", draft.PlanDigest, draft2.PlanDigest)
+	}
+
+	// Resolve 保留证据
+	resolved, err := Resolve(draft, proj, rt, nil)
+	if err != nil {
+		t.Fatalf("Resolve 报错: %v", err)
+	}
+	if len(resolved.Diagnostics) != 2 || resolved.Diagnostics[0].Code != "diag.mapping.collision" {
+		t.Fatalf("resolved 计划应保留诊断证据: %+v", resolved.Diagnostics)
+	}
+}
+
 // TestBuildDraftDeterminism 验证相同输入两次构建产生相同 digest 与操作序列，
 // 且与 map 插入顺序无关。
 func TestBuildDraftDeterminism(t *testing.T) {

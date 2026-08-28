@@ -210,6 +210,17 @@ type ConfirmationRequirementDTO struct {
 	ResourceCount int    `json:"resource_count"`
 }
 
+// DiagnosticDTO 是扫描/映射诊断投影（含 diag.mapping.collision 碰撞证据；
+// code 的文案由前端 locale 提供）。
+type DiagnosticDTO struct {
+	Severity     string   `json:"severity"`
+	Code         string   `json:"code"`
+	Args         []string `json:"args"`
+	Detail       string   `json:"detail,omitempty"`
+	ResourceID   string   `json:"resource_id,omitempty"`
+	RelativePath string   `json:"relative_path,omitempty"`
+}
+
 type PlanSummaryDTO struct {
 	ResourceTotal   int `json:"resource_total"`
 	AdoptEqualCount int `json:"adopt_equal_count"`
@@ -243,4 +254,5 @@ type SyncPlanDTO struct {
 	Resolutions                []ResolutionDTO              `json:"resolutions"`
 	ConfirmationRequirements   []ConfirmationRequirementDTO `json:"confirmation_requirements"`
 	Summary                    PlanSummaryDTO               `json:"summary"`
+	Diagnostics                []DiagnosticDTO              `json:"diagnostics"`
 }
