@@ -150,6 +150,25 @@ func TestCfCacheStorePrune(t *testing.T) {
 	}
 }
 
+// UpsertMany：多条合并一次写盘，读回全部命中
+func TestCfCacheStoreUpsertMany(t *testing.T) {
+	store := NewCfCacheStore(filepath.Join(t.TempDir(), ".cache"))
+	entries := map[string]CfFileCache{
+		"1:1": {DisplayName: "a.jar", ReleaseType: 1},
+		"2:2": {DisplayName: "b.jar", ReleaseType: 2},
+	}
+	if err := store.UpsertMany(entries); err != nil {
+		t.Fatal(err)
+	}
+	cache, err := store.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(cache) != 2 || cache["1:1"].DisplayName != "a.jar" || cache["2:2"].DisplayName != "b.jar" {
+		t.Errorf("UpsertMany 结果不正确: %+v", cache)
+	}
+}
+
 // 缓存键格式
 func TestCacheKey(t *testing.T) {
 	if got := CacheKey(328085, 7178761); got != "328085:7178761" {

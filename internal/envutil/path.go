@@ -27,8 +27,8 @@ func FindExecutable(configPath, exeName, envVar string, candidates ...string) (s
 		}
 	}
 
-	// 1. 环境变量（用户可用 %VAR% 配置并调用）
-	if p := strings.TrimSpace(os.Getenv(envVar)); p != "" {
+	// 1. 环境变量（用户可用 %VAR% 配置并调用；值中的 %VAR% 同样展开）
+	if p := strings.TrimSpace(expandEnv(os.Getenv(envVar))); p != "" {
 		if resolved, ok := resolveToolPath(p, exeName); ok {
 			return resolved, "env", true
 		}

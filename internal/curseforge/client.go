@@ -13,6 +13,9 @@ import (
 // cfBaseURL 是 CurseForge 官方 API 基地址（测试中可替换）
 var cfBaseURL = "https://api.curseforge.com"
 
+// httpClient 全局共享：连接复用 + 统一 15s 超时
+var httpClient = &http.Client{Timeout: 15 * time.Second}
+
 // BaseURL 返回当前 API 基地址（供测试保存/恢复）
 func BaseURL() string {
 	return cfBaseURL
@@ -48,7 +51,7 @@ func cfGet(apiKey, path string) ([]byte, error) {
 	req.Header.Set("Accept", "application/json")
 	req.Header.Set("User-Agent", "PackGradle/1.0")
 
-	client := &http.Client{Timeout: 15 * time.Second}
+	client := httpClient
 	resp, err := client.Do(req)
 	if err != nil {
 		return nil, errs.NewDetail("err.cf.request", err.Error())

@@ -148,8 +148,11 @@ func (s *PrismService) MetaDiff(projectName string) (prism.MetaDiff, error) {
 
 	// 项目侧：index.toml 权威列表
 	projectMods := map[string]string{}
+	// CurseForge 源 mod 的版本不在 pw.toml 顶层，而在 .cache/modversion.cache 的 displayName；
+	// 差异计算必须回退到缓存，否则 CF mod 的版本差异永远不可见。
+	cfCache, _ := curseforge.NewCfCacheStore(filepath.Join(lp.Pack.Path, ".cache")).Load()
 	for _, m := range lp.Pack.Mods {
-		projectMods[m.ID] = m.Version
+		projectMods[m.ID] = projectMetaVersion(m, cfCache)
 	}
 
 	diff := prism.MetaDiff{FetchedAt: time.Now().Format(time.RFC3339)}
@@ -177,6 +180,20 @@ func (s *PrismService) MetaDiff(projectName string) (prism.MetaDiff, error) {
 	// 刷新缓存（写失败不阻断展示——缓存仅用于持久化与离线读取）
 	_ = appconfig.WriteTomlAtomic(filepath.Join(lp.Pack.Path, ".cache", "metadiff.cache"), diff)
 	return diff, nil
+}
+
+// projectMetaVersion 返回项目侧用于差异比较的版本：
+// 顶层/update 表版本优先，CurseForge 源回退到版本缓存 displayName。
+func projectMetaVersion(mod packwiz.ModInfo, cache map[string]curseforge.CfFileCache) string {
+	if mod.Version != "" {
+		return mod.Version
+	}
+	if cache != nil && mod.CfProjectID > 0 && mod.CfFileID > 0 {
+		if entry, ok := cache[curseforge.CacheKey(mod.CfProjectID, mod.CfFileID)]; ok {
+			return entry.DisplayName
+		}
+	}
+	return ""
 }
 
 // parseMetaVersion 轻量解析 pw.toml 的版本号：

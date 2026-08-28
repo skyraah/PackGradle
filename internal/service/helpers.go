@@ -54,7 +54,7 @@ func resolveInstancesDir(cfg appconfig.Config) (instDir string, fromAuto bool, e
 		return "", false, err
 	}
 	if !fsutil.IsDir(dir) {
-		return "", false, errs.NewDetail("err.prism.instances_dir_not_found", "目录不存在", dir)
+		return "", false, errs.New("err.prism.instances_dir_not_found", dir)
 	}
 	return dir, true, nil
 }
@@ -78,11 +78,31 @@ func findInstanceByID(instances []prism.Instance, id string) (prism.Instance, bo
 	return prism.Instance{}, false
 }
 
-// removeHardlinkFiles 删除实例侧的顶层文件硬链接（只减引用计数，项目侧内容不受影响）
-func removeHardlinkFiles(inst prism.Instance, files []string) {
+// removeHardlinkFiles 删除实例侧顶层文件硬链接。删除前校验实例侧文件与项目侧文件
+// 仍是同一文件（同卷 + 同文件 ID）：若游戏/启动器已把实例侧文件改写为独立文件，
+// 则跳过删除，避免误删用户数据。
+func removeHardlinkFiles(inst prism.Instance, projectPath string, files []string) {
 	for _, f := range files {
-		_ = os.Remove(filepath.Join(inst.GameDir, filepath.FromSlash(f)))
+		instSide := filepath.Join(inst.GameDir, filepath.FromSlash(f))
+		projSide := filepath.Join(projectPath, filepath.FromSlash(f))
+		if hardlinkPointsTo(instSide, projSide) {
+			_ = os.Remove(instSide)
+		}
 	}
+}
+
+// hardlinkPointsTo 判断 a 与 b 是否指向同一物理文件（用于删除硬链接前的身份校验）。
+// 任一文件缺失、类型不同（如 b 已是目录）或系统无法判定时返回 false——宁可残留链接也不误删。
+func hardlinkPointsTo(a, b string) bool {
+	fa, err1 := os.Stat(a)
+	fb, err2 := os.Stat(b)
+	if err1 != nil || err2 != nil {
+		return false
+	}
+	if fa.IsDir() || fb.IsDir() {
+		return false
+	}
+	return os.SameFile(fa, fb)
 }
 
 // normalizeFileList 规范化相对文件清单：去首尾空白、转斜杠、剔除空项、去重、排序
@@ -99,6 +119,48 @@ func normalizeFileList(files []string) []string {
 	}
 	sort.Strings(clean)
 	return clean
+}
+
+// normalizeFileListStrict 同 normalizeFileList，但拒绝绝对路径与越界（..）条目，
+// 返回 err.sync.invalid_file 结构化错误。所有来自客户端的文件清单都应走此函数。
+func normalizeFileListStrict(files []string) ([]string, error) {
+	for _, f := range files {
+		f = strings.TrimSpace(f)
+		if f == "" {
+			continue
+		}
+		if !validRelPath(filepath.ToSlash(f)) {
+			return nil, errs.New("err.sync.invalid_file", f)
+		}
+	}
+	return normalizeFileList(files), nil
+}
+
+// validateRelDir 校验客户端传入的相对目录参数：非空、非绝对路径、无卷名、
+// 无 . / .. 段。返回去空白后的值，非法时返回 err.sync.invalid_dir。
+// 校验通过后 filepath.Join(root, dir) 不可能逃出 root。
+func validateRelDir(dir string) (string, error) {
+	dir = strings.TrimSpace(dir)
+	if dir == "" {
+		return "", errs.New("err.sync.empty_dir")
+	}
+	if !validRelPath(filepath.ToSlash(dir)) {
+		return "", errs.New("err.sync.invalid_dir", dir)
+	}
+	return dir, nil
+}
+
+// validRelPath 判断相对路径是否安全：非绝对路径、无盘符/卷名、无 . / .. 段
+func validRelPath(p string) bool {
+	if p == "" || filepath.IsAbs(p) || filepath.VolumeName(p) != "" {
+		return false
+	}
+	for _, seg := range strings.Split(p, "/") {
+		if seg == "" || seg == "." || seg == ".." {
+			return false
+		}
+	}
+	return true
 }
 
 // mergeUniqueSorted 合并两个已排序、无重复的字符串切片（保持有序去重）。

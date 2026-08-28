@@ -20,6 +20,12 @@ func CreateMinimalInstance(instancesDir string, req CreateRequest) (Instance, er
 	if id == "" {
 		return Instance{}, errs.New("err.prism.create_invalid_name", req.Name)
 	}
+	if strings.TrimSpace(req.Minecraft) == "" {
+		return Instance{}, errs.New("err.prism.create_invalid_version")
+	}
+	if req.Modloader != "" && strings.TrimSpace(req.ModloaderVersion) == "" {
+		return Instance{}, errs.New("err.prism.create_invalid_loader_version", req.Modloader)
+	}
 	dir := filepath.Join(instancesDir, id)
 	if fsutil.Exists(dir) {
 		return Instance{}, errs.New("err.prism.instance_exists", id)
@@ -88,7 +94,9 @@ type mmcComponentOut struct {
 	Important bool   `json:"important,omitempty"`
 }
 
-// sanitizeInstanceID 将项目名合法化为实例目录名（Windows 非法字符替换为 _）
+// sanitizeInstanceID 将项目名合法化为实例目录名：
+// Windows 非法字符替换为 _；保留设备名（CON/PRN/AUX/NUL/COM1-9/LPT1-9，含带扩展名形式）
+// 加 _ 前缀；结尾的点与空格替换为空（Windows 目录不允许）。
 func sanitizeInstanceID(name string) string {
 	name = strings.TrimSpace(name)
 	var b strings.Builder
@@ -99,7 +107,26 @@ func sanitizeInstanceID(name string) string {
 			b.WriteRune(r)
 		}
 	}
-	return b.String()
+	out := b.String()
+	if isReservedWindowsName(out) {
+		out = "_" + out
+	}
+	return strings.TrimRight(out, ". ")
+}
+
+// isReservedWindowsName 判断名称是否为 Windows 保留设备名（忽略扩展名）
+func isReservedWindowsName(name string) bool {
+	base := strings.ToUpper(name)
+	if i := strings.IndexByte(base, '.'); i >= 0 {
+		base = base[:i]
+	}
+	switch base {
+	case "CON", "PRN", "AUX", "NUL",
+		"COM1", "COM2", "COM3", "COM4", "COM5", "COM6", "COM7", "COM8", "COM9",
+		"LPT1", "LPT2", "LPT3", "LPT4", "LPT5", "LPT6", "LPT7", "LPT8", "LPT9":
+		return true
+	}
+	return false
 }
 
 // loaderUID 反查加载器名对应的组件 uid

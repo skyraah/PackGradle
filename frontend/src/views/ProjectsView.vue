@@ -1,492 +1,386 @@
 <script setup lang="ts">
-import { onMounted, ref, watch } from 'vue'
+// 项目列表：加载器着色卡片 + 搜索 + 加载器过滤 + 行内操作。
+// 写操作全部经任务中心（进度可见、结果可追溯）；列表 keep-alive 保持搜索/滚动状态。
+import { computed, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { Dialogs } from '@wailsio/runtime'
-import { PackwizService } from '../../bindings/packgradle/internal/service'
-import type { PackProject, ModInfo, UpdateCheckResult } from '../../bindings/packgradle/internal/packwiz'
-import { useSnackbar } from '../composables/useSnackbar'
-import { useApiKeyGuide } from '../composables/useApiKeyGuide'
-import { useProjects } from '../composables/useProjects'
-import { errText, displayText } from '../utils/errors'
-import { isCfMod, cfReleaseKey, cfDateText, loaderChips, sideColors } from '../utils/cf'
-import { projectsVersion } from '../nav'
+import { useRouter } from 'vue-router'
+import { PackwizService } from '../api'
+import { pickPackToml } from '../utils/dialogs'
+import type { PackProject } from '../../bindings/packgradle/internal/packwiz'
+import { loadProjects, setProjects, projectsVersion, projects, loaded } from '../stores/projects'
+import { runTask } from '../stores/taskCenter'
+import { showSnackbar } from '../stores/ui'
+import { displayText, errText } from '../utils/errors'
+import { loaderChips } from '../utils/cf'
+import PageHeader from '../components/common/PageHeader.vue'
+import EmptyState from '../components/common/EmptyState.vue'
+import ConfirmDialog from '../components/common/ConfirmDialog.vue'
+import CheckUpdatesDialog from '../components/projects/CheckUpdatesDialog.vue'
+
+// keep-alive 依赖组件名匹配
+defineOptions({ name: 'ProjectsView' })
 
 const { t } = useI18n()
+const router = useRouter()
 
-// 项目列表走共享缓存：视图切换不再重复解析全部 pack.toml
-const { projects, loaded: projectsLoaded, loadProjects, setProjects } = useProjects()
 const loading = ref(false)
-const importing = ref(false)
-const expanded = ref<string | null>(null)
-const { snackbar, snackbarMsg, show } = useSnackbar()
+const loadError = ref('')
+const search = ref('')
+const loaderFilter = ref<string[]>([])
+
+// 行级操作状态
 const refreshing = ref<string | null>(null)
-const refreshOutput = ref('')
-const outputDialog = ref(false)
-// 移除项目确认对话框（替代 Wails 原生 Question）
+const fetchingAll = ref<string | null>(null)
+
+// 对话框
 const removeDialog = ref(false)
 const removing = ref<PackProject | null>(null)
+const removeBusy = ref(false)
+const removeError = ref('')
+const checkTarget = ref<PackProject | null>(null)
+const checkOpen = ref(false)
 
-// —— CurseForge 版本获取 ——
-const fetching = ref<string | null>(null) // 单行获取中的 mod id
-const fetchingAll = ref<string | null>(null) // 批量获取中的项目名
-const { apiKeyDialog, handleError, goConfigApiKey } = useApiKeyGuide()
+const loaderOptions = computed(() => {
+    const set = new Set<string>()
+    for (const p of projects.value) if (p.modloader) set.add(p.modloader)
+    return [...set]
+})
+
+const filtered = computed(() => {
+    const q = search.value.trim().toLowerCase()
+    return projects.value.filter(p => {
+        if (loaderFilter.value.length > 0 && !loaderFilter.value.includes(p.modloader)) return false
+        if (!q) return true
+        return p.name.toLowerCase().includes(q)
+    })
+})
 
 function loaderChip(loader: string) {
     return loaderChips[loader] ?? { label: loader, color: 'grey' }
 }
 
-// side 中文标签（side.* 翻译键，缺失时显示未知）
-function sideText(mod: ModInfo): string {
-    return mod.side ? t(`side.${mod.side}`) : t('side.unknown')
-}
-
-// releaseType 中文标签（cf.release.* 翻译键）
-function releaseText(tp: number): string {
-    const key = cfReleaseKey(tp)
-    return key ? t(key) : ''
-}
-
-// 项目解析失败原因（错误码 JSON 文本）→ 用户可读文本
 function projectError(proj: PackProject): string {
     return displayText(proj.error)
 }
 
-// load 强制重新拉取（刷新按钮 / 操作后 / 跨视图数据变更）
-async function load() {
+async function load(force = false): Promise<boolean> {
     loading.value = true
+    loadError.value = ''
     try {
-        await loadProjects(true)
+        await loadProjects(force)
+        return true
+    } catch (e) {
+        loadError.value = errText(e)
+        return false
     } finally {
         loading.value = false
     }
 }
 
-async function importProject() {
-    let picked: string | string[]
-    try {
-        picked = await Dialogs.OpenFile({
-            Title: t('projects.pickPackToml'),
-            CanChooseFiles: true,
-            Filters: [{ DisplayName: 'pack.toml', Pattern: 'pack.toml' }],
-        })
-    } catch {
-        return // 用户取消选择，静默忽略
-    }
-    if (!picked) return
-    importing.value = true
-    try {
-        const proj = await PackwizService.ImportProject(String(picked))
-        show(t('projects.imported', [proj.name, (proj.mods ?? []).length]))
-        await load()
-        expanded.value = proj.name
-    } catch (e) {
-        show(t('projects.importFailed', [errText(e)]))
-    } finally {
-        importing.value = false
-    }
+function openDetail(proj: PackProject) {
+    router.push({ name: 'project-detail', params: { name: proj.name } })
 }
 
-async function removeProject(proj: PackProject) {
-    // Wails 原生 Question 对话框在构建版会挂起（Promise 不返回），改用自定义确认对话框
+// 导入项目：系统对话框选择 pack.toml → PackwizService.ImportProject；取消选择则静默返回
+async function importProject() {
+    const picked = await pickPackToml()
+    if (!picked) return
+    let refreshFailed = false
+    await runTask({
+        title: t('tasks.importProject'),
+        kind: 'import',
+        run: async () => {
+            const proj = await PackwizService.ImportProject(picked)
+            refreshFailed = !(await load(true))
+            openDetail(proj)
+            return t('projects.imported', [proj.name, (proj.mods ?? []).length])
+        },
+        warn: () => refreshFailed,
+    })
+}
+
+function askRemove(proj: PackProject) {
     removing.value = proj
+    removeError.value = ''
     removeDialog.value = true
 }
 
-// 确认移除：执行删除并更新共享缓存
 async function confirmRemove() {
     const proj = removing.value
-    if (!proj) return
-    removeDialog.value = false
-    removing.value = null
+    if (!proj || removeBusy.value) return
+    removeBusy.value = true
+    removeError.value = ''
     try {
-        setProjects(await PackwizService.RemoveProject(proj.name))
-        if (expanded.value === proj.name) expanded.value = null
-    } catch (e) {
-        show(t('projects.removeFailed', [errText(e)]))
+        const result = await runTask({
+            title: t('tasks.removeProject', [proj.name]),
+            kind: 'remove',
+            run: async () => {
+                setProjects(await PackwizService.RemoveProject(proj.name))
+                return t('projects.removed', [proj.name])
+            },
+            onError: message => (removeError.value = message),
+        })
+        if (result !== null) {
+            removeDialog.value = false
+            removing.value = null
+        }
+    } finally {
+        removeBusy.value = false
     }
 }
 
 async function refreshProject(proj: PackProject) {
     refreshing.value = proj.name
+    let output = ''
+    let refreshFailed = false
     try {
-        const result = await PackwizService.RefreshProject(proj.name)
-        outputTitle.value = t('projects.refreshOutputTitle')
-        refreshOutput.value = displayText(result.output || (result.ok ? t('projects.outputSuccess', ['packwiz refresh']) : t('projects.outputFailed')))
-        outputDialog.value = true
-        await load()
+        await runTask({
+            title: t('tasks.refreshProject', [proj.name]),
+            kind: 'refresh',
+            run: async () => {
+                const result = await PackwizService.RefreshProject(proj.name)
+                output = result.output
+                if (!result.ok) throw new Error(displayText(result.output || t('projects.outputFailed')))
+                refreshFailed = !(await load(true))
+                return t('projects.outputSuccess', ['packwiz refresh'])
+            },
+            output: () => output,
+            warn: () => refreshFailed,
+        })
     } finally {
         refreshing.value = null
     }
 }
 
-async function fetchModVersion(proj: PackProject, mod: ModInfo) {
-    fetching.value = mod.id
-    try {
-        const updated = await PackwizService.FetchModVersion(proj.name, mod.id)
-        const target = proj.mods?.find(m => m.id === mod.id)
-        if (target && updated) Object.assign(target, updated)
-        show(t('projects.versionFetched', [updated?.name ?? mod.name]))
-    } catch (e) {
-        handleError(e, show)
-    } finally {
-        fetching.value = null
-    }
-}
-
 async function fetchAllVersions(proj: PackProject) {
     fetchingAll.value = proj.name
+    let hasFailures = false
     try {
-        const results = (await PackwizService.FetchAllModVersions(proj.name)) ?? []
-        const ok = results.filter(r => r.ok).length
-        show(t('projects.versionsFetched', [ok, results.length]))
-        await load()
-    } catch (e) {
-        handleError(e, show)
+        await runTask({
+            title: t('tasks.fetchAllVersions', [proj.name]),
+            kind: 'fetch',
+            run: async () => {
+                const results = (await PackwizService.FetchAllModVersions(proj.name)) ?? []
+                const ok = results.filter(r => r.ok).length
+                hasFailures = ok !== results.length
+                const refreshFailed = !(await load(true))
+                hasFailures ||= refreshFailed
+                return t('projects.versionsFetched', [ok, results.length])
+            },
+            warn: () => hasFailures,
+        })
     } finally {
         fetchingAll.value = null
     }
 }
 
-// —— packwiz 更新检查（复用 packwiz 官方 update 命令）——
-const checking = ref<string | null>(null) // 检查中的项目名
-const checkingProj = ref<PackProject | null>(null) // 检查结果对应的项目
-const checkResult = ref<UpdateCheckResult | null>(null)
-const checkDialog = ref(false)
-const updatingAll = ref(false) // 正在应用全部更新
-const outputTitle = ref('') // 命令输出对话框标题
-
-// 检查：运行 `packwiz update --all` 并喂入 "n"，只列出可更新项不实际应用
-async function checkUpdates(proj: PackProject) {
-    checking.value = proj.name
-    checkingProj.value = proj
-    try {
-        const result = await PackwizService.CheckUpdates(proj.name)
-        checkResult.value = result
-        checkDialog.value = true
-        const upd = result?.updates?.length ?? 0
-        const err = result?.errors?.length ?? 0
-        show(err > 0 ? t('projects.checkDoneWithErrors', [upd, err]) : t('projects.checkDone', [upd]))
-    } catch (e) {
-        show(errText(e))
-    } finally {
-        checking.value = null
-    }
-}
-
-// 应用更新：更新全部有更新的 mod（packwiz update --all -y）
-async function applyAllUpdates() {
-    const proj = checkingProj.value
-    if (!proj) return
-    updatingAll.value = true
-    try {
-        const result = await PackwizService.UpdateMods(proj.name, '')
-        outputTitle.value = t('projects.updateOutputTitle')
-        refreshOutput.value = displayText(result.output || (result.ok ? t('projects.outputSuccess', ['packwiz update']) : t('projects.outputFailed')))
-        outputDialog.value = true
-        checkDialog.value = false
-        await load()
-    } catch (e) {
-        show(errText(e))
-    } finally {
-        updatingAll.value = false
-    }
+function openCheck(proj: PackProject) {
+    checkTarget.value = proj
+    checkOpen.value = true
 }
 
 onMounted(async () => {
-    // 共享缓存已就绪时直接展示（视图切换零开销）；未就绪才拉取
-    if (!projectsLoaded.value) await load()
+    if (!loaded.value) await load()
 })
 
-// 跨视图数据变更（如 Prism 联动页拉取 meta 改变项目 mods）后自动刷新列表
 watch(projectsVersion, () => {
-    void load()
+    void load(true)
 })
 </script>
 
 <template>
-    <div>
-        <v-row class="align-center mb-4">
-            <v-col>
-                <h2 class="text-h5">{{ t('projects.title') }}</h2>
-                <div class="text-body-2 text-medium-emphasis">{{ t('projects.subtitle') }}</div>
-            </v-col>
-            <v-col cols="auto">
-                <v-btn variant="text" icon="mdi-refresh" :loading="loading" @click="load" />
-                <v-btn color="primary" prepend-icon="mdi-folder-open" :loading="importing" @click="importProject">
+    <v-container fluid class="pa-6">
+        <PageHeader :title="t('projects.title')" :subtitle="t('projects.subtitle')">
+            <template #actions>
+                <v-btn variant="text" icon="mdi-refresh" :loading="loading" :title="t('common.refresh')" @click="load(true)" />
+                <v-btn color="primary" class="primary-action" prepend-icon="mdi-folder-open" @click="importProject">
                     {{ t('projects.importBtn') }}
                 </v-btn>
-            </v-col>
-        </v-row>
-
-        <v-alert
-            v-if="projects.length === 0 && !loading"
-            type="info"
-            variant="tonal"
-            class="mb-4"
-            prepend-icon="mdi-information-outline"
-        >
-            {{ t('projects.empty') }}
-        </v-alert>
+            </template>
+        </PageHeader>
 
         <v-progress-linear v-if="loading" indeterminate class="mb-4" />
 
-        <v-card v-for="proj in projects" :key="proj.name" class="mb-4">
-            <v-list-item @click="expanded = expanded === proj.name ? null : proj.name">
-                <template #prepend>
-                    <v-avatar rounded="lg" color="primary" variant="tonal">
-                        <v-icon icon="mdi-package-variant-closed" />
-                    </v-avatar>
-                </template>
-                <template #title>
-                    {{ proj.name }}
-                    <v-chip v-if="proj.error" size="x-small" color="error" class="ml-2">{{ t('projects.parseFailed') }}</v-chip>
-                </template>
-                <template #subtitle>
-                    <span v-if="!proj.error">
-                        <v-chip
-                            v-if="proj.modloader"
-                            size="x-small"
-                            :color="loaderChip(proj.modloader).color"
-                            variant="tonal"
-                            class="mr-2"
-                        >
-                            {{ loaderChip(proj.modloader).label }} {{ proj.modloader_version }}
-                        </v-chip>
-                        <v-chip v-if="proj.minecraft" size="x-small" variant="tonal" class="mr-2">
-                            {{ t('projects.minecraft', [proj.minecraft]) }}
-                        </v-chip>
-                        <v-chip v-if="proj.version" size="x-small" variant="tonal" class="mr-2">
-                            v{{ proj.version }}
-                        </v-chip>
-                        <v-chip v-if="proj.author" size="x-small" variant="tonal">{{ t('projects.author', [proj.author]) }}</v-chip>
-                        <span class="ml-2 text-caption text-medium-emphasis">{{ t('projects.modCount', [(proj.mods ?? []).length]) }}</span>
-                    </span>
-                    <span v-else class="text-error">{{ projectError(proj) }}</span>
-                </template>
-                <template #append>
-                    <v-btn
-                        v-if="!proj.error"
-                        icon="mdi-update"
-                        variant="text"
-                        size="small"
-                        :title="t('projects.tooltipCheckUpdates')"
-                        :loading="checking === proj.name"
-                        @click.stop="checkUpdates(proj)"
-                    />
-                    <v-btn
-                        v-if="!proj.error"
-                        icon="mdi-cloud-download"
-                        variant="text"
-                        size="small"
-                        :title="t('projects.tooltipFetchAll')"
-                        :loading="fetchingAll === proj.name"
-                        @click.stop="fetchAllVersions(proj)"
-                    />
-                    <v-btn
-                        v-if="!proj.error"
-                        icon="mdi-refresh"
-                        variant="text"
-                        size="small"
-                        :title="t('projects.tooltipRefresh')"
-                        :loading="refreshing === proj.name"
-                        @click.stop="refreshProject(proj)"
-                    />
-                    <v-btn
-                        icon="mdi-delete-outline"
-                        variant="text"
-                        size="small"
-                        color="error"
-                        :title="t('projects.tooltipRemove')"
-                        @click.stop="removeProject(proj)"
-                    />
-                </template>
-            </v-list-item>
+        <v-alert v-if="loadError" type="error" variant="tonal" class="mb-5">
+            <div class="d-flex align-center ga-3">
+                <span class="flex-grow-1">{{ loadError }}</span>
+                <v-btn size="small" variant="tonal" @click="load(true)">{{ t('common.refresh') }}</v-btn>
+            </div>
+        </v-alert>
 
-            <v-expand-transition>
-                <div v-if="expanded === proj.name && !proj.error">
-                    <v-divider />
-                    <v-table density="compact">
-                        <thead>
-                            <tr>
-                                <th>{{ t('projects.colMod') }}</th>
-                                <th class="w-25">{{ t('projects.colSide') }}</th>
-                                <th class="w-30">{{ t('projects.colFile') }}</th>
-                                <th class="w-25">{{ t('projects.colVersion') }}</th>
-                                <th class="text-right">{{ t('projects.colAction') }}</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            <tr v-for="mod in proj.mods ?? []" :key="mod.id">
-                                <td>
-                                    {{ mod.name || mod.id }}
-                                    <div class="text-caption text-medium-emphasis">{{ mod.id }}</div>
-                                </td>
-                                <td>
-                                    <v-chip
-                                        size="x-small"
-                                        :color="sideColors[mod.side] ?? 'grey'"
-                                        variant="tonal"
-                                    >
-                                        {{ sideText(mod) }}
-                                    </v-chip>
-                                </td>
-                                <td class="text-caption">{{ mod.file || '—' }}</td>
-                                <td class="text-caption">
-                                    <!-- 本地版本优先；CurseForge displayName 与文件名一致时不再重复显示，改为发布日期 -->
-                                    <span v-if="mod.version" :title="mod.cf_version || ''">{{ mod.version }}</span>
-                                    <span v-else-if="mod.cf_version && mod.cf_version !== mod.file">{{ mod.cf_version }}</span>
-                                    <span v-else-if="mod.cf_version">{{ t('projects.published') }} {{ cfDateText(mod.cf_file_date) || '—' }}</span>
-                                    <span v-else>—</span>
-                                    <div v-if="mod.cf_version && mod.cf_version !== mod.file" class="text-medium-emphasis">
-                                        {{ releaseText(mod.cf_release_type) }}
-                                        <template v-if="mod.cf_release_type && mod.cf_file_date"> · </template>{{ cfDateText(mod.cf_file_date) }}
-                                    </div>
-                                    <div v-else-if="mod.cf_version && releaseText(mod.cf_release_type)" class="text-medium-emphasis">
-                                        {{ releaseText(mod.cf_release_type) }}
-                                    </div>
-                                </td>
-                                <td class="text-right">
-                                    <v-btn
-                                        v-if="isCfMod(mod)"
-                                        icon="mdi-cloud-download-outline"
-                                        size="x-small"
-                                        variant="text"
-                                        :loading="fetching === mod.id"
-                                        :disabled="fetchingAll !== null"
-                                        :title="mod.cf_version ? t('projects.tooltipRefetch') : t('projects.tooltipFetch')"
-                                        @click="fetchModVersion(proj, mod)"
-                                    />
-                                </td>
-                            </tr>
-                            <tr v-if="(proj.mods ?? []).length === 0">
-                                <td colspan="5" class="text-center text-medium-emphasis">{{ t('projects.noMods') }}</td>
-                            </tr>
-                        </tbody>
-                    </v-table>
-                </div>
-            </v-expand-transition>
+        <!-- 工具行：搜索 + 加载器过滤 -->
+        <div v-if="projects.length > 0" class="d-flex align-center flex-wrap ga-3 mb-4">
+            <v-text-field
+                v-model="search"
+                :placeholder="t('projects.search')"
+                prepend-inner-icon="mdi-magnify"
+                density="comfortable"
+                hide-details
+                clearable
+                class="search-field"
+            />
+            <v-chip-group v-model="loaderFilter" multiple selected-class="chip-on">
+                <v-chip v-for="l in loaderOptions" :key="l" :value="l" variant="tonal" filter>
+                    {{ loaderChip(l).label }}
+                </v-chip>
+            </v-chip-group>
+        </div>
+
+        <!-- 空状态 -->
+        <v-card v-if="projects.length === 0 && !loading && !loadError" class="py-4">
+            <EmptyState icon="mdi-package-variant-closed" :title="t('dashboard.projectsEmpty')" :text="t('dashboard.projectsEmptyHint')">
+                <template #actions>
+                    <v-btn color="primary" prepend-icon="mdi-folder-open" @click="importProject">
+                        {{ t('projects.importBtn') }}
+                    </v-btn>
+                </template>
+            </EmptyState>
         </v-card>
 
-        <v-dialog v-model="outputDialog" max-width="640">
-            <v-card>
-                <v-card-title class="text-subtitle-1">{{ outputTitle }}</v-card-title>
-                <v-card-text>
-                    <pre class="text-body-2 refresh-output">{{ refreshOutput }}</pre>
-                </v-card-text>
-                <v-card-actions>
-                    <v-spacer />
-                    <v-btn variant="tonal" @click="outputDialog = false">{{ t('projects.close') }}</v-btn>
-                </v-card-actions>
-            </v-card>
-        </v-dialog>
+        <!-- 无匹配 -->
+        <div v-else-if="filtered.length === 0" class="text-body-2 text-medium-emphasis text-center py-8">
+            {{ t('projects.noMatch', [search]) }}
+        </div>
 
-        <v-dialog v-model="checkDialog" max-width="640">
-            <v-card>
-                <v-card-title class="text-subtitle-1">
-                    <v-icon icon="mdi-update" class="mr-1" />
-                    {{ t('projects.checkDialogTitle') }}
-                </v-card-title>
-                <v-card-text>
-                    <v-alert
-                        v-if="!checkResult?.ok"
-                        type="error"
-                        variant="tonal"
-                        density="compact"
-                        class="mb-3"
-                    >
-                        {{ t('projects.checkFailed') }}
-                    </v-alert>
-                    <v-alert
-                        v-else-if="(checkResult?.updates?.length ?? 0) === 0 && (checkResult?.errors?.length ?? 0) === 0"
-                        type="success"
-                        variant="tonal"
-                        density="compact"
-                        class="mb-3"
-                    >
-                        {{ t('projects.allUpToDate') }}
-                    </v-alert>
-                    <v-list v-if="(checkResult?.updates?.length ?? 0) > 0" density="compact" class="mb-3">
-                        <v-list-subheader>{{ t('projects.hasUpdates', [checkResult?.updates?.length]) }}</v-list-subheader>
-                        <v-list-item v-for="u in checkResult?.updates ?? []" :key="u.name">
-                            <v-list-item-title class="text-body-2">{{ u.name }}</v-list-item-title>
-                            <v-list-item-subtitle class="text-caption">
-                                {{ u.current_file }}
-                                <v-icon icon="mdi-arrow-right" size="x-small" />
-                                <span class="text-primary">{{ u.latest_file }}</span>
-                            </v-list-item-subtitle>
-                        </v-list-item>
-                    </v-list>
-                    <v-list v-if="(checkResult?.errors?.length ?? 0) > 0" density="compact" class="mb-3">
-                        <v-list-subheader>{{ t('projects.failedSkipped', [checkResult?.errors?.length]) }}</v-list-subheader>
-                        <v-list-item v-for="e in checkResult?.errors ?? []" :key="e.name + e.error">
-                            <v-list-item-title class="text-caption">
-                                {{ e.name }}：<span class="text-error">{{ displayText(e.error) }}</span>
-                            </v-list-item-title>
-                        </v-list-item>
-                    </v-list>
-                    <pre class="text-body-2 refresh-output">{{ checkResult?.output }}</pre>
-                </v-card-text>
-                <v-card-actions>
-                    <v-spacer />
-                    <v-btn variant="text" @click="checkDialog = false">{{ t('projects.close') }}</v-btn>
-                    <v-btn
-                        v-if="(checkResult?.updates?.length ?? 0) > 0"
-                        color="primary"
-                        variant="tonal"
-                        :loading="updatingAll"
-                        @click="applyAllUpdates"
-                    >
-                        {{ t('projects.applyAll') }}
-                    </v-btn>
-                </v-card-actions>
-            </v-card>
-        </v-dialog>
+        <!-- 项目卡片 -->
+        <v-row v-else>
+            <v-col v-for="proj in filtered" :key="proj.name" cols="12" md="6" xl="4">
+                <v-card class="hover-card project-card" :class="{ 'card-error': proj.error }" @click="openDetail(proj)">
+                    <v-card-text>
+                        <div class="d-flex align-center mb-3">
+                            <v-avatar
+                                rounded="lg"
+                                size="48"
+                                :color="proj.error ? 'error' : loaderChip(proj.modloader).color"
+                                variant="tonal"
+                                class="mr-3"
+                            >
+                                <span class="text-subtitle-1 font-weight-bold">{{ proj.name.slice(0, 1).toUpperCase() }}</span>
+                            </v-avatar>
+                            <div class="flex-grow-1" style="min-width: 0">
+                                <div class="d-flex align-center">
+                                    <span class="text-subtitle-2 font-weight-bold project-name">{{ proj.name }}</span>
+                                    <v-chip v-if="proj.error" size="x-small" color="error" variant="flat" class="ml-2">
+                                        {{ t('projects.parseFailed') }}
+                                    </v-chip>
+                                </div>
+                                <div class="text-caption text-medium-emphasis project-path">{{ proj.path }}</div>
+                            </div>
+                        </div>
 
-        <v-dialog v-model="apiKeyDialog" max-width="480">
-            <v-card>
-                <v-card-title class="d-flex align-center">
-                    <v-icon icon="mdi-key-alert-outline" color="warning" class="mr-2" />
-                    {{ t('projects.apiKeyDialogTitle') }}
-                </v-card-title>
-                <v-card-text>{{ t('projects.apiKeyDialogText') }}</v-card-text>
-                <v-card-actions>
-                    <v-spacer />
-                    <v-btn variant="text" @click="apiKeyDialog = false">{{ t('projects.close') }}</v-btn>
-                    <v-btn color="primary" variant="tonal" @click="goConfigApiKey">{{ t('projects.goConfigureApiKey') }}</v-btn>
-                </v-card-actions>
-            </v-card>
-        </v-dialog>
+                        <template v-if="!proj.error">
+                            <div class="d-flex flex-wrap ga-1 mb-2">
+                                <v-chip v-if="proj.modloader" size="x-small" :color="loaderChip(proj.modloader).color" variant="flat">
+                                    {{ loaderChip(proj.modloader).label }} {{ proj.modloader_version }}
+                                </v-chip>
+                                <v-chip v-if="proj.minecraft" size="x-small" variant="tonal">
+                                    {{ t('projects.minecraft', [proj.minecraft]) }}
+                                </v-chip>
+                                <v-chip v-if="proj.version" size="x-small" variant="tonal">v{{ proj.version }}</v-chip>
+                            </div>
+                            <div class="text-caption text-medium-emphasis">
+                                {{ t('projects.modCount', [(proj.mods ?? []).length]) }}
+                            </div>
+                        </template>
+                        <div v-else class="text-caption text-error">{{ projectError(proj) }}</div>
+                    </v-card-text>
 
-        <!-- 移除项目确认对话框（Wails 原生 Question 在构建版挂起，用自定义对话框替代） -->
-        <v-dialog v-model="removeDialog" max-width="440">
-            <v-card>
-                <v-card-title class="d-flex align-center">
-                    <v-icon icon="mdi-alert-outline" color="warning" class="mr-2" />
-                    {{ t('projects.removeTitle') }}
-                </v-card-title>
-                <v-card-text>{{ t('projects.removeMessage', [removing?.name ?? '']) }}</v-card-text>
-                <v-card-actions>
-                    <v-spacer />
-                    <v-btn variant="text" @click="removeDialog = false">{{ t('projects.cancel') }}</v-btn>
-                    <v-btn color="error" variant="tonal" @click="confirmRemove">{{ t('projects.removeBtn') }}</v-btn>
-                </v-card-actions>
-            </v-card>
-        </v-dialog>
+                    <v-divider />
 
-        <v-snackbar v-model="snackbar" timeout="4000" location="bottom">
-            {{ snackbarMsg }}
-        </v-snackbar>
-    </div>
+                    <v-card-actions class="px-3 py-1">
+                        <v-btn size="small" variant="text" color="primary" append-icon="mdi-arrow-top-right" @click.stop="openDetail(proj)">
+                            {{ t('projects.openDetail') }}
+                        </v-btn>
+                        <v-spacer />
+                        <v-btn
+                            v-if="!proj.error"
+                            icon="mdi-refresh"
+                            size="small"
+                            variant="text"
+                            :title="t('projects.tooltipRefresh')"
+                            :loading="refreshing === proj.name"
+                            @click.stop="refreshProject(proj)"
+                        />
+                        <v-btn
+                            v-if="!proj.error"
+                            icon="mdi-update"
+                            size="small"
+                            variant="text"
+                            :title="t('projects.tooltipCheckUpdates')"
+                            @click.stop="openCheck(proj)"
+                        />
+                        <v-menu>
+                            <template v-slot:activator="{ props }">
+                                <v-btn v-bind="props" icon="mdi-dots-vertical" size="small" variant="text" :title="t('projects.menu')" @click.stop />
+                            </template>
+                            <v-list density="compact" min-width="220">
+                                <v-list-item
+                                    v-if="!proj.error"
+                                    prepend-icon="mdi-cloud-download"
+                                    :title="t('projects.tooltipFetchAll')"
+                                    :disabled="fetchingAll === proj.name"
+                                    @click="fetchAllVersions(proj)"
+                                />
+                                <v-list-item
+                                    prepend-icon="mdi-rocket-launch-outline"
+                                    :title="t('dev.goDev')"
+                                    @click="router.push({ path: '/dev', query: { project: proj.name } })"
+                                />
+                                <v-divider />
+                                <v-list-item
+                                    prepend-icon="mdi-delete-outline"
+                                    class="menu-danger"
+                                    :title="t('projects.tooltipRemove')"
+                                    @click="askRemove(proj)"
+                                />
+                            </v-list>
+                        </v-menu>
+                    </v-card-actions>
+                </v-card>
+            </v-col>
+        </v-row>
+
+        <!-- 移除确认（danger 变体 + 后果列表） -->
+        <ConfirmDialog
+            v-model="removeDialog"
+            :title="t('projects.removeTitle')"
+            :text="t('projects.removeMessage', [removing?.name ?? ''])"
+            :consequences="[t('projects.removeC1'), t('projects.removeC2')]"
+            :confirm-text="t('projects.removeBtn')"
+            icon="mdi-delete-alert-outline"
+            danger
+            :loading="removeBusy"
+            :error="removeError"
+            @confirm="confirmRemove"
+        />
+
+        <!-- 更新检查 -->
+        <CheckUpdatesDialog v-model="checkOpen" :project="checkTarget" @changed="load(true)" />
+    </v-container>
 </template>
 
 <style scoped>
-.refresh-output {
-    max-height: 320px;
-    overflow: auto;
-    white-space: pre-wrap;
-    word-break: break-all;
-    background: rgb(var(--v-theme-surface-variant));
-    border-radius: 6px;
-    padding: 12px;
+.search-field {
+    max-width: 320px;
+}
+.project-card {
+    border-radius: 14px;
+}
+.project-name {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.project-path {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.menu-danger {
+    color: rgb(var(--v-theme-error));
+}
+.chip-on {
+    background: rgb(var(--v-theme-primary)) !important;
+    color: rgb(var(--v-theme-on-primary)) !important;
 }
 </style>

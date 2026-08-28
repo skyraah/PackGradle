@@ -52,6 +52,10 @@ func ParseProject(packToml string) (PackProject, error) {
 	if indexName == "" {
 		indexName = "index.toml"
 	}
+	// index 文件路径必须保持在项目目录内，拒绝绝对路径与 .. 越界
+	if !isSafeProjectRelative(filepath.FromSlash(indexName)) {
+		return PackProject{}, errs.New("err.toml.invalid_index", raw.Index.File)
+	}
 	mods, err := scanMods(proj.Path, indexName)
 	if err != nil {
 		proj.Error = err.Error()
@@ -122,13 +126,36 @@ func scanMods(projectDir, indexName string) ([]ModInfo, error) {
 
 	mods := []ModInfo{}
 	for _, f := range idx.Files {
-		if !strings.HasPrefix(f.File, "mods/") {
-			continue // 只关注 mods 目录下的条目
+		rel := filepath.FromSlash(f.File)
+		if !isSafeModsEntry(rel) {
+			continue // 非 mods/ 条目或越界路径（绝对路径/..），忽略不读取
 		}
-		mods = append(mods, scanIndexEntry(projectDir, f.File))
+		mods = append(mods, scanIndexEntry(projectDir, rel))
 	}
 	sortMods(mods)
 	return mods, nil
+}
+
+// isSafeProjectRelative 判断路径是否为安全的项目内相对路径
+func isSafeProjectRelative(p string) bool {
+	p = filepath.Clean(p)
+	if p == "" || filepath.IsAbs(p) || filepath.VolumeName(p) != "" {
+		return false
+	}
+	for _, seg := range strings.Split(p, string(filepath.Separator)) {
+		if seg == ".." {
+			return false
+		}
+	}
+	return true
+}
+
+// isSafeModsEntry 判断 index.toml 条目是否为安全的 mods/ 相对路径
+func isSafeModsEntry(p string) bool {
+	if !isSafeProjectRelative(p) {
+		return false
+	}
+	return p == "mods" || strings.HasPrefix(p, "mods"+string(filepath.Separator))
 }
 
 // scanIndexEntry 按 index.toml 中的一条 mods/ 条目解析对应文件为 ModInfo。

@@ -277,3 +277,18 @@ func TestApiKeySetGetClear(t *testing.T) {
 		t.Errorf("清除后应为空，实际 %q", got)
 	}
 }
+
+// ConfigExists/MarkConfigCreated：首次运行判定与引导完成后落盘
+func TestConfigExistsAndMarkConfigCreated(t *testing.T) {
+	svc := NewEnvService(newTestConfig(t))
+
+	if svc.ConfigExists() {
+		t.Fatal("临时目录中尚无 config.toml，ConfigExists 应为 false")
+	}
+	if err := svc.MarkConfigCreated(); err != nil {
+		t.Fatalf("MarkConfigCreated: %v", err)
+	}
+	if !svc.ConfigExists() {
+		t.Fatal("MarkConfigCreated 后 config.toml 应存在")
+	}
+}

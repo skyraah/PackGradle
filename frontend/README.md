@@ -1,18 +1,50 @@
-# Vue 3 + TypeScript + Vite
+# PackGradle 前端
 
-This template should help get you started developing with Vue 3 and TypeScript in Vite. The template uses Vue 3 `<script setup>` SFCs, check out the [script setup docs](https://v3.vuejs.org/api/sfc-script-setup.html#sfc-script-setup) to learn more.
+Vue 3 + TypeScript + Vite + Vuetify 4（dark）+ vue-i18n + vue-router（hash 模式）。
+Wails 3 桌面应用前端：Go 服务经 Wails 生成的绑定（frontend/bindings，勿手改）供组件调用，
+界面文案唯一来源为 src/locales/zh-CN.json。
 
-## Recommended IDE Setup
+## 目录结构
 
-- [VS Code](https://code.visualstudio.com/) + [Volar](https://marketplace.visualstudio.com/items?itemName=Vue.volar) (and disable Vetur) + [TypeScript Vue Plugin (Volar)](https://marketplace.visualstudio.com/items?itemName=Vue.vscode-typescript-vue-plugin).
+```
+src/
+├── App.vue               应用外壳：顶栏（含 Wails 拖拽区）+ rail 导航抽屉 + 全局 snackbar/引导弹窗
+├── main.ts               入口：Vue + i18n + Vuetify + Router
+├── router/index.ts       路由表（hash 历史）；侧栏导航项由路由 meta 驱动生成
+├── plugins/vuetify.ts    主题（深色石板底 + 祖母绿主色）与组件默认值
+├── assets/main.css       应用级全局样式（滚动条 / 拖拽区 / 文本选择）
+├── stores/               模块级共享状态（无 Pinia 依赖）
+│   ├── projects.ts       项目列表缓存 + 跨视图数据版本号（projectsVersion）
+│   ├── instances.ts      Prism Overview 缓存（实例 + 关联视图一次返回）
+│   ├── env.ts            工具检测结果 + API Key 缓存
+│   ├── apiKeyGuide.ts    CurseForge API Key 错误分流（应用级引导弹窗）
+│   └── ui.ts             全局 snackbar
+├── components/
+│   ├── common/           通用：PageHeader / ConfirmDialog / OutputDialog / EmptyState
+│   ├── projects/         项目域：ModsTable / CheckUpdatesDialog（含单 mod 更新）
+│   └── prism/            Prism 域：LinkDialog / DirLinksDialog / FileSelectDialog / MetaDiffDialog
+├── views/                页面（路由懒加载）
+│   ├── DashboardView.vue      /              工作台
+│   ├── ProjectsView.vue       /projects      项目列表（keep-alive 保持状态）
+│   ├── ProjectDetailView.vue  /projects/:name 项目详情（mod 管理）
+│   ├── InstancesView.vue      /instances     Prism 联动
+│   └── SettingsView.vue       /settings      设置（工具检测 / PATH / API Key）
+├── utils/                errors.ts（错误码渲染）、cf.ts（CurseForge 展示工具）
+└── locales/zh-CN.json    全部文案
+```
 
-## Type Support For `.vue` Imports in TS
+## 约定
 
-TypeScript cannot handle type information for `.vue` imports by default, so we replace the `tsc` CLI with `vue-tsc` for type checking. In editors, we need [TypeScript Vue Plugin (Volar)](https://marketplace.visualstudio.com/items?itemName=Vue.vscode-typescript-vue-plugin) to make the TypeScript language service aware of `.vue` types.
+- 错误处理：Go 端只出错误码，utils/errors.ts 双路径解析（e.cause 与数据字段文本）；
+  API Key 相关错误码由 stores/apiKeyGuide 弹应用级引导框，其余走全局 snackbar。
+- 确认类交互一律用自定义 v-dialog（Wails 原生 Question 在构建版挂起）。
+- 跨视图刷新：meta 拉取等变更 bumpProjectsVersion() + invalidateProjects()，相关视图 watch 后重载。
+- 新增页面：在 router/index.ts 注册路由并写入 meta（titleKey + icon），侧栏与顶栏标题自动出现。
 
-If the standalone TypeScript plugin doesn't feel fast enough to you, Volar has also implemented a [Take Over Mode](https://github.com/johnsoncodehk/volar/discussions/471#discussioncomment-1361669) that is more performant. You can enable it by the following steps:
+## 开发
 
-1. Disable the built-in TypeScript Extension
-   1. Run `Extensions: Show Built-in Extensions` from VSCode's command palette
-   2. Find `TypeScript and JavaScript Language Features`, right click and select `Disable (Workspace)`
-2. Reload the VSCode window by running `Developer: Reload Window` from the command palette.
+```bash
+yarn install   # 依赖（.yarnrc.yml 固定 node-modules 链接器）
+yarn build     # vue-tsc 类型检查 + 生产构建
+yarn dev       # Vite 开发服务器（配合 wails3 dev）
+```

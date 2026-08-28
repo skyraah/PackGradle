@@ -1,6 +1,7 @@
 package service
 
 import (
+	"log"
 	"os"
 	"path/filepath"
 
@@ -10,7 +11,6 @@ import (
 	"packgradle/internal/junction"
 	"packgradle/internal/packwiz"
 	"packgradle/internal/pgignore"
-	"packgradle/internal/prism"
 )
 
 // PackwizService 负责 packwiz 项目的导入、解析与管理
@@ -80,32 +80,20 @@ func (s *PackwizService) RemoveProject(name string) ([]packwiz.PackProject, erro
 }
 
 // cleanupProjectLinks 清理项目的 Prism 联动配置：
-// 删除已建链接（目录 junction + 文件硬链接），随后移除 packgradle.toml。
-// 实例已被删除时跳过链接删除（残留链接由用户手动处理，不阻塞移除）。
+// 删除已建链接（目录 junction + 文件硬链接，含 files 模式），随后移除 packgradle.toml。
+// 实例目录无法定位或实例已被删除时跳过链接删除（残留链接由用户手动处理，不阻塞移除）。
 func (s *PackwizService) cleanupProjectLinks(projectPath string) {
-	pc, err := appconfig.LoadProjectConfig(projectPath)
-	if err != nil || pc.Instance == "" {
-		return // 未关联，无需清理
-	}
-	// 定位实例根目录（与 PrismService 同一套定位链）
-	instDir, _, err := resolveInstancesDir(s.config.Get())
-	if err != nil {
-		_ = os.Remove(appconfig.ProjectConfigPath(projectPath))
-		return
-	}
-	inst, ok := findInstanceByID(prism.ScanInstances(instDir), pc.Instance)
-	if !ok {
-		_ = os.Remove(appconfig.ProjectConfigPath(projectPath))
-		return
-	}
-	for _, dl := range pc.DirLinks {
-		link := filepath.Join(inst.GameDir, filepath.FromSlash(dl.InstanceDir))
-		if isJ, _ := s.junctions.IsJunction(link); isJ {
-			_ = s.junctions.Remove(link) // 仅删链接，目标内容不动
+	_ = appconfig.WithProjectConfigLock(projectPath, func() error {
+		pc, err := appconfig.LoadProjectConfig(projectPath)
+		if err != nil || pc.Instance == "" {
+			return nil // 未关联或配置不可读：直接移除 packgradle.toml 即可
 		}
-	}
-	removeHardlinkFiles(inst, pc.FileLinks)
-	_ = os.Remove(appconfig.ProjectConfigPath(projectPath))
+		if err := removeProjectLinkTargets(s.config, s.junctions, appconfig.ProjectEntry{Path: projectPath}, pc); err != nil {
+			log.Printf("移除项目前清理链接失败（项目目录 %s）: %v", projectPath, err)
+		}
+		_ = os.Remove(appconfig.ProjectConfigPath(projectPath))
+		return nil
+	})
 }
 
 // RefreshProject 在项目目录执行 `packwiz refresh` 并返回输出

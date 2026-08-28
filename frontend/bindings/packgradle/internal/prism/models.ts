@@ -163,6 +163,33 @@ export interface MetaDiff {
 }
 
 /**
+ * ModsWatchEvent 是 mods 目录监听产生的实时差异数据包（后端 → 前端）。
+ * 监听任一侧目录（项目 mods / 实例 mods/.index）变化后，防抖重算 MetaDiff
+ * 并通过 Wails 自定义事件 "packgradle:mods-diff" 推送本结构。
+ */
+export interface ModsWatchEvent {
+    /**
+     * 项目名
+     */
+    "project": string;
+
+    /**
+     * 触发端："project"（项目 mods）/ "instance"（实例 .index）/ "both"
+     */
+    "side": string;
+
+    /**
+     * 双端数据比对结果（Error 非空时为零值）
+     */
+    "diff": MetaDiff;
+
+    /**
+     * 比对失败原因（errs JSON 文本）
+     */
+    "error"?: string;
+}
+
+/**
  * VersionDiffItem 是双端版本不一致的单个 mod
  */
 export interface VersionDiffItem {

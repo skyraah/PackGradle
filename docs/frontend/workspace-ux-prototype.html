@@ -1,0 +1,1533 @@
+<!DOCTYPE html>
+<!-- ============================================================================
+PackGradle 工作区 UX 交互原型（可修改 · Round 1 / P1 主闭环）
+--------------------------------------------------------------------------------
+回答的问题：docs/frontend/05-workspace-ux-prototype.md 定义的新信息架构
+（工作区 / 项目源 / 运行实例 / 设置）落到屏幕上是什么样、规格是否成立？
+
+视觉基准：docs/概念风格.pdf（2026-08-28 起）——壳层（标题栏 + rail）
+#121720、内容区平面底 #1B212D（渐变方案因视觉效果不佳已弃用）、
+祖母绿 #4ADE80 强调。不再以 PCL2 / pcl2.png 为视觉指导；
+05 文档的结构/密度/术语规格继续有效。
+
+假设（重要）：05 文档本身即设计决策（布局/密度/术语/状态均已固定），
+因此本文件【不是】多方案 variant 对比，而是把该规格物化为单方案可交互原型。
+需要对比方案时，请复制本文件改出副本，不要覆盖本文件。
+
+用法：
+  1) 直接双击打开（file:// 离线可用，无任何外部依赖）；
+  2) 或 cd frontend && npx vite --port 5199 后放到静态目录访问。
+  底部浮条：上一画板 / 画板名 / 下一画板（支持 ← → 键），画板对应 05 文档 §13.1。
+  所有数据为内存态「演示数据」，刷新即重置；不持久化任何内容。
+
+覆盖画板（Round 1 / P1）：
+  S-01 S-02 | W-01 W-02 W-03/04 | N-01..N-05 | C-01..C-06 | M-01 | P-01 P-02 P-05
+  R-01/02/03 | E-01 E-02 | SET-01
+待补（Round 2/3，见 05 文档 §17）：P-03 P-04 冲突决议与风险确认执行、
+  H-01..H-03 历史与恢复计划、X-01 恢复详情。
+
+这是抛弃式原型：结论验证后请把决策折回真实代码，本文件归档到抛弃分支。
+============================================================================ -->
+<html lang="zh-CN" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PackGradle 工作区 UX 原型（演示数据）</title>
+<style>
+/* ================= 1. 主题令牌 =================
+   视觉基准：docs/概念风格.pdf（2026-08-28 起，取代 PCL2/pcl2.png）。
+   色值为该 PDF 逐像素采样所得：
+   - 主内容区：平面底 #1B212D（取概念板渐变中位色；2026-08-28 用户反馈渐变
+     视觉效果不佳，已由渐变改为平面背景）
+   - 壳层（标题栏 + icon rail）：#121720，深于内容区
+   - 强调色：祖母绿 #4ADE80；未激活 rail 图标为低饱和灰绿
+   结构/密度/窗口规格仍遵循 05 文档 §11.2/§11.3（非视觉部分不变）。 */
+:root{
+  --bg:#F2F5F9; --surface:#FFFFFF; --surface2:#EDF1F6; --surface3:#E3E9F0;
+  --rail:#FFFFFF;
+  --border:rgba(15,23,42,.14); --border-weak:rgba(15,23,42,.07);
+  --text:#17202B; --muted:#5A6675; --faint:#8B95A3;
+  --rail-icon:#5A6675;
+  --primary:#16A34A; --on-primary:#FFFFFF;
+  --success:#16A34A; --warning:#B45309; --error:#DC2626; --info:#0369A1;
+  --tint-primary:rgba(22,163,74,.10); --tint-success:rgba(22,163,74,.10);
+  --tint-warning:rgba(180,83,9,.11); --tint-error:rgba(220,38,38,.09);
+  --shadow:0 10px 32px rgba(15,23,42,.16);
+  --proto:#7A3FF2;
+}
+html[data-theme="dark"]{
+  --bg:#1B212D; --surface:#222A37; --surface2:#2A3240; --surface3:#333C4C;
+  --rail:#121720;
+  --border:rgba(148,163,184,.14); --border-weak:rgba(148,163,184,.07);
+  --text:#E9EDF3; --muted:#9AA6B6; --faint:#6C7787;
+  --rail-icon:#6F8878;   /* 未激活 rail 图标：低饱和灰绿（概念板采样） */
+  --primary:#4ADE80; --on-primary:#052E16;
+  --success:#4ADE80; --warning:#FBBF24; --error:#F87171; --info:#7DD3FC;
+  --tint-primary:rgba(74,222,128,.13); --tint-success:rgba(74,222,128,.13);
+  --tint-warning:rgba(251,191,36,.13); --tint-error:rgba(248,113,113,.13);
+  --shadow:0 10px 32px rgba(0,0,0,.5);
+}
+
+/* ================= 2. 基础与壳层 ================= */
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{height:100%}
+body{
+  font:13px/1.55 "Segoe UI","Microsoft YaHei UI","Microsoft YaHei",system-ui,sans-serif;
+  background:var(--bg);color:var(--text);overflow:hidden;
+}
+button{font:inherit;color:inherit;background:none;border:none;cursor:pointer}
+input,select{font:inherit;color:var(--text)}
+a{color:var(--primary);text-decoration:none}
+::selection{background:var(--tint-primary)}
+#app{display:flex;flex-direction:column;height:100%}
+
+/* 标题栏 44-48px（§11.2） */
+.titlebar{
+  height:46px;flex:none;display:flex;align-items:center;gap:10px;padding:0 8px 0 0;
+  background:var(--rail);border-bottom:1px solid var(--border);user-select:none;
+}
+.tb-brand{width:68px;flex:none;display:flex;align-items:center;justify-content:center}
+.tb-logo{
+  width:30px;height:30px;border-radius:8px;background:var(--tint-primary);color:var(--primary);
+  border:1px solid var(--tint-primary);
+  display:flex;align-items:center;justify-content:center;font-weight:700;font-size:15px;
+}
+.tb-title{font-size:13.5px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:46vw}
+.tb-sub{color:var(--muted);font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.tb-drag{flex:1;height:100%}           /* Wails 拖拽区占位 */
+.tb-actions{display:flex;align-items:center;gap:6px;padding-right:2px}
+.win-btn{width:40px;height:34px;display:flex;align-items:center;justify-content:center;color:var(--muted);border-radius:6px}
+.win-btn:hover{background:var(--surface2);color:var(--text)}
+.win-btn.close:hover{background:var(--error);color:#fff}
+
+/* 左侧 icon rail 68px（§5.1） */
+.body-row{flex:1;display:flex;min-height:0}
+.rail{
+  width:68px;flex:none;background:var(--rail);border-right:1px solid var(--border);
+  display:flex;flex-direction:column;align-items:center;padding:10px 0;gap:4px;
+}
+.rail-btn{
+  width:48px;height:48px;border-radius:10px;display:flex;flex-direction:column;gap:2px;
+  align-items:center;justify-content:center;color:var(--rail-icon);position:relative;
+}
+.rail-btn span{font-size:10px;line-height:1}
+.rail-btn:hover{background:var(--surface2);color:var(--text)}
+.rail-btn.active{background:var(--tint-primary);color:var(--primary)}
+.rail-spacer{flex:1}
+
+/* 主内容区：唯一纵向滚动容器；平面背景（不用渐变） */
+.main{flex:1;min-width:0;display:flex;flex-direction:column;background:var(--bg)}
+.screen{flex:1;overflow-y:auto;padding:20px 24px 84px}
+@media (max-width:1000px){.screen{padding:16px}}
+
+/* ================= 3. 基础组件 ================= */
+.icon{width:20px;height:20px;flex:none;display:inline-block;vertical-align:-4px}
+.icon.sm{width:16px;height:16px;vertical-align:-3px}
+.icon.lg{width:24px;height:24px}
+
+/* 按钮：同区域最多一个高强调主操作（§8） */
+.btn{
+  display:inline-flex;align-items:center;gap:6px;height:34px;padding:0 14px;border-radius:6px;
+  border:1px solid transparent;font-weight:600;font-size:12.5px;white-space:nowrap;
+}
+.btn:disabled{opacity:.45;cursor:not-allowed}
+.btn-primary{background:var(--primary);color:var(--on-primary)}
+.btn-primary:hover:not(:disabled){filter:brightness(1.08)}
+.btn-tonal{background:var(--tint-primary);color:var(--primary)}
+.btn-tonal:hover{filter:brightness(1.05)}
+.btn-text{color:var(--muted)}
+.btn-text:hover{background:var(--surface2);color:var(--text)}
+.btn-outline{border-color:var(--border);color:var(--text)}
+.btn-outline:hover{background:var(--surface2)}
+.btn-danger-t{background:var(--tint-error);color:var(--error)}
+.btn-sm{height:28px;padding:0 10px;font-size:12px}
+.btn-icon{width:34px;padding:0;justify-content:center;color:var(--muted)}
+.btn-icon:hover{background:var(--surface2);color:var(--text)}
+.btn-icon.danger{color:var(--error)}
+
+/* 状态标签：只读，不使用按钮外观（§3.2） */
+.st{
+  display:inline-flex;align-items:center;gap:5px;height:22px;padding:0 9px;border-radius:4px;
+  font-size:11.5px;font-weight:600;cursor:default;white-space:nowrap;
+}
+.st::before{content:"";width:6px;height:6px;border-radius:50%;background:currentColor;flex:none}
+.st.plain::before{display:none}
+.st-ok{background:var(--tint-success);color:var(--success)}
+.st-run{background:var(--tint-primary);color:var(--primary)}
+.st-run.pulse::before{animation:pp 1.2s ease-in-out infinite}
+@keyframes pp{50%{opacity:.25}}
+.st-warn{background:var(--tint-warning);color:var(--warning)}
+.st-err{background:var(--tint-error);color:var(--error)}
+.st-mut{background:var(--surface2);color:var(--muted)}
+.st-info{background:var(--tint-primary);color:var(--info)}
+
+.chip{
+  display:inline-flex;align-items:center;gap:5px;height:24px;padding:0 10px;border-radius:6px;
+  background:var(--surface2);color:var(--muted);font-size:11.5px;font-weight:600;cursor:default;
+}
+.chip.proto{background:transparent;border:1px dashed var(--proto);color:var(--proto);cursor:default}
+.chip.demo{background:var(--tint-warning);color:var(--warning)}
+
+/* 状态横幅（§7.3）：只表达当前最需要处理的状态 */
+.banner{
+  display:flex;align-items:center;gap:10px;padding:10px 14px;border-radius:8px;margin-bottom:14px;
+  font-size:12.5px;border:1px solid transparent;
+}
+.banner .grow{flex:1;min-width:0}
+.banner b{font-weight:700}
+.banner-warn{background:var(--tint-warning);border-color:var(--tint-warning);color:var(--text)}
+.banner-warn .icon{color:var(--warning)}
+.banner-err{background:var(--tint-error);border-color:var(--tint-error);color:var(--text)}
+.banner-err .icon{color:var(--error)}
+.banner-info{background:var(--tint-primary);border-color:var(--tint-primary);color:var(--text)}
+.banner-info .icon{color:var(--primary)}
+.banner-ok{background:var(--tint-success);border-color:var(--tint-success);color:var(--text)}
+.banner-ok .icon{color:var(--success)}
+
+/* 页头 / 工具栏 44-52px（§11.2） */
+.page-head{display:flex;align-items:flex-start;gap:12px;margin-bottom:6px}
+.page-head h1{font-size:18px;font-weight:700;line-height:1.3}
+.page-head .grow{flex:1;min-width:0}
+.page-sub{color:var(--muted);font-size:12px;margin-top:2px}
+.toolbar{display:flex;align-items:center;gap:8px;min-height:44px;padding:6px 0;flex-wrap:wrap}
+.toolbar .grow{flex:1}
+.hint-fixed{color:var(--faint);font-size:11.5px}
+
+.field{
+  height:34px;border:1px solid var(--border);border-radius:6px;background:var(--surface);
+  padding:0 10px;display:inline-flex;align-items:center;gap:6px;color:var(--text);
+}
+.field input{border:none;outline:none;background:transparent;width:170px}
+.field select{border:none;outline:none;background:transparent;color:var(--text)}
+.field:focus-within{border-color:var(--primary)}
+
+/* 页签 */
+.tabs{display:flex;gap:2px;border-bottom:1px solid var(--border);margin:8px 0 14px}
+.tab{
+  padding:8px 14px;font-weight:600;color:var(--muted);border-radius:6px 6px 0 0;position:relative;font-size:12.5px;
+}
+.tab:hover{color:var(--text)}
+.tab.active{color:var(--primary)}
+.tab.active::after{content:"";position:absolute;left:8px;right:8px;bottom:-1px;height:2px;background:var(--primary);border-radius:2px}
+
+/* 表格 48-56px 行高（§11.2） */
+.table{width:100%;border-collapse:collapse;background:var(--surface);border:1px solid var(--border);border-radius:8px;overflow:hidden}
+.table th{
+  text-align:left;font-size:11.5px;color:var(--muted);font-weight:600;padding:9px 12px;
+  border-bottom:1px solid var(--border);background:var(--surface2);white-space:nowrap;
+}
+.table td{padding:10px 12px;border-bottom:1px solid var(--border-weak);vertical-align:middle}
+.table tr:last-child td{border-bottom:none}
+.table tbody tr:hover{background:var(--surface2)}
+.table .num{font-variant-numeric:tabular-nums}
+.rowname{font-weight:600}
+.rowsub{color:var(--faint);font-size:11.5px;margin-top:1px}
+.ellipsis{max-width:100%;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.mono{font-family:Consolas,"Courier New",monospace;font-size:12px}
+.table-scroll{overflow-x:auto}   /* 表格只在自身容器横向滚动（§11.3） */
+
+/* 骨架：同构行骨架，不用 spinner（§7.1/§9） */
+.skel{border-radius:6px;background:var(--surface2);animation:sk 1.1s ease-in-out infinite}
+@keyframes sk{50%{opacity:.45}}
+
+/* 空态 */
+.empty{padding:56px 0;text-align:center;color:var(--muted)}
+.empty .icon{width:40px;height:40px;color:var(--faint);margin-bottom:10px}
+.empty h3{font-size:15px;color:var(--text);margin-bottom:4px}
+.empty p{font-size:12px;margin-bottom:16px}
+
+/* 区块标题 */
+.sec{font-size:13px;font-weight:700;margin:22px 0 8px;display:flex;align-items:center;gap:8px}
+.sec:first-child{margin-top:0}
+.sec .n{color:var(--faint);font-weight:600;font-size:12px}
+
+/* 原型注记：与产品 UI 明确区分 */
+.pnote{
+  border:1px dashed var(--proto);border-radius:8px;padding:8px 12px;margin:12px 0;
+  color:var(--proto);font-size:11.5px;display:flex;gap:8px;align-items:flex-start;
+}
+.pnote b{flex:none}
+.kv{display:grid;grid-template-columns:120px 1fr;gap:4px 12px;font-size:12.5px}
+.kv dt{color:var(--muted)}
+.tech{color:var(--faint);font-size:11px;word-break:break-all}
+
+/* ================= 4. 抽屉 / 弹窗 / 菜单 / 提示 ================= */
+.overlay{position:fixed;inset:0;background:rgba(0,0,0,.42);z-index:40}
+.drawer{
+  position:fixed;top:0;right:0;bottom:0;width:min(400px,calc(100vw - 68px));z-index:50;
+  background:var(--surface);border-left:1px solid var(--border);display:flex;flex-direction:column;
+  box-shadow:var(--shadow);
+}
+.drawer-h{flex:none;display:flex;align-items:center;gap:8px;padding:14px 16px;border-bottom:1px solid var(--border);font-weight:700}
+.drawer-b{flex:1;overflow-y:auto;padding:14px 16px}
+.drawer-f{flex:none;padding:12px 16px;border-top:1px solid var(--border);display:flex;gap:8px;justify-content:flex-end}
+
+.dialog-wrap{position:fixed;inset:0;z-index:60;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,.42)}
+.dialog{
+  width:min(520px,calc(100vw - 48px));max-height:min(640px,calc(100vh - 64px));
+  background:var(--surface);border:1px solid var(--border);border-radius:8px;box-shadow:var(--shadow);
+  display:flex;flex-direction:column;
+}
+.dialog-h{flex:none;padding:14px 18px;border-bottom:1px solid var(--border);font-weight:700;display:flex;align-items:center;gap:8px}
+.dialog-b{flex:1;overflow-y:auto;padding:16px 18px}
+.dialog-f{flex:none;padding:12px 18px;border-top:1px solid var(--border);display:flex;gap:8px;justify-content:flex-end}
+.danger-strip{border-left:3px solid var(--error)}
+
+.menu{
+  position:fixed;z-index:55;min-width:190px;background:var(--surface);border:1px solid var(--border);
+  border-radius:8px;box-shadow:var(--shadow);padding:5px;
+}
+.menu button{display:flex;width:100%;align-items:center;gap:9px;padding:8px 10px;border-radius:6px;text-align:left;color:var(--text)}
+.menu button:hover{background:var(--surface2)}
+.menu button.danger{color:var(--error)}
+.menu .msep{height:1px;background:var(--border-weak);margin:5px 4px}
+
+#toast-root{position:fixed;right:18px;bottom:76px;z-index:70;display:flex;flex-direction:column;gap:8px;align-items:flex-end}
+.toast{
+  background:var(--surface3);color:var(--text);border:1px solid var(--border);border-radius:8px;
+  padding:9px 14px;font-size:12.5px;box-shadow:var(--shadow);max-width:380px;
+}
+.toast.ok{border-left:3px solid var(--success)}
+.toast.err{border-left:3px solid var(--error)}
+
+/* ================= 5. 画板导航浮条（原型专用，非产品 UI） ================= */
+.proto-bar{
+  position:fixed;left:50%;transform:translateX(-50%);bottom:14px;z-index:45;
+  display:flex;align-items:center;gap:4px;padding:6px 8px;border-radius:999px;
+  background:#141519;color:#EDEEF2;border:1px solid rgba(255,255,255,.16);
+  box-shadow:0 10px 30px rgba(0,0,0,.45);font-size:12px;max-width:min(94vw,980px);white-space:nowrap;
+}
+.proto-bar .pb-dot{width:8px;height:8px;border-radius:50%;background:var(--proto);margin:0 4px;flex:none}
+.proto-bar button{color:#EDEEF2;border-radius:999px;white-space:nowrap}
+.pb-nav{width:30px;height:30px;display:flex;align-items:center;justify-content:center}
+.pb-nav:hover{background:rgba(255,255,255,.12)}
+.pb-label{padding:0 8px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.pb-label small{color:#9DA2AB;font-weight:500;margin-right:6px}
+.pb-extra{display:flex;align-items:center;gap:4px;border-left:1px solid rgba(255,255,255,.14);padding-left:8px;margin-left:4px}
+.pb-extra select{background:transparent;color:#EDEEF2;border:none;font-size:11.5px;outline:none}
+.pb-extra select option{color:#111}
+.pb-mini{height:28px;padding:0 10px;font-size:11.5px;color:#C9CAD1}
+.pb-mini:hover{background:rgba(255,255,255,.12);color:#fff}
+
+/* ================= 6. 画板：工作区列表 ================= */
+.ws-id{display:flex;align-items:center;gap:8px;min-width:240px}
+.ws-id .pair{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
+.ws-id .icon{color:var(--faint)}
+.task-cell{display:flex;align-items:center;gap:8px;min-width:150px}
+.prog{width:90px;height:5px;border-radius:3px;background:var(--surface3);overflow:hidden;flex:none}
+.prog i{display:block;height:100%;background:var(--primary);border-radius:3px}
+.rowlink{cursor:pointer}
+tr.stale-row td{opacity:.78}
+
+/* 演示控制条（列表画板） */
+.demo-strip{display:flex;gap:8px;align-items:center;margin-bottom:12px;padding:8px 12px;border:1px dashed var(--border);border-radius:8px;color:var(--muted);font-size:11.5px;flex-wrap:wrap}
+.demo-strip select{background:var(--surface);color:var(--text);border:1px solid var(--border);border-radius:6px;height:26px;padding:0 6px}
+
+/* ================= 7. 画板：向导 ================= */
+.wiz{display:grid;grid-template-columns:210px 1fr;gap:22px;min-height:60%}
+@media (max-width:900px){.wiz{grid-template-columns:1fr}}
+.wiz-steps{border-right:1px solid var(--border);padding-right:18px}
+@media (max-width:900px){.wiz-steps{border-right:none;border-bottom:1px solid var(--border);padding:0 0 12px;display:flex;gap:6px}}
+.wstep{display:flex;gap:10px;padding:9px 8px;border-radius:8px;color:var(--muted);align-items:flex-start}
+@media (max-width:900px){.wstep{padding:6px 8px}}
+.wstep .n{
+  width:22px;height:22px;border-radius:50%;background:var(--surface2);color:var(--muted);flex:none;
+  display:flex;align-items:center;justify-content:center;font-size:11.5px;font-weight:700;margin-top:1px;
+}
+.wstep.cur{color:var(--text);font-weight:600;background:var(--surface2)}
+.wstep.cur .n{background:var(--primary);color:var(--on-primary)}
+.wstep.done .n{background:var(--tint-success);color:var(--success)}
+.cand{
+  display:flex;align-items:center;gap:12px;padding:12px 14px;border:1px solid var(--border);
+  border-radius:8px;margin-bottom:8px;cursor:pointer;background:var(--surface);
+}
+.cand:hover{background:var(--surface2)}
+.cand.sel{border-color:var(--primary);box-shadow:0 0 0 1px var(--primary)}
+.cand.dis{opacity:.55;cursor:not-allowed}
+.cand .grow{flex:1;min-width:0}
+.radio{width:16px;height:16px;border-radius:50%;border:2px solid var(--faint);flex:none}
+.cand.sel .radio{border-color:var(--primary);box-shadow:inset 0 0 0 3px var(--surface)}
+.cand.sel .radio{background:var(--primary)}
+
+/* 创建进度（N-05） */
+.psteps{max-width:460px;margin:8px 0 18px}
+.pstep{display:flex;align-items:center;gap:12px;padding:10px 4px;color:var(--muted)}
+.pstep .ic{width:24px;height:24px;border-radius:50%;flex:none;display:flex;align-items:center;justify-content:center;background:var(--surface2);color:var(--muted)}
+.pstep.done{color:var(--text)}
+.pstep.done .ic{background:var(--tint-success);color:var(--success)}
+.pstep.run{color:var(--text)}
+.pstep.run .ic{background:var(--tint-primary);color:var(--primary)}
+.pstep.run .icon{animation:spin 1.6s linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}}
+
+/* ================= 8. 画板：变化页 ================= */
+.metrics{
+  display:flex;gap:18px;flex-wrap:wrap;color:var(--muted);font-size:12px;
+  padding:8px 12px;background:var(--surface);border:1px solid var(--border);border-radius:8px;margin-bottom:12px;
+}
+.metrics b{color:var(--text);font-weight:600}
+.filters{display:flex;gap:6px;flex-wrap:wrap}
+.fchip{
+  height:26px;padding:0 11px;border-radius:999px;border:1px solid var(--border);
+  color:var(--muted);font-size:11.5px;font-weight:600;background:var(--surface);
+}
+.fchip:hover{color:var(--text)}
+.fchip.on{background:var(--tint-primary);border-color:transparent;color:var(--primary)}
+.verdict{display:inline-flex;align-items:center;gap:5px;font-weight:600;font-size:12px;cursor:default}
+.v-p{color:var(--primary)} .v-r{color:var(--info)} .v-c{color:var(--warning)} .v-d{color:var(--error)} .v-s{color:var(--muted)} .v-l{color:var(--warning)}
+.ev3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px}
+@media (max-width:1100px){.ev3{grid-template-columns:1fr}}
+.evcol{border:1px solid var(--border);border-radius:8px;padding:10px 12px;background:var(--bg)}
+.evcol h4{font-size:12px;color:var(--muted);margin-bottom:6px;display:flex;align-items:center;gap:6px}
+
+/* ================= 9. 画板：计划页 ================= */
+.sumchips{display:flex;gap:8px;flex-wrap:wrap;margin:10px 0 4px}
+.sumchips .chip b{color:var(--text);margin-left:4px}
+.chip.hot{background:var(--tint-warning);color:var(--warning)}
+.chip.bad{background:var(--tint-error);color:var(--error)}
+.op-conflict{background:var(--tint-warning)}
+
+/* ================= 10. 画板：重绑定 ================= */
+.rebind-grid{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+@media (max-width:1000px){.rebind-grid{grid-template-columns:1fr}}
+.panel{border:1px solid var(--border);border-radius:8px;background:var(--surface);padding:14px 16px}
+.panel h3{font-size:13px;margin-bottom:10px;display:flex;align-items:center;gap:8px}
+.preflight{margin-top:16px}
+.pf-row{display:flex;gap:9px;align-items:flex-start;padding:7px 0;border-bottom:1px solid var(--border-weak);font-size:12.5px}
+.pf-row:last-child{border-bottom:none}
+.pf-row .icon{margin-top:1px}
+.pf-ok{color:var(--success)} .pf-warn{color:var(--warning)} .pf-err{color:var(--error)}
+
+/* ================= 11. 画板：设置（全宽分区，不用嵌套卡片 §7.11） ================= */
+.set-sec{border-top:1px solid var(--border);padding:18px 0 6px}
+.set-sec:first-of-type{border-top:none;padding-top:4px}
+.set-sec h2{font-size:14.5px;margin-bottom:2px}
+.set-sec .desc{color:var(--muted);font-size:12px;margin-bottom:12px}
+.set-row{display:flex;align-items:center;gap:14px;padding:9px 0;flex-wrap:wrap}
+.set-row .lab{width:150px;flex:none;color:var(--muted);font-size:12.5px}
+.set-row .val{flex:1;min-width:200px}
+.set-row .ops{display:flex;gap:8px}
+
+/* 滚动条 */
+::-webkit-scrollbar{width:10px;height:10px}
+::-webkit-scrollbar-thumb{background:var(--surface3);border-radius:6px;border:2px solid var(--bg)}
+::-webkit-scrollbar-track{background:transparent}
+</style>
+</head>
+<body>
+<div id="app">
+  <!-- 标题栏 -->
+  <header class="titlebar">
+    <div class="tb-brand"><div class="tb-logo">P</div></div>
+    <div style="display:flex;flex-direction:column;min-width:0;justify-content:center">
+      <div id="tb-title" class="tb-title">工作区</div>
+      <div id="tb-sub" class="tb-sub"></div>
+    </div>
+    <div class="tb-drag"></div>
+    <div class="tb-actions">
+      <span class="chip proto" title="抛弃式原型 · 演示数据，不连接后端">原型</span>
+      <span class="chip demo" title="所有数据为内存态演示数据，刷新即重置">演示数据</span>
+      <button class="win-btn" data-action="open-tasks" data-tip="任务中心" id="bell-btn" style="position:relative" title="任务中心">
+        <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M18 8a6 6 0 1 0-12 0c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.7 21a2 2 0 0 1-3.4 0"/></svg>
+        <span id="bell-badge" style="position:absolute;top:2px;right:2px;min-width:15px;height:15px;border-radius:8px;background:var(--error);color:#fff;font-size:9.5px;font-weight:700;display:none;align-items:center;justify-content:center;padding:0 3px"></span>
+      </button>
+      <button class="win-btn" data-action="toggle-theme" title="切换深浅主题" id="theme-btn"></button>
+      <button class="win-btn" title="最小化（装饰）"><svg class="icon sm" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path d="M5 12h14"/></svg></button>
+      <button class="win-btn" title="最大化（装饰）"><svg class="icon sm" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="5" y="5" width="14" height="14" rx="2"/></svg></button>
+      <button class="win-btn close" title="关闭（装饰）"><svg class="icon sm" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
+    </div>
+  </header>
+
+  <div class="body-row">
+    <!-- 68px icon rail -->
+    <nav class="rail">
+      <button class="rail-btn" data-nav="#/workspaces" data-sec="workspaces" title="工作区">
+        <svg class="icon lg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 7h12"/><path d="M13 4l3 3-3 3"/><path d="M20 17H8"/><path d="M11 14l-3 3 3 3"/></svg>
+        <span>工作区</span>
+      </button>
+      <button class="rail-btn" data-nav="#/sources" data-sec="sources" title="项目源">
+        <svg class="icon lg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M3 8a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><path d="M3 11h18"/></svg>
+        <span>项目源</span>
+      </button>
+      <button class="rail-btn" data-nav="#/runtimes" data-sec="runtimes" title="运行实例">
+        <svg class="icon lg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 2l8 4.6v9.2L12 21l-8-5.2V6.6z"/><path d="M4 6.6l8 4.6 8-4.6"/><path d="M12 11.2V21"/></svg>
+        <span>实例</span>
+      </button>
+      <div class="rail-spacer"></div>
+      <button class="rail-btn" data-nav="#/settings" data-sec="settings" title="设置">
+        <svg class="icon lg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 7h9M17 7h3M17 5v4"/><path d="M4 12h3M11 12h9M11 10v4"/><path d="M4 17h9M17 17h3M17 15v4"/></svg>
+        <span>设置</span>
+      </button>
+    </nav>
+
+    <div class="main"><div class="screen" id="screen"></div></div>
+  </div>
+</div>
+
+<div id="layer-root"></div>   <!-- 抽屉 / 弹窗 / 菜单 -->
+<div id="toast-root"></div>
+
+<!-- 原型画板导航浮条 -->
+<div class="proto-bar" id="proto-bar">
+  <span class="pb-dot" title="原型导航（非产品 UI）"></span>
+  <button class="pb-nav" data-action="board-prev" title="上一画板（←）">←</button>
+  <span class="pb-label" id="pb-label"></span>
+  <button class="pb-nav" data-action="board-next" title="下一画板（→）">→</button>
+  <div class="pb-extra">
+    <select id="pb-jump" title="画板目录"></select>
+    <select data-bind="listMode" data-scope="proto" title="演示：列表状态">
+      <option value="ready">列表：就绪</option>
+      <option value="loading">列表：加载</option>
+      <option value="empty">列表：空态</option>
+    </select>
+    <button class="pb-mini" data-action="toggle-theme" title="切换主题">主题</button>
+    <button class="pb-mini" data-action="reset-demo" title="重置演示状态">重置</button>
+    <button class="pb-mini" data-action="help-open" title="关于本原型">?</button>
+  </div>
+</div>
+
+<script>
+"use strict";
+/* ============================================================================
+   0. 本文件是什么（给修改者的导语）
+   ----------------------------------------------------------------------------
+   这是 docs/frontend/05-workspace-ux-prototype.md 的 Round 1（P1 主闭环）
+   可交互原型。修改入口按顺序看：
+     §2 DEMO      —— 演示数据（工作区 / 资源 / 任务 / 端点 / 策略 / 计划）
+     §3 S         —— 内存态 UI 状态（刷新即重置）
+     §5 BOARD     —— 画板清单与入口（对应 05 文档 §13.1，可增删）
+     §7 SCREENS   —— 每个画板的渲染函数（改布局/文案在这里）
+     §8 ACTIONS   —— 所有 data-action 点击行为
+   术语与状态文案必须跟随 05 文档 §3，不要自造同义词。
+   ============================================================================ */
+
+/* ================= 1. 图标（内联 SVG；生产实现请替换为 @mdi/js 真实路径） ================= */
+const I = (name, cls) => `<svg class="icon ${cls||''}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">${ICONS[name]||''}</svg>`;
+const ICONS = {
+  swap:'<path d="M4 7h12"/><path d="M13 4l3 3-3 3"/><path d="M20 17H8"/><path d="M11 14l-3 3 3 3"/>',
+  folder:'<path d="M3 8a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>',
+  cube:'<path d="M12 2l8 4.6v9.2L12 21l-8-5.2V6.6z"/><path d="M4 6.6l8 4.6 8-4.6"/><path d="M12 11.2V21"/>',
+  bell:'<path d="M18 8a6 6 0 1 0-12 0c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.7 21a2 2 0 0 1-3.4 0"/>',
+  sun:'<circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/>',
+  moon:'<path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/>',
+  search:'<circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/>',
+  plus:'<path d="M12 5v14M5 12h14"/>',
+  refresh:'<path d="M21 12a9 9 0 1 1-2.6-6.4"/><path d="M21 3v6h-6"/>',
+  chevL:'<path d="M15 6l-6 6 6 6"/>', chevR:'<path d="M9 6l6 6-6 6"/>', chevD:'<path d="M6 9l6 6 6-6"/>',
+  dots:'<circle cx="12" cy="5" r="1.4" fill="currentColor"/><circle cx="12" cy="12" r="1.4" fill="currentColor"/><circle cx="12" cy="19" r="1.4" fill="currentColor"/>',
+  close:'<path d="M6 6l12 12M18 6L6 18"/>',
+  check:'<path d="M4 12.5l5 5L20 6.5"/>',
+  warn:'<path d="M12 3l10 18H2z"/><path d="M12 10v4"/><circle cx="12" cy="17.6" r=".6" fill="currentColor"/>',
+  errC:'<circle cx="12" cy="12" r="9"/><path d="M12 8v5"/><circle cx="12" cy="16.5" r=".6" fill="currentColor"/>',
+  info:'<circle cx="12" cy="12" r="9"/><path d="M12 11v5"/><circle cx="12" cy="8" r=".6" fill="currentColor"/>',
+  link:'<path d="M10 14a5 5 0 0 0 7 0l2-2a5 5 0 0 0-7-7l-1 1"/><path d="M14 10a5 5 0 0 0-7 0l-2 2a5 5 0 0 0 7 7l1-1"/>',
+  linkOff:'<path d="M5 5l14 14"/><path d="M10 14a5 5 0 0 0 7 0l1.5-1.5"/><path d="M14 10a5 5 0 0 0-7 0L5.5 11.5"/>',
+  up:'<path d="M12 19V5"/><path d="M6 11l6-6 6 6"/>',
+  down:'<path d="M12 5v14"/><path d="M6 13l6 6 6-6"/>',
+  copy:'<rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h8"/>',
+  open:'<path d="M14 4h6v6"/><path d="M20 4l-9 9"/><path d="M19 13v6a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1h6"/>',
+  clock:'<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3.5 2"/>',
+  file:'<path d="M6 3h8l4 4v14H6z"/><path d="M14 3v4h4"/>',
+  shield:'<path d="M12 3l8 3v6c0 4.5-3.4 7.9-8 9-4.6-1.1-8-4.5-8-9V6z"/><path d="M9 12l2 2 4-4"/>',
+  map:'<rect x="4" y="4" width="16" height="16" rx="2"/><path d="M4 10h16M10 10v10"/>',
+  play:'<path d="M7 5l12 7-12 7z"/>',
+  ban:'<circle cx="12" cy="12" r="9"/><path d="M6 6l12 12"/>',
+  history:'<path d="M3 12a9 9 0 1 0 3-6.7"/><path d="M3 4v5h5"/><path d="M12 7v5l3.5 2"/>',
+  scan:'<circle cx="12" cy="12" r="3"/><path d="M4 8V6a2 2 0 0 1 2-2h2M16 4h2a2 2 0 0 1 2 2v2M20 16v2a2 2 0 0 1-2 2h-2M8 20H6a2 2 0 0 1-2-2v-2"/>',
+  help:'<circle cx="12" cy="12" r="9"/><path d="M9.5 9a2.6 2.6 0 1 1 3.7 2.4c-.8.4-1.2 1-1.2 1.9"/><circle cx="12" cy="16.8" r=".6" fill="currentColor"/>',
+  sync:'<path d="M4 9a8 8 0 0 1 14-3"/><path d="M20 15a8 8 0 0 1-14 3"/><path d="M18 2v4h-4M6 22v-4h4"/>',
+};
+
+/* ================= 2. 演示数据（全部为虚构演示数据，§12 of 05 文档） ================= */
+const DEMO = {
+  workspaces: [
+    { id:'w1', p:'Collapse Pack', r:'Collapse Dev', pa:'Packwiz 1.39', ra:'Prism Launcher',
+      health:'healthy', scan:'ready', baseline:'ready', diff:'conflicted',
+      last:'14:20', task:null, pPath:'C:\\packs\\Collapse-Pack', rPath:'C:\\instances\\CollapseDev' },
+    { id:'w2', p:'Collapse Pack', r:'Playtest', pa:'Packwiz 1.39', ra:'Prism Launcher',
+      health:'healthy', scan:'scanning', baseline:'ready', diff:'unknown',
+      last:'14:18', task:{type:'扫描', phase:'扫描 Runtime 资源', progress:62}, pPath:'C:\\packs\\Collapse-Pack', rPath:'C:\\instances\\Playtest' },
+    { id:'w3', p:'Legacy Pack', r:'Old Instance', pa:'Packwiz 1.29', ra:'MultiMC',
+      health:'rebind_required', scan:'failed', baseline:'stale', diff:'unknown',
+      last:'昨天', task:null, pPath:'D:\\legacy\\LegacyPack', rPath:'E:\\mmc\\old-instance' },
+    { id:'w4', p:'Recovery Demo', r:'QA Runtime', pa:'Packwiz 1.39', ra:'官方启动器',
+      health:'recovery_required', scan:'ready', baseline:'ready', diff:'dirty',
+      last:'13:52', task:null, pPath:'C:\\packs\\recovery-demo', rPath:'C:\\instances\\qa' },
+    { id:'w5', p:'Skyblock 4', r:'New Instance', pa:'Packwiz 1.39', ra:'Prism Launcher',
+      health:'healthy', scan:'never', baseline:'none', diff:'unknown',
+      last:'—', task:null, pPath:'C:\\packs\\skyblock4', rPath:'C:\\instances\\new' },
+    { id:'w6', p:'ATM8 Pack', r:'Streamer Instance', pa:'Packwiz 1.39', ra:'Prism Launcher',
+      health:'healthy', scan:'ready', baseline:'ready', diff:'dirty',
+      last:'12:40', task:null, pPath:'C:\\packs\\atm8', rPath:'C:\\instances\\streamer' },
+  ],
+  // 资源三方表（w1 有冲突工作区，§12.2 + 扩充）
+  resources: [
+    { n:'mod:create', t:'mod', sub:'Create模组 · jar', p:'0.5.1 已修改', b:'0.5.0', r:'0.5.0', v:'p' },
+    { n:'config/jei/jei-client.ini', t:'config', sub:'toml', p:'已修改 A', b:'旧版本', r:'已修改 B', v:'c' },
+    { n:'scripts/server.js', t:'script', sub:'js', p:'已删除', b:'旧版本', r:'已修改', v:'dc' },
+    { n:'mod:local-addon', t:'mod', sub:'本地 jar · 低置信身份', p:'本地低置信表示', b:'未建立', r:'JAR 存在', v:'l' },
+    { n:'runtime_local:options.txt', t:'diag', sub:'仅诊断，不是可同步资源', p:'不适用', b:'不适用', r:'存在', v:'diag' },
+    { n:'kubejs/server_scripts/tweaks.js', t:'kubejs', sub:'js', p:'已修改', b:'旧版本', r:'未变更', v:'p' },
+    { n:'config/create-server.toml', t:'config', sub:'toml', p:'已修改', b:'旧版本', r:'旧版本', v:'p' },
+    { n:'mods/jei-1.21.1-19.21.0.jar', t:'mod', sub:'19.21.0.246', p:'19.21.0', b:'19.21.0', r:'19.21.0', v:'s' },
+    { n:'defaultconfigs/fml.toml', t:'config', sub:'toml', p:'已修改', b:'旧版本', r:'未变更', v:'p' },
+    { n:'config/prometheus-exporter.toml', t:'config', sub:'toml', p:'未变更', b:'旧版本', r:'已修改 B', v:'r' },
+    { n:'mods/appleskin-3.0.1.jar', t:'mod', sub:'3.0.1', p:'未变更', b:'旧版本', r:'已删除', v:'rd' },
+    { n:'kubejs/startup_scripts/energy.js', t:'kubejs', sub:'js', p:'已修改', b:'旧版本', r:'未变更', v:'p' },
+  ],
+  tasks: [
+    { id:'t1', ws:'Collapse Pack ↔ Playtest', type:'扫描', status:'running', phase:'扫描 Runtime 资源', progress:62, canCancel:true, time:'14:18' },
+    { id:'t2', ws:'Recovery Demo ↔ QA Runtime', type:'执行同步', status:'recovery', phase:'验证失败 · journal 已保留', progress:100, canCancel:false, time:'13:50', outcome:'—' },
+    { id:'t3', ws:'Legacy Pack ↔ Old Instance', type:'扫描', status:'failed', phase:'读取端点失败：路径不可访问', progress:100, canCancel:false, time:'昨天', outcome:'—' },
+    { id:'t4', ws:'—', type:'GC', status:'queued', phase:'等待空闲时段', progress:0, canCancel:true, time:'14:00' },
+  ],
+  sources: [
+    { n:'Collapse Pack', path:'C:\\packs\\Collapse-Pack', ad:'Packwiz 1.39', ok:true, refs:2, chk:'14:20', diag:'index.toml 解析正常，240 个 mod 条目' },
+    { n:'Legacy Pack', path:'D:\\legacy\\LegacyPack', ad:'Packwiz 1.29', ok:false, refs:1, chk:'昨天', diag:'blake2s 绑定证据与登记指纹不符' },
+    { n:'Demo Skyblock 4', path:'C:\\packs\\skyblock4', ad:'Packwiz 1.39', ok:true, refs:0, chk:'3 天前', diag:'解析正常，未建立工作区' },
+  ],
+  runtimes: [
+    { n:'Collapse Dev', path:'C:\\instances\\CollapseDev', ln:'Prism Launcher', ok:true, refs:1, chk:'14:20' },
+    { n:'Playtest', path:'C:\\instances\\Playtest', ln:'Prism Launcher', ok:true, refs:1, chk:'14:18' },
+    { n:'Old Instance', path:'E:\\mmc\\old-instance', ln:'MultiMC', ok:false, refs:1, chk:'昨天' },
+    { n:'QA Runtime', path:'C:\\instances\\qa', ln:'官方启动器', ok:true, refs:1, chk:'13:52' },
+  ],
+  // 计划（只读 P1；P-02 为含冲突的同步分析）
+  planInit: { title:'初始化预览', chips:[['资源',86],['创建',74],['修改',0],['删除',0],['冲突',0],['不可恢复',0]],
+    note:'两侧均未建立同步基线；初始化将登记受管资源并建立基线，具体方向以后端契约为准（演示数据）。',
+    ops:[
+      ['mods/create-0.5.1.jar','P → R','纳入','mod 0.5.1','可重新下载','—'],
+      ['config/jei/jei-client.ini','P → R','纳入','text/toml','CAS','—'],
+      ['kubejs/server_scripts/*.js','P → R','纳入','js','CAS','—'],
+    ] },
+  planSync: { title:'同步分析', chips:[['资源',86],['创建',12],['修改',61],['删除',13],['冲突',2],['不可恢复',1]],
+    note:'双方均有写入：写入 Runtime 83 项 · 写入 Project 3 项（演示数据）。',
+    ops:[
+      ['config/jei/jei-client.ini','P → R','待决议','text/toml','CAS','覆盖'],
+      ['scripts/server.js','R → P','待决议','js','不可恢复','删除冲突'],
+      ['config/create-server.toml','P → R','覆盖','text/toml','CAS','覆盖'],
+      ['mod:create','P → R','写入','mod 0.5.1','可重新下载','—'],
+      ['config/prometheus-exporter.toml','R → P','写入','text/toml','CAS','写入 Project，影响 Git 工作树'],
+      ['mods/appleskin-3.0.1.jar','P → R','删除','mod','可重新下载','删除'],
+    ] },
+};
+
+/* ================= 3. 内存态 UI 状态（不持久化） ================= */
+function initState(){
+  return {
+    theme: 'dark',
+    listMode: 'ready',                 // ready | loading | empty
+    ws: 'w1',
+    staleDemo: false,                  // 变化页「已过期」演示开关（C-05）
+    changes: { filter:'全部', type:'全部', search:'' },
+    plan: { kind:'init', tab:'操作', stale:false },
+    wizard: null,
+    tasksOpen: false, evidence: null, sideDrawer: null,
+    dialog: null, menu: null, unread: 3,
+    rebind: { cand:null },
+  };
+}
+let S = initState();
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const wsOf = (id) => DEMO.workspaces.find(w => w.id === id) || DEMO.workspaces[0];
+
+/* 状态文案映射（05 文档 §3.2，禁止自造同义词） */
+const ST = {
+  scan:   { never:['未扫描','mut'], queued:['等待扫描','run'], scanning:['扫描中','run'], ready:['扫描完成','ok'], failed:['扫描失败','err'] },
+  base:   { none:['未建立同步基线','mut'], ready:['同步基线有效','ok'], stale:['同步基线待更新','warn'] },
+  diff:   { unknown:['变化未知','mut'], init:['需要初始化','info'], clean:['无待同步变化','ok'], dirty:['有待同步变化','run'], conflicted:['存在冲突','warn'] },
+  health: { healthy:['工作区正常','ok'], endpoint_missing:['端点不可用','err'], rebind_required:['需要重新绑定','warn'], recovery_required:['需要恢复','err'] },
+  task:   { queued:['排队','mut'], running:['处理中','run'], success:['成功','ok'], failed:['失败','err'], cancelled:['已取消','mut'], recovery:['需要恢复','err'] },
+};
+const st = (group, key, extra) => {
+  const def = ST[group] && ST[group][key];
+  if (!def) return '';
+  return `<span class="st st-${def[1]}${extra||''}" title="${group}">${esc(def[0])}</span>`;
+};
+
+/* ================= 4. 小组件 ================= */
+function banner(kind, iconName, html, action){
+  return `<div class="banner banner-${kind}">${I(iconName)}<div class="grow">${html}</div>${action||''}</div>`;
+}
+function primaryAction(w){ // 工作区当前状态下唯一主操作（§5.2 / §7.1 行操作优先级）
+  if (w.health === 'recovery_required') return { label:'处理恢复', act:'task-recover', cls:'btn-primary' };
+  if (w.health === 'rebind_required')   return { label:'重新绑定', act:'open-rebind', cls:'btn-primary' };
+  if (w.scan === 'never')               return { label:'开始扫描', act:'changes-scan', cls:'btn-primary' };
+  if (w.scan === 'failed')              return { label:'重试扫描', act:'changes-scan', cls:'btn-primary' };
+  if (w.scan === 'scanning')            return { label:'查看任务', act:'open-tasks', cls:'btn-tonal' };
+  if (w.health === 'healthy')           return { label:'生成同步分析', act:'changes-plan', cls:'btn-primary' };
+  return { label:'查看变化', act:'ws-open', cls:'btn-tonal' };
+}
+function wsPrimary(w, sm){
+  const a = primaryAction(w);
+  return `<button class="btn ${a.cls}${sm?' btn-sm':''}" data-action="${a.act}" data-ws="${w.id}">${esc(a.label)}</button>`;
+}
+function filterChips(){
+  const chips = ['全部','有变化','有冲突','Project 已改','Runtime 已改','含删除'];
+  return chips.map(c => `<button class="fchip${S.changes.filter===c?' on':''}" data-action="set-filter" data-v="${c}">${c}</button>`).join('');
+}
+function resourcesFiltered(){
+  const f = S.changes.filter, q = S.changes.search.trim(), t = S.changes.type;
+  const hasDel = r => /删除/.test(r.p) || /删除/.test(r.r);
+  return DEMO.resources.filter(r => {
+    if (t !== '全部' && r.t !== t) return false;
+    if (q && !(r.n + r.sub).toLowerCase().includes(q.toLowerCase())) return false;
+    if (f === '有变化')      return ['p','r','c','dc','l','rd'].includes(r.v);
+    if (f === '有冲突')      return ['c','dc'].includes(r.v);
+    if (f === 'Project 已改') return ['p','c','dc'].includes(r.v) || r.v === 'rd';
+    if (f === 'Runtime 已改') return ['r','c','dc'].includes(r.v);
+    if (f === '含删除')       return hasDel(r) || r.v === 'dc';
+    return true;
+  });
+}
+function verdictLabel(v){
+  return { p:['Project 已改','v-p'], r:['Runtime 已改','v-r'], c:['双端冲突','v-c'], dc:['删除冲突','v-d'],
+           s:['一致','v-s'], l:['身份需人工确认','v-l'], diag:['诊断','v-s'], rd:['Runtime 已改','v-r'] }[v] || ['—','v-s'];
+}
+function resTbody(){
+  const rows = resourcesFiltered();
+  if (!rows.length) return `<tr><td colspan="6"><div class="empty" style="padding:28px 0">${I('search','lg')}<h3>无匹配资源</h3><p>筛选只改变展示，不影响计划范围。</p><button class="btn btn-tonal btn-sm" data-action="clear-filter">清除筛选</button></div></td></tr>`;
+  return rows.map(r => {
+    const [vl, vc] = verdictLabel(r.v);
+    const evBtn = r.v === 'diag'
+      ? `<button class="btn btn-text btn-sm" data-action="show-evidence" data-n="${esc(r.n)}" title="仅诊断信息">${I('info','sm')} 诊断</button>`
+      : `<button class="btn btn-text btn-sm" data-action="show-evidence" data-n="${esc(r.n)}">${I('file','sm')} 查看证据</button>`;
+    return `<tr>
+      <td><div class="rowname ellipsis mono" style="max-width:280px">${esc(r.n)}</div><div class="rowsub">${esc(r.sub)}</div></td>
+      <td class="num">${esc(r.p)}</td><td class="num">${esc(r.b)}</td><td class="num">${esc(r.r)}</td>
+      <td><span class="st plain st-${({p:'run',rd:'run',r:'run',c:'warn',dc:'err'})[r.v]||'mut'}" style="height:20px">${esc(vl)}</span></td>
+      <td style="text-align:right;white-space:nowrap">${evBtn}</td></tr>`;
+  }).join('');
+}
+function wsObjHead(w){ // 工作区对象头（§5.2）
+  const healthMap = { healthy:'ok', endpoint_missing:'err', rebind_required:'warn', recovery_required:'err' };
+  const diffMap = { unknown:'mut', init:'info', clean:'ok', dirty:'run', conflicted:'warn' };
+  return `
+  <div class="page-head">
+    <div class="grow">
+      <h1 style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+        ${esc(w.p)} ${I('swap')} ${esc(w.r)}
+      </h1>
+      <div class="page-sub" style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-top:6px">
+        <span class="st st-${healthMap[w.health]}">${ST.health[w.health][0]}</span>
+        <span class="st st-${diffMap[w.diff]}">${ST.diff[w.diff][0]}</span>
+        <span>${esc(w.pa)} · ${esc(w.ra)}</span>
+        <span>最近扫描 ${esc(w.last)}</span>
+      </div>
+    </div>
+    ${wsPrimary(w)}
+    <button class="btn btn-icon" data-action="ws-more" data-ws="${w.id}" title="更多">${I('dots')}</button>
+  </div>
+  <div class="tabs">
+    <button class="tab active">${I('scan','sm')} 变化</button>
+    <button class="tab" data-nav="#/workspaces/${w.id}/mappings">${I('map','sm')} 受管范围</button>
+  </div>`;
+}
+function wsMetrics(w){
+  return `<div class="metrics">
+    <span>Project 扫描 <b>${esc(w.scan==='ready'?'14:20':w.scan==='scanning'?'进行中':'—')}</b></span>
+    <span>Runtime 扫描 <b>${esc(w.scan==='ready'?'14:20':w.scan==='scanning'?'进行中':'—')}</b></span>
+    <span>${st('base', w.baseline)}</span>
+    <span>资源 <b>2,986</b></span>
+  </div>`;
+}
+
+/* ================= 5. 画板清单（对应 05 文档 §13.1；Round 2/3 待补见文件头） ================= */
+const resetWizard = () => { S.wizard = { step:0, src:null, rt:null, pol:null, creating:false, done:false, pre:null, viewPlan:false }; };
+const BOARDS = [
+  { id:'S-01',   t:'应用壳层（工作区列表）', r:'#/workspaces', s:()=>{ S.listMode='ready'; } },
+  { id:'S-02',   t:'任务中心打开',           r:'#/workspaces', s:()=>{ S.listMode='ready'; S.tasksOpen=true; } },
+  { id:'W-01',   t:'工作区列表 · 加载',      r:'#/workspaces', s:()=>{ S.listMode='loading'; } },
+  { id:'W-02',   t:'工作区列表 · 空态',      r:'#/workspaces', s:()=>{ S.listMode='empty'; } },
+  { id:'W-03/04',t:'工作区列表 · 就绪（含任务/恢复）', r:'#/workspaces', s:()=>{ S.listMode='ready'; } },
+  { id:'N-01',   t:'新建工作区 · 选择项目源', r:'#/workspaces/new', s:()=>{ resetWizard(); S.wizard.step=0; } },
+  { id:'N-02',   t:'新建工作区 · 选择运行实例', r:'#/workspaces/new', s:()=>{ if(!S.wizard) resetWizard(); S.wizard.step=1; S.wizard.src='Collapse Pack'; } },
+  { id:'N-03',   t:'新建工作区 · 选择受管范围', r:'#/workspaces/new', s:()=>{ if(!S.wizard) resetWizard(); S.wizard.step=2; S.wizard.src='Collapse Pack'; S.wizard.rt='QA Runtime'; } },
+  { id:'N-04',   t:'新建工作区 · 确认并创建', r:'#/workspaces/new', s:()=>{ if(!S.wizard) resetWizard(); S.wizard.step=3; S.wizard.src='Collapse Pack'; S.wizard.rt='QA Runtime'; S.wizard.pol='演示策略 A'; } },
+  { id:'N-05',   t:'新建工作区 · 创建进度',   r:'#/workspaces/new', s:()=>{ if(!S.wizard) resetWizard(); startCreating(); } },
+  { id:'C-01',   t:'变化 · 未扫描',           r:'#/workspaces/w5/changes', s:()=>{ S.ws='w5'; S.staleDemo=false; } },
+  { id:'C-02',   t:'变化 · 扫描中',           r:'#/workspaces/w2/changes', s:()=>{ S.ws='w2'; S.staleDemo=false; } },
+  { id:'C-03',   t:'变化 · 有待同步变化',     r:'#/workspaces/w6/changes', s:()=>{ S.ws='w6'; S.staleDemo=false; } },
+  { id:'C-04',   t:'变化 · 存在冲突',         r:'#/workspaces/w1/changes', s:()=>{ S.ws='w1'; S.staleDemo=false; } },
+  { id:'C-05',   t:'变化 · 已过期',           r:'#/workspaces/w1/changes', s:()=>{ S.ws='w1'; S.staleDemo=true; } },
+  { id:'C-06',   t:'变化 · 需要重新绑定',     r:'#/workspaces/w3/changes', s:()=>{ S.ws='w3'; S.staleDemo=false; } },
+  { id:'M-01',   t:'受管范围（只读 + 建议纳管）', r:'#/workspaces/w1/mappings', s:()=>{ S.ws='w1'; } },
+  { id:'P-01',   t:'初始化预览（draft 只读）', r:'#/workspaces/w1/plans/init', s:()=>{ S.plan={kind:'init',tab:'操作',stale:false}; } },
+  { id:'P-02',   t:'同步分析（含冲突，只读）', r:'#/workspaces/w1/plans/sync', s:()=>{ S.plan={kind:'sync',tab:'操作',stale:false}; } },
+  { id:'P-05',   t:'计划 · 已过期',           r:'#/workspaces/w1/plans/sync', s:()=>{ S.plan={kind:'sync',tab:'操作',stale:true}; } },
+  { id:'R-01/03',t:'重新绑定（含预检）',      r:'#/workspaces/w3/rebind', s:()=>{ S.ws='w3'; S.rebind.cand=null; } },
+  { id:'E-01',   t:'项目源',                  r:'#/sources' },
+  { id:'E-02',   t:'运行实例',                r:'#/runtimes' },
+  { id:'SET-01', t:'设置',                    r:'#/settings' },
+];
+let boardIdx = 0;
+
+/* ================= 6. 路由（hash） ================= */
+function navigate(hash){ if (location.hash === hash) render(); else location.hash = hash; }
+function parseRoute(){
+  const h = location.hash || '#/workspaces';
+  let m;
+  if (h === '#/workspaces')              return { page:'ws-list' };
+  if (h === '#/workspaces/new')          return { page:'wizard' };
+  if ((m = h.match(/^#\/workspaces\/([\w-]+)\/changes$/)))  return { page:'changes', ws:m[1] };
+  if ((m = h.match(/^#\/workspaces\/([\w-]+)\/mappings$/))) return { page:'mappings', ws:m[1] };
+  if ((m = h.match(/^#\/workspaces\/([\w-]+)\/rebind$/)))   return { page:'rebind', ws:m[1] };
+  if ((m = h.match(/^#\/workspaces\/([\w-]+)\/plans\/(\w+)$/))) return { page:'plan', ws:m[1], kind:m[2] };
+  if (h === '#/sources')                 return { page:'sources' };
+  if (h === '#/runtimes')                return { page:'runtimes' };
+  if (h === '#/settings')                return { page:'settings' };
+  return { page:'ws-list' };
+}
+
+/* ================= 7. 各画板渲染 ================= */
+const SCREENS = {
+  /* ---- 工作区列表 S-01 / W-01..W-04 ---- */
+  'ws-list'(){
+    let body = '';
+    if (S.listMode === 'loading') {
+      body = `<table class="table"><thead><tr><th>工作区</th><th>关系健康</th><th>变化状态</th><th>当前任务</th><th>最近活动</th><th></th></tr></thead><tbody>${
+        Array.from({length:5}, () => `<tr>${Array.from({length:6}, () => `<td><div class="skel" style="height:18px;width:${60+Math.floor(Math.random()*80)}px"></div></td>`).join('')}</tr>`).join('')
+      }</tbody></table>`;
+    } else if (S.listMode === 'empty' || !DEMO.workspaces.length) {
+      body = `<div class="empty">${I('swap','lg')}<h3>还没有工作区</h3><p>工作区是项目源与运行实例之间唯一的跨端操作入口。</p><button class="btn btn-primary" data-action="new-ws">${I('plus','sm')} 新建工作区</button></div>`;
+    } else {
+      const rows = DEMO.workspaces.map(w => {
+        const taskCell = w.task
+          ? `<div class="task-cell"><span class="st st-run pulse">${esc(w.task.type)}</span><div class="prog"><i style="width:${w.task.progress}%"></i></div><span class="num" style="color:var(--muted)">${w.task.progress}%</span></div>`
+          : '<span style="color:var(--faint)">—</span>';
+        const primary = wsPrimary(w, true);
+        return `<tr class="${w.health==='recovery_required'?'':'rowlink'}" ${w.health!=='recovery_required'?`data-action="ws-open" data-ws="${w.id}"`:''}>
+          <td><div class="ws-id"><div class="pair"><b>${esc(w.p)}</b>${I('swap','sm')}<b>${esc(w.r)}</b></div>
+            <div class="rowsub">${esc(w.pa)} · ${esc(w.ra)}</div></div></td>
+          <td>${st('health', w.health)}</td>
+          <td>${st('diff', w.diff)}</td>
+          <td>${taskCell}</td>
+          <td class="num" style="color:var(--muted)">${esc(w.last)}</td>
+          <td style="text-align:right;white-space:nowrap" onclick="event.stopPropagation()">${primary}</td>
+        </tr>`;
+      }).join('');
+      body = `<div class="table-scroll"><table class="table">
+        <thead><tr><th>工作区</th><th>关系健康</th><th>变化状态</th><th>当前任务</th><th>最近活动</th><th></th></tr></thead>
+        <tbody>${rows}</tbody></table></div>`;
+    }
+    return {
+      title:'工作区', sub:'跨端关系的唯一产品名称 · 全部为演示数据',
+      html:`
+      <div class="page-head">
+        <div class="grow"><h1>工作区</h1><div class="page-sub">比较全部工作区，找到需要扫描、处理变化、重绑或恢复的对象</div></div>
+        <button class="btn btn-primary" data-action="new-ws">${I('plus','sm')} 新建工作区</button>
+      </div>
+      <div class="toolbar">
+        <label class="field">${I('search','sm')}<input placeholder="搜索工作区" style="width:180px"></label>
+        <label class="field"><select><option>全部状态</option><option>需要处理</option><option>正常</option></select></label>
+        <button class="btn btn-text btn-sm">${I('bell','sm')} 仅看活动任务</button>
+        <div class="grow"></div>
+        <span class="hint-fixed">演示控制：</span>
+        <select data-bind="listMode" style="background:var(--surface);color:var(--text);border:1px solid var(--border);border-radius:6px;height:28px;padding:0 6px">
+          <option value="ready" ${S.listMode==='ready'?'selected':''}>就绪</option>
+          <option value="loading" ${S.listMode==='loading'?'selected':''}>加载中</option>
+          <option value="empty" ${S.listMode==='empty'?'selected':''}>空态</option>
+        </select>
+      </div>
+      ${body}
+      <div class="pnote">${I('info','sm')}<div><b>原型注记</b> · 行操作按 05 文档 §7.1 优先级给出当前状态下的唯一主操作；「处理恢复」详情（X-01）属 Round 2/3，本原型未制作。</div></div>`,
+    };
+  },
+
+  /* ---- 新建工作区向导 N-01..N-05 ---- */
+  'wizard'(){
+    if (!S.wizard) resetWizard();
+    const W = S.wizard;
+    const steps = ['选择项目源','选择运行实例','选择受管范围','确认并创建'];
+    const stepNav = `<div class="wiz-steps">${steps.map((t,i) =>
+      `<div class="wstep ${i===W.step?'cur':''} ${i<W.step?'done':''}"><span class="n">${i<W.step?'✓':i+1}</span><span>${t}</span></div>`).join('')}</div>`;
+
+    let content = '';
+    if (W.creating) { // N-05 创建进度
+      const phases = W.done
+        ? [['done','创建工作区','PrepareRelation + CreateRelation 完成'],['done','扫描项目源与运行实例','扫描完成 · 资源 2,986'],['done','生成初始化预览','可查看']]
+        : [['done','创建工作区','预检通过'],['run','扫描项目源与运行实例','后台任务进行中，可离开此页'],['wait','生成初始化预览','扫描完成后自动生成']];
+      content = `<div style="max-width:560px;margin:12vh auto 0;text-align:left">
+        <h1 style="font-size:18px;margin-bottom:4px">正在创建工作区</h1>
+        <div class="page-sub" style="margin-bottom:14px">Collapse Pack ↔ QA Runtime（演示数据）</div>
+        <div class="psteps">${phases.map(p => `<div class="pstep ${p[0]==='done'?'done':p[0]==='run'?'run':''}">
+          <span class="ic">${p[0]==='done'?I('check','sm'):p[0]==='run'?I('sync','sm'):I('clock','sm')}</span>
+          <div><div>${p[1]}</div><div class="rowsub">${p[2]}</div></div></div>`).join('')}</div>
+        <div style="display:flex;gap:8px">
+          <button class="btn btn-outline" data-action="wiz-return">返回工作区列表（任务继续由任务中心追踪）</button>
+          ${W.done?'<button class="btn btn-primary" data-action="init-view-plan">查看初始化预览</button>':''}
+        </div></div>`;
+    } else if (W.step === 0) { // N-01 选择项目源
+      content = `<h1 style="font-size:16px;margin-bottom:12px">选择项目源</h1>
+        ${DEMO.sources.map(s => {
+          const dis = false;
+          return `<div class="cand ${W.src===s.n?'sel':''} ${dis?'dis':''}" data-action="pick-source" data-n="${esc(s.n)}">
+            <span class="radio"></span>
+            <div class="grow"><div class="rowname">${esc(s.n)}</div><div class="rowsub mono">${esc(s.path)}</div></div>
+            ${st(s.ok?'health':'health', s.ok?'healthy':'rebind_required')}
+            <span class="chip">${s.refs} 个工作区</span></div>`;
+        }).join('')}
+        <button class="btn btn-tonal btn-sm" data-action="reg-dialog" data-kind="source">${I('plus','sm')} 登记项目源</button>
+        <div style="margin-top:18px;display:flex;justify-content:flex-end"><button class="btn btn-primary" data-action="wiz-next" ${W.src?'':'disabled'}>下一步</button></div>`;
+    } else if (W.step === 1) { // N-02 选择运行实例
+      content = `<h1 style="font-size:16px;margin-bottom:4px">选择运行实例</h1>
+        <div class="page-sub" style="margin-bottom:12px">项目源：${esc(W.src||'（未选择）')}</div>
+        ${DEMO.runtimes.map(t => {
+          const dup = t.n === 'Collapse Dev'; // 与所选项目源已建立工作区（演示固定）
+          const dis = dup;
+          return `<div class="cand ${W.rt===t.n?'sel':''} ${dis?'dis':''}" ${dis?'':`data-action="pick-runtime" data-n="${esc(t.n)}"`}>
+            <span class="radio"></span>
+            <div class="grow"><div class="rowname">${esc(t.n)}</div><div class="rowsub mono">${esc(t.path)} · ${esc(t.ln)}</div></div>
+            ${st('health', t.ok?'healthy':'rebind_required')}
+            ${dup?`<span class="chip" title="重复 pair 不可选：该项目源已与此运行实例建立工作区">已建立工作区</span>`:''}
+          </div>`;
+        }).join('')}
+        <button class="btn btn-tonal btn-sm" data-action="reg-dialog" data-kind="runtime">${I('plus','sm')} 登记运行实例</button>
+        <div style="margin-top:18px;display:flex;justify-content:space-between">
+          <button class="btn btn-text" data-action="wiz-back">上一步</button>
+          <button class="btn btn-primary" data-action="wiz-next" ${W.rt?'':'disabled'}>下一步</button></div>`;
+    } else if (W.step === 2) { // N-03 选择受管范围
+      content = `<h1 style="font-size:16px;margin-bottom:4px">选择受管范围</h1>
+        <div class="page-sub" style="margin-bottom:12px">显示后端返回的 MappingPolicy 候选；P1/P2 默认物化方式为「复制」（演示数据）</div>
+        ${[['演示策略 A','mods · 双向同步','资源类别：mods｜方向：双向｜默认物化：复制'],
+           ['演示策略 B','mods + config · 双向','资源类别：mods、config｜方向：双向｜默认物化：复制']].map(p =>
+          `<div class="cand ${W.pol===p[0]?'sel':''}" data-action="pick-policy" data-n="${esc(p[0])}">
+            <span class="radio"></span>
+            <div class="grow"><div class="rowname">${esc(p[0])}</div><div class="rowsub">${esc(p[2])}</div></div></div>`).join('')}
+        <div class="panel" style="margin-top:14px">
+          <h3>${I('info','sm')} 后端建议范围（不默认勾选）</h3>
+          <div style="display:flex;gap:6px;flex-wrap:wrap">
+            <span class="chip">config</span><span class="chip">kubejs</span><span class="chip">scripts</span><span class="chip">defaultconfigs</span>
+          </div>
+          <div class="rowsub" style="margin-top:8px">建议范围只能作为后端返回的参考，勾选行为依赖正式 Mapping 契约（05 文档 §16.1）。</div>
+        </div>
+        <div style="margin-top:18px;display:flex;justify-content:space-between">
+          <button class="btn btn-text" data-action="wiz-back">上一步</button>
+          <button class="btn btn-primary" data-action="wiz-next" ${W.pol?'':'disabled'}>下一步</button></div>`;
+    } else { // N-04 确认并创建
+      const pre = W.pre === 'ok';
+      content = `<h1 style="font-size:16px;margin-bottom:12px">确认并创建</h1>
+        <div class="kv" style="background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:14px 16px">
+          <dt>工作区</dt><dd><b>Collapse Pack ↔ QA Runtime</b></dd>
+          <dt>项目源路径</dt><dd class="mono">C:\\packs\\Collapse-Pack</dd>
+          <dt>运行实例路径</dt><dd class="mono">C:\\instances\\qa</dd>
+          <dt>适配器</dt><dd>Packwiz 1.39 · Prism Launcher</dd>
+          <dt>受管范围</dt><dd>${esc(W.pol||'—')}（方向与物化见上一步）</dd>
+        </div>
+        <div class="banner banner-info" style="margin-top:12px">${I('info')}<div class="grow">创建后将立即扫描两侧端点，不会修改项目源或运行实例文件。</div></div>
+        <div class="panel preflight">
+          <h3>${I('shield','sm')} 预检（PrepareRelation）</h3>
+          ${W.pre===null?`<button class="btn btn-tonal" data-action="wiz-preflight">运行预检</button>
+            <div class="rowsub" style="margin-top:8px">检查重复 pair、路径包含、绑定证据与 legacy materialization。</div>`:''}
+          ${W.pre==='running'?`<div class="st st-run pulse">预检中…</div>`:''}
+          ${pre?[
+            ['ok','check','重复 pair：无'],['ok','check','路径互相包含：无'],['ok','check','绑定证据：可识别'],
+            ['ok','check','legacy materialization：未检测到'],
+          ].map(p=>`<div class="pf-row"><span class="pf-ok">${I(p[1],'sm')}</span><span>${p[2]}</span></div>`).join('')+
+          `<div style="margin-top:12px;display:flex;justify-content:flex-end;gap:8px">
+             <button class="btn btn-text" data-action="wiz-back">上一步</button>
+             <button class="btn btn-primary" data-action="wiz-create">${I('plus','sm')} 创建工作区</button></div>`:''}
+        </div>`;
+    }
+    return {
+      title:'新建工作区', sub:'创建工作区不修改 Project 或 Runtime 文件',
+      html:`<div style="max-width:980px;margin:0 auto">
+        <div class="page-head" style="margin-bottom:16px"><div class="grow"><h1>新建工作区</h1></div>
+          <button class="btn btn-text" data-action="wiz-return">${I('close','sm')} 取消</button></div>
+        <div class="wiz">${stepNav}<div>${content}</div></div></div>`,
+    };
+  },
+
+  /* ---- 变化页 C-01..C-06 ---- */
+  'changes'(rt){
+    const w = wsOf(rt.ws); S.ws = rt.ws;
+    let head = wsObjHead(w), body = '';
+    const planBtn = `<button class="btn btn-primary" data-action="changes-plan" data-kind="sync">生成同步分析</button>`;
+    const prio = [ // §7.3 横幅优先级（只表达当前最需要处理的状态）
+      w.health==='recovery_required', w.health==='rebind_required', false, w.scan==='failed',
+      w.scan==='scanning', S.staleDemo, false, w.diff==='conflicted', w.diff==='dirty', w.diff==='clean',
+    ];
+    if (prio[0]) body += banner('err','errC',`<b>需要恢复</b> · 上次执行同步未完成验证，已阻止新的执行与恢复。历史与诊断保留可查。`,
+      `<button class="btn btn-danger-t btn-sm" data-action="task-recover">处理恢复</button>`);
+    else if (prio[1]) body += banner('warn','linkOff',`<b>需要重新绑定</b> · 扫描发现绑定证据与登记指纹不符，当前端点身份无法确认。`,
+      `<button class="btn btn-tonal btn-sm" data-action="open-rebind" data-ws="${w.id}">重新绑定</button>`);
+    else if (prio[3]) body += banner('err','errC',`<b>扫描失败</b> · 读取端点失败：路径不可访问（演示错误）。`,
+      `<button class="btn btn-tonal btn-sm" data-action="changes-scan" data-ws="${w.id}">重试扫描</button>`);
+    else if (prio[2] === false && w.scan === 'never') {
+      body = `<div class="empty">${I('scan','lg')}<h3>未扫描</h3><p>扫描为只读操作，用于建立三方（Project / Baseline / Runtime）状态。</p>
+        <button class="btn btn-primary" data-action="changes-scan" data-ws="${w.id}">${I('play','sm')} 开始扫描</button></div>`;
+      return { title:`变化 · ${w.p} ↔ ${w.r}`, sub:'工作区是唯一跨端操作入口', html: head + body };
+    }
+    else if (prio[4]) body += banner('info','sync',`<b>扫描中</b> · ${esc(w.task ? w.task.phase : '')}，旧数据保留展示，事件不直接替换资源表。`,
+      `<button class="btn btn-tonal btn-sm" data-action="open-tasks">查看任务</button>`);
+    else if (prio[5]) body += banner('warn','clock',`<b>当前结果已标记为过期</b> · 检测到端点可能发生变化，请重新扫描后再生成分析。`,
+      `<button class="btn btn-tonal btn-sm" data-action="changes-scan" data-ws="${w.id}">重新扫描</button>`);
+    else if (prio[7]) body += banner('warn','warn',`<b>存在冲突</b> · 2 项资源在两侧均被修改，需要在计划中以冲突决议处理（Phase 2 提供）。`,
+      planBtn);
+    else if (prio[8]) body += banner('info','sync',`<b>有待同步变化</b> · 可生成同步分析查看影响。`, planBtn);
+    else if (prio[9]) body += banner('ok','check',`<b>无待同步变化</b> · 工作区处于 clean 状态。`, '');
+    else body += banner('info','sync',`<b>可生成同步分析</b>`, planBtn);
+
+    if (w.scan === 'scanning') { // §9 状态矩阵：扫描中保留对象头与工具栏，表格给同构骨架
+      body += `<div class="table-scroll"><table class="table">
+        <thead><tr><th>资源</th><th>Project</th><th>Baseline</th><th>Runtime</th><th>判断</th><th></th></tr></thead>
+        <tbody>${Array.from({length:6}, () => `<tr>${Array.from({length:6}, () => `<td><div class="skel" style="height:16px;width:${50+Math.floor(Math.random()*90)}px"></div></td>`).join('')}</tr>`).join('')}</tbody>
+      </table></div>`;
+    }
+    if (w.scan === 'ready' || w.scan === 'failed') {
+      body += wsMetrics(w);
+      if (w.scan === 'ready') {
+        body += `<div class="toolbar">
+          <div class="filters">${filterChips()}</div>
+          <div class="grow"></div>
+          <label class="field">${I('search','sm')}<input id="chg-search" placeholder="搜索资源" value="${esc(S.changes.search)}" style="width:170px"></label>
+          <label class="field"><select data-bind="chg-type"><option value="全部">资源类型：全部</option>
+            <option value="mod" ${S.changes.type==='mod'?'selected':''}>mod</option>
+            <option value="config" ${S.changes.type==='config'?'selected':''}>config</option>
+            <option value="kubejs" ${S.changes.type==='kubejs'?'selected':''}>kubejs</option>
+            <option value="script" ${S.changes.type==='script'?'selected':''}>script</option>
+            <option value="diag" ${S.changes.type==='diag'?'selected':''}>仅诊断</option></select></label>
+        </div>
+        <div class="hint-fixed" style="margin-bottom:8px">计划会分析当前策略下的全部受管资源，不受表格筛选影响。</div>
+        <div class="table-scroll"><table class="table">
+          <thead><tr><th>资源</th><th>Project</th><th>Baseline</th><th>Runtime</th><th>判断</th><th style="text-align:right">行末</th></tr></thead>
+          <tbody id="res-tbody">${resTbody()}</tbody></table></div>
+        <div class="rowsub" style="margin-top:8px">匹配 <span id="res-count">${resourcesFiltered().length}</span> / ${DEMO.resources.length} 条（演示仅列样例，实际为 2,986 项）</div>`;
+      }
+    }
+    return {
+      title:`变化 · ${w.p} ↔ ${w.r}`, sub:'理解三方状态和诊断，生成覆盖全部受管范围的分析',
+      html: head + body + `<div class="pnote">${I('info','sm')}<div><b>原型注记</b> · 横幅优先级 recovery &gt; rebind &gt; 扫描失败 &gt; 扫描中 &gt; 过期 &gt; 冲突 &gt; 有变化 &gt; clean（05 文档 §7.3）。C-05「已过期」可用浮条画板切换体验；冲突决议（P-03/P-04）属 Round 2。</div></div>`,
+    };
+  },
+
+  /* ---- 受管范围 M-01 ---- */
+  'mappings'(rt){
+    const w = wsOf(rt.ws); S.ws = rt.ws;
+    return {
+      title:`受管范围 · ${w.p} ↔ ${w.r}`, sub:'只读策略表 · 编辑依赖后端 Mapping API（未实现时不显示编辑入口）',
+      html: wsObjHead(w).replace('<button class="tab active">','<button class="tab" data-nav="CHG">').replace('data-nav="CHG">',`data-nav="#/workspaces/${w.id}/changes">`).replace('<button class="tab" data-nav="#/workspaces/'+w.id+'/mappings">','<button class="tab active">') + `
+      <div class="metrics"><span>当前策略 <b>演示策略 B</b></span><span>revision <b class="mono">r42</b></span><span>适用资源 <b>2,986</b></span></div>
+      <div class="table-scroll"><table class="table">
+        <thead><tr><th>资源类别</th><th>Project 范围</th><th>Runtime 范围</th><th>方向</th><th>Include / Exclude 摘要</th><th>物化方式</th><th>状态</th></tr></thead>
+        <tbody>
+          <tr><td class="rowname">mods</td><td class="mono">/mods/**</td><td class="mono">/mods/**</td><td>双向</td><td>exclude: *.disabled</td><td>复制</td><td>${st('health','healthy')}</td></tr>
+          <tr><td class="rowname">config</td><td class="mono">/config/**</td><td class="mono">/config/**</td><td>双向</td><td>include: *.toml, *.ini</td><td>复制</td><td>${st('health','healthy')}</td></tr>
+          <tr><td class="rowname">kubejs</td><td class="mono">/kubejs/**</td><td class="mono">/kubejs/**</td><td>双向</td><td>—</td><td>复制</td><td>${st('health','healthy')}</td></tr>
+        </tbody></table></div>
+      <div class="sec">建议纳管 <span class="n">后端返回但尚未生效（演示数据）</span></div>
+      <div class="table-scroll"><table class="table">
+        <thead><tr><th>资源类别</th><th>方向</th><th>默认物化</th><th>说明</th><th></th></tr></thead>
+        <tbody>
+          <tr><td class="rowname">scripts</td><td>P → R</td><td>复制</td><td>服务端脚本建议纳管</td><td style="text-align:right"><button class="btn btn-text btn-sm" data-action="toast-demo">编辑依赖 Phase 2 Mapping API</button></td></tr>
+          <tr><td class="rowname">defaultconfigs</td><td>P → R</td><td>复制</td><td>默认配置建议纳管</td><td style="text-align:right"><button class="btn btn-text btn-sm" data-action="toast-demo">编辑依赖 Phase 2 Mapping API</button></td></tr>
+        </tbody></table></div>
+      <div class="sec">诊断 <span class="n">mapping collision 为阻断性错误（§7.4）</span></div>
+      <div class="panel" style="border-color:var(--tint-error)">
+        <div class="pf-row"><span class="pf-err">${I('errC','sm')}</span><span><b>mapping_collision</b> · 规则 <span class="mono">config/*.toml</span> 与 <span class="mono">config/**/*.toml</span> 对 <span class="mono">config/a/b.toml</span> 同时命中且优先级无法判定，需人工修正规则（演示数据）。</span></div>
+      </div>
+      <div class="pnote">${I('info','sm')}<div><b>原型注记</b> · P1 只读；「编辑受管范围」仅在 Mapping 编辑 Feature 落地后出现，不画长期 disabled 按钮（§4.3）。hardlink/Junction 仅在 materialization_modes 返回时出现（P4）。</div></div>`,
+    };
+  },
+
+  /* ---- 计划页 P-01 / P-02 / P-05（同一路由承载 initialize / sync / restore） ---- */
+  'plan'(rt){
+    const w = wsOf(rt.ws); S.ws = rt.ws;
+    const stale = !!S.plan.stale;
+    const P = rt.kind === 'init' ? DEMO.planInit : DEMO.planSync;
+    const title = stale ? '同步分析（已过期）' : P.title;
+    const isP1 = true; // Round 1 只做 P1 只读
+    return {
+      title:`${title} · ${w.p} ↔ ${w.r}`, sub:'计划不可变：冲突选择生成新计划，不修改原计划',
+      html:`<div class="page-head">
+        <div class="grow"><h1 style="display:flex;align-items:center;gap:10px">${title}
+          <span class="st st-${stale?'warn':'mut'}">${stale?'已过期':'draft · 只读'}</span>
+          ${rt.kind==='init'?'<span class="chip">initialize</span>':'<span class="chip">sync</span>'}</h1>
+          <div class="page-sub">${esc(w.p)} → ${esc(w.r)} · 生成于 14:20（演示数据）</div></div>
+        <button class="btn btn-outline" data-nav="#/workspaces/${w.id}/changes">返回变化页</button>
+        ${stale?`<button class="btn btn-primary" data-action="changes-scan" data-ws="${w.id}">${I('refresh','sm')} 重新扫描并生成新计划</button>`:''}
+      </div>
+      ${stale?banner('warn','clock',`<b>计划已过期</b> · 端点在计划生成后发生了变化，旧计划保留只读；冲突选择、风险确认与执行已全部停止。旧草稿不会迁移到新计划。`,''):''}
+      <div class="sumchips">${P.chips.map(c => `<span class="chip${c[0]==='冲突'&&c[1]>0?' hot':''}${c[0]==='不可恢复'&&c[1]>0?' bad':''}">${c[0]}<b class="num">${c[1]}</b></span>`).join('')}</div>
+      <div class="rowsub" style="margin-bottom:8px">${esc(P.note)}</div>
+      <div class="tabs">
+        ${['操作','冲突','风险与前置条件'].map(t => `<button class="tab ${S.plan.tab===t?'active':''}" data-action="plan-tab" data-v="${t}">${t}${t==='冲突'?' · 2':''}</button>`).join('')}
+      </div>
+      ${S.plan.tab==='操作' ? `
+        <div class="table-scroll"><table class="table">
+          <thead><tr><th>资源</th><th>方向</th><th>操作</th><th>目标表示</th><th>可恢复性</th><th>风险</th></tr></thead>
+          <tbody>${P.ops.map(o => `<tr class="${o[2]==='待决议'?'op-conflict':''}">
+            <td class="mono ellipsis" style="max-width:260px">${esc(o[0])}</td><td class="num">${esc(o[1])}</td>
+            <td>${o[2]==='待决议'?`<span class="verdict v-c">${esc(o[2])}</span>`:esc(o[2])}</td>
+            <td>${esc(o[3])}</td><td>${esc(o[4])}</td><td>${esc(o[5])}</td></tr>`).join('')}</tbody>
+        </table></div>` : ''}
+      ${S.plan.tab==='冲突' ? `
+        <div class="table-scroll"><table class="table">
+          <thead><tr><th>冲突资源</th><th>Project</th><th>Runtime</th><th>类型</th><th style="text-align:right">证据</th></tr></thead>
+          <tbody>
+            <tr><td class="mono">config/jei/jei-client.ini</td><td>已修改 A</td><td>已修改 B</td><td>双端冲突</td><td style="text-align:right"><button class="btn btn-text btn-sm" data-action="show-evidence" data-n="config/jei/jei-client.ini">${I('file','sm')} 查看证据</button></td></tr>
+            <tr><td class="mono">scripts/server.js</td><td>已删除</td><td>已修改</td><td>删除冲突</td><td style="text-align:right"><button class="btn btn-text btn-sm" data-action="show-evidence" data-n="scripts/server.js">${I('file','sm')} 查看证据</button></td></tr>
+          </tbody></table></div>
+        <div class="pnote">${I('info','sm')}<div><b>原型注记</b> · P1 只读查看证据；冲突决议四选项（以项目源为准 / 以运行实例为准 / 本次跳过 / 手动处理）与「生成已决议计划」属 P-03（Round 2）。</div></div>` : ''}
+      ${S.plan.tab==='风险与前置条件' ? `
+        <div class="panel">
+          <h3>${I('shield','sm')} 前置条件（只读摘要）</h3>
+          <div class="pf-row"><span class="pf-ok">${I('check','sm')}</span><span>端点证据：Project / Runtime 扫描均为 14:20，早于计划生成时间。</span></div>
+          <div class="pf-row"><span class="pf-ok">${I('check','sm')}</span><span>基线 revision <span class="mono">r42</span> 与计划引用一致。</span></div>
+          <div class="pf-row"><span class="pf-warn">${I('warn','sm')}</span><span>1 项资源不可恢复（本地低置信 JAR）；1 个 mod 仅可重新下载。</span></div>
+          <div class="pf-row"><span class="pf-warn">${I('warn','sm')}</span><span>3 项操作将写入 Project，影响 Git 工作树（建议先提交或暂存）。</span></div>
+        </div>
+        <div class="pnote">${I('info','sm')}<div><b>原型注记</b> · P2 的逐项勾选 acknowledgement + 单一主操作「确认并执行同步」（ConfirmPlan 一次性 token → ApplySync）属 P-04（Round 2）。同一决定只确认一次，不叠加第二套弹窗勾选。</div></div>` : ''}`,
+    };
+  },
+
+  /* ---- 重新绑定 R-01/02/03 ---- */
+  'rebind'(rt){
+    const w = wsOf(rt.ws); S.ws = rt.ws;
+    const cands = [
+      { n:'Old Instance（原路径恢复）', path:'E:\\mmc\\old-instance', ok:true,
+        fp:'blake2s: 9f2a…c1（与登记一致）', health:'healthy' },
+      { n:'Old Instance（迁移后）', path:'D:\\games\\mmc\\old-instance', ok:false,
+        fp:'blake2s: 77bd…04（不一致）', health:'endpoint_missing' },
+    ];
+    const c = S.rebind.cand;
+    const provable = c && c.includes('原路径恢复');
+    return {
+      title:`重新绑定 · ${w.p} ↔ ${w.r}`, sub:'绑定证据不足时，重新建立端点身份（完整页面，不塞进确认弹窗）',
+      html:`<div class="page-head"><div class="grow"><h1>重新绑定</h1>
+        <div class="page-sub">扫描发现绑定证据与登记指纹不符 · Legacy Pack ↔ Old Instance（演示数据）</div></div>
+        <button class="btn btn-outline" data-nav="#/workspaces/${w.id}/changes">返回变化页</button></div>
+      <div class="rebind-grid">
+        <div class="panel"><h3>${I('folder','sm')} 当前登记</h3>
+          <div class="kv"><dt>端点名称</dt><dd>Old Instance</dd><dt>适配器</dt><dd>MultiMC</dd>
+          <dt>路径</dt><dd class="mono ellipsis">E:\\mmc\\old-instance</dd>
+          <dt>最后成功扫描</dt><dd>昨天 21:04</dd><dt>指纹摘要</dt><dd class="mono tech">blake2s: 4e11…8d</dd></div>
+        </div>
+        <div class="panel"><h3>${I('cube','sm')} 候选端点</h3>
+          ${cands.map(x => `<div class="cand ${c===x.n?'sel':''}" data-action="pick-cand" data-n="${esc(x.n)}">
+            <span class="radio"></span>
+            <div class="grow"><div class="rowname">${esc(x.n)}</div><div class="rowsub mono">${esc(x.path)}</div>
+              <div class="rowsub mono">${esc(x.fp)}</div></div>
+            ${st('health', x.health)}</div>`).join('')}
+        </div>
+      </div>
+      <div class="panel preflight">
+        <h3>${I('shield','sm')} 预检（PrepareRebind）</h3>
+        ${!c ? `<div class="rowsub">选择候选端点后运行预检。</div>` : provable ? [
+          ['ok','check','重复 Project/Runtime pair：无'],
+          ['ok','check','路径互相包含：无'],
+          ['ok','check','绑定证据：候选指纹与登记一致，可证明逻辑等价'],
+          ['ok','check','Baseline：可继承'],
+          ['ok','check','受影响的 Plan：1 个草稿计划将失效'],
+        ].map(p=>`<div class="pf-row"><span class="pf-ok">${I(p[1],'sm')}</span><span>${p[2]}</span></div>`).join('') : [
+          ['warn','warn','绑定证据：候选指纹与登记不一致，无法证明逻辑等价'],
+          ['err','errC','确认重绑定后，工作区将进入「需要初始化」，旧 Baseline 不继承'],
+        ].map(p=>`<div class="pf-row"><span class="${p[0]==='ok'?'pf-ok':p[0]==='warn'?'pf-warn':'pf-err'}">${I(p[1],'sm')}</span><span>${p[2]}</span></div>`).join('')}
+        ${c ? `<div style="margin-top:12px;display:flex;justify-content:flex-end">
+          <button class="btn btn-primary" data-action="rebind-confirm" data-ok="${provable?1:0}">确认重新绑定</button></div>` : ''}
+      </div>
+      <div class="pnote">${I('info','sm')}<div><b>原型注记</b> · R-02（可证明等价 → 继承基线）与 R-03（不可证明 → 进入需要初始化）两条分支都在本画板内，切换候选端点即可对比。</div></div>`,
+    };
+  },
+
+  /* ---- 项目源 E-01 ---- */
+  'sources'(){
+    return {
+      title:'项目源', sub:'只管理端点登记与解析健康，没有跨端操作入口',
+      html:`<div class="page-head"><div class="grow"><h1>项目源</h1>
+        <div class="page-sub">Packwiz Project 的登记、识别与解析健康维护</div></div>
+        <button class="btn btn-primary" data-action="reg-dialog" data-kind="source">${I('plus','sm')} 登记项目源</button></div>
+      <div class="table-scroll"><table class="table">
+        <thead><tr><th>项目源</th><th>根路径</th><th>适配器</th><th>解析健康</th><th>关联工作区</th><th>最近检查</th><th style="text-align:right">更多</th></tr></thead>
+        <tbody>${DEMO.sources.map(s => `<tr class="rowlink" data-action="src-drawer" data-n="${esc(s.n)}">
+          <td class="rowname">${esc(s.n)}</td><td class="mono ellipsis" style="max-width:240px">${esc(s.path)}</td><td>${esc(s.ad)}</td>
+          <td>${st('health', s.ok?'healthy':'rebind_required')}</td><td class="num">${s.refs}</td><td class="num" style="color:var(--muted)">${esc(s.chk)}</td>
+          <td style="text-align:right;white-space:nowrap" onclick="event.stopPropagation()"><button class="btn btn-icon btn-sm danger" data-action="src-remove" data-n="${esc(s.n)}" title="移除登记">${I('close','sm')}</button></td>
+        </tr>`).join('')}</tbody></table></div>
+      <div class="pnote">${I('info','sm')}<div><b>原型注记</b> · 跨端扫描、推送、拉取、同步不出现在此页（§7.9）。移除登记仅移除 PackGradle 登记，不删除磁盘文件；有工作区引用时由后端决定阻止或迁移。</div></div>`,
+    };
+  },
+
+  /* ---- 运行实例 E-02 ---- */
+  'runtimes'(){
+    return {
+      title:'运行实例', sub:'只管理发现、登记与健康检查，没有跨端操作入口',
+      html:`<div class="page-head"><div class="grow"><h1>运行实例</h1>
+        <div class="page-sub">Minecraft Runtime 的发现、登记与绑定健康</div></div>
+        <button class="btn btn-tonal" data-action="toast-demo">创建运行实例（依赖后端能力）</button>
+        <button class="btn btn-primary" data-action="reg-dialog" data-kind="runtime">${I('plus','sm')} 登记运行实例</button></div>
+      <div class="table-scroll"><table class="table">
+        <thead><tr><th>运行实例</th><th>启动器</th><th>根路径</th><th>绑定健康</th><th>关联工作区</th><th>最近检查</th><th style="text-align:right">更多</th></tr></thead>
+        <tbody>${DEMO.runtimes.map(t => `<tr class="rowlink" data-action="rt-drawer" data-n="${esc(t.n)}">
+          <td class="rowname">${esc(t.n)}</td><td>${esc(t.ln)}</td><td class="mono ellipsis" style="max-width:240px">${esc(t.path)}</td>
+          <td>${st('health', t.ok?'healthy':'endpoint_missing')}</td><td class="num">${t.refs}</td><td class="num" style="color:var(--muted)">${esc(t.chk)}</td>
+          <td style="text-align:right;white-space:nowrap" onclick="event.stopPropagation()"><button class="btn btn-icon btn-sm danger" data-action="src-remove" data-n="${esc(t.n)}" title="移除登记">${I('close','sm')}</button></td>
+        </tr>`).join('')}</tbody></table></div>`,
+    };
+  },
+
+  /* ---- 设置 SET-01（全宽分区 §7.11） ---- */
+  'settings'(){
+    return {
+      title:'设置', sub:'每个独立数据对象使用自己的提交边界',
+      html:`<div style="max-width:860px">
+      <h1 style="font-size:18px;margin-bottom:14px">设置</h1>
+      <div class="set-sec"><h2>适配器与工具</h2><div class="desc">Packwiz、Prism 与后续 adapter 的健康状态</div>
+        <div class="set-row"><span class="lab">Packwiz 路径</span>
+          <span class="val"><span class="field" style="width:100%"><input value="C:\\tools\\packwiz.exe" style="width:100%"></span></span>
+          <span class="ops">${st('health','healthy')}<button class="btn btn-outline btn-sm" data-action="toast-demo">检测</button><button class="btn btn-primary btn-sm" data-action="toast-demo">保存</button></span></div>
+        <div class="set-row"><span class="lab">Prism 适配器</span><span class="val">${st('health','healthy')} <span class="rowsub" style="display:inline">实例目录已定位</span></span></div>
+      </div>
+      <div class="set-sec"><h2>凭据</h2><div class="desc">只显示已配置状态与 credential reference，不回显完整 secret</div>
+        <div class="set-row"><span class="lab">CurseForge API Key</span>
+          <span class="val">${st('health','healthy')} <span class="mono rowsub" style="display:inline">credential: keyring://packgradle/cf</span></span>
+          <span class="ops"><button class="btn btn-outline btn-sm" data-action="toast-demo">更换</button></span></div>
+      </div>
+      <div class="set-sec"><h2>本地存储</h2><div class="desc">SQLite、CAS、staging 与日志位置与健康</div>
+        <div class="set-row"><span class="lab">数据目录</span><span class="val mono rowsub" style="display:inline">%APPDATA%\\PackGradle（演示）</span><span class="ops">${st('health','healthy')}</span></div>
+        <div class="set-row"><span class="lab">CAS 对象库</span><span class="val">1,204 对象 · 3.2 GB（演示）</span><span class="ops">${st('health','healthy')}</span></div>
+      </div>
+      <div class="set-sec"><h2>保留策略</h2><div class="desc">将由 ADR 与后端能力确定后提供可编辑控件</div>
+        <div class="rowsub">当前为只读说明占位——Feature 未实现时不注册入口（§4.3）。</div>
+      </div>
+      <div class="set-sec"><h2>诊断</h2><div class="desc">导出脱敏诊断包、查看日志目录、复制版本信息</div>
+        <div class="set-row"><span class="ops">
+          <button class="btn btn-outline btn-sm" data-action="toast-demo">${I('open','sm')} 导出脱敏诊断包</button>
+          <button class="btn btn-outline btn-sm" data-action="toast-demo">${I('folder','sm')} 查看日志目录</button>
+          <button class="btn btn-text btn-sm" data-action="copy-diag">${I('copy','sm')} 复制版本信息</button></span></div>
+      </div></div>`,
+    };
+  },
+};
+
+/* ================= 8. 动作（data-action 分发） ================= */
+function toast(msg, kind){
+  const t = document.createElement('div');
+  t.className = 'toast ' + (kind||'');
+  t.textContent = msg;
+  $('toast-root').appendChild(t);
+  setTimeout(() => t.remove(), 3200);
+}
+function closeLayers(){ S.dialog=null; S.menu=null; if(S.tasksOpen){S.tasksOpen=false;} S.evidence=null; S.sideDrawer=null; renderLayers(); }
+function openDialog(html){ S.dialog = html; renderLayers(); }
+function confirmDialog(o){ // 确认四要素：动作+对象+后果+可逆性（05 文档 A2 原则）
+  openDialog(`<div class="dialog ${o.danger?'danger-strip':''}">
+    <div class="dialog-h">${I(o.danger?'warn':'help','sm')} ${esc(o.title)}</div>
+    <div class="dialog-b"><div style="margin-bottom:10px">${o.body}</div>
+      ${o.cons&&o.cons.length?`<div class="sec" style="margin-top:0">后果</div>`+o.cons.map(c=>`<div class="pf-row"><span class="pf-warn">${I('warn','sm')}</span><span>${c}</span></div>`).join(''):''}</div>
+    <div class="dialog-f"><button class="btn btn-text" data-action="dialog-close">取消</button>
+      <button class="btn ${o.danger?'btn-danger-t':'btn-primary'}" data-action="${o.act}" ${o.data||''}>${esc(o.okLabel||'确认')}</button></div>
+  </div>`);
+}
+function simulateScan(wsId){
+  const w = wsOf(wsId);
+  w.scan = 'scanning'; w.task = { type:'扫描', phase:'扫描 Project 资源', progress:5 };
+  DEMO.tasks.unshift({ id:'t'+Date.now(), ws:`${w.p} ↔ ${w.r}`, type:'扫描', status:'running', phase:'扫描 Project 资源', progress:5, canCancel:true, time:'刚刚' });
+  S.unread++; render();
+  setTimeout(() => { w.scan='ready'; w.baseline = w.baseline==='none'?'ready':w.baseline; w.diff = w.diff==='conflicted'?'conflicted':'dirty'; w.task=null; w.last='刚刚';
+    const t = DEMO.tasks.find(x => x.ws === `${w.p} ↔ ${w.r}` && x.status==='running');
+    if (t){ t.status='success'; t.phase='扫描完成'; t.progress=100; t.canCancel=false; }
+    if ((parseRoute().page==='changes' && parseRoute().ws===wsId) || parseRoute().page==='ws-list') render();
+  }, 4000);
+}
+function startCreating(){
+  const W = S.wizard; if (!W) resetWizard();
+  W.creating = true; W.done = false;
+  setTimeout(() => { if (S.wizard && S.wizard.creating && !S.wizard.done){ S.wizard.done = true; render(); } }, 5000);
+  if (!DEMO.tasks.some(t => t.type==='扫描' && t.ws.includes('QA'))) {
+    DEMO.tasks.unshift({ id:'t-new', ws:'Collapse Pack ↔ QA Runtime', type:'扫描', status:'running', phase:'扫描项目源与运行实例', progress:10, canCancel:true, time:'刚刚' });
+    S.unread++;
+  }
+}
+
+const ACTIONS = {
+  'toggle-theme'(){ S.theme = S.theme==='dark'?'light':'dark'; document.documentElement.dataset.theme = S.theme; $('theme-btn').innerHTML = I(S.theme==='dark'?'sun':'moon'); },
+  'reset-demo'(){ S = initState(); document.documentElement.dataset.theme = S.theme; $('theme-btn').innerHTML = I('sun'); navigate('#/workspaces'); render(); toast('演示状态已重置'); },
+  'open-tasks'(){ S.tasksOpen = true; S.unread = 0; render(); },
+  'close-tasks'(){ S.tasksOpen = false; render(); },
+  'read-all'(){ S.unread = 0; render(); toast('已全部标为已读（仅前端未读状态，不删除后端任务历史）'); },
+  'cancel-task'(d, el){
+    const t = DEMO.tasks.find(x => x.id === d.id);
+    if (t){ t.status='cancelled'; t.phase='已取消（演示）'; render(); toast('任务已取消（演示）'); }
+  },
+  'task-view-ws'(d){ S.tasksOpen=false; navigate(d.nav||'#/workspaces'); },
+  'task-recover'(){ closeLayers(); toast('「处理恢复」详情页（X-01）属 Round 2/3，本原型未制作——此处仅展示入口与阻断语义', 'err'); },
+  'new-ws'(){ resetWizard(); navigate('#/workspaces/new'); },
+  'wiz-return'(){ navigate('#/workspaces'); },
+  'wiz-back'(){ if (S.wizard.step>0){ S.wizard.step--; render(); } },
+  'wiz-next'(){ S.wizard.step++; render(); },
+  'wiz-preflight'(){ S.wizard.pre='running'; render(); setTimeout(()=>{ S.wizard.pre='ok'; render(); }, 900); },
+  'wiz-create'(){
+    confirmDialog({ title:'创建工作区？', body:'创建 <b>Collapse Pack ↔ QA Runtime</b>。创建本身不修改两侧文件。',
+      cons:['创建成功后将立即启动两侧扫描（后台任务）','不会修改项目源或运行实例文件'], okLabel:'创建工作区', act:'wiz-create-go' });
+  },
+  'wiz-create-go'(){ closeLayers(); startCreating(); render(); },
+  'init-view-plan'(){ navigate('#/workspaces/w1/plans/init'); },
+  'pick-source'(d){ S.wizard.src = d.n; render(); },
+  'pick-runtime'(d){ S.wizard.rt = d.n; render(); },
+  'pick-policy'(d){ S.wizard.pol = d.n; render(); },
+  'reg-dialog'(d, el){
+    const kind = d.kind;
+    openDialog(`<div class="dialog">
+      <div class="dialog-h">${I(kind==='source'?'folder':'cube','sm')} 登记${kind==='source'?'项目源':'运行实例'}</div>
+      <div class="dialog-b">
+        <div class="rowsub" style="margin-bottom:10px">仅登记端点信息，不会读取或修改目录内容（演示表单，不校验）。</div>
+        <div class="set-row"><span class="lab">名称</span><span class="val"><span class="field" style="width:100%"><input placeholder="${kind==='source'?'My Pack':'My Instance'}" style="width:100%"></span></span></div>
+        <div class="set-row"><span class="lab">根路径</span><span class="val"><span class="field" style="width:100%"><input placeholder="C:\\path\\to\\dir" style="width:100%"></span></span></div>
+      </div>
+      <div class="dialog-f"><button class="btn btn-text" data-action="dialog-close">取消</button>
+        <button class="btn btn-primary" data-action="reg-confirm" data-kind="${kind}">登记并选中</button></div>
+    </div>`);
+  },
+  'reg-confirm'(d){
+    closeLayers();
+    toast(`${d.kind==='source'?'项目源':'运行实例'}已登记并选中（演示数据，不会真正保存）`, 'ok');
+  },
+  'dialog-close'(){ S.dialog=null; renderLayers(); },
+  'ws-open'(d){ navigate(`#/workspaces/${d.ws||d.n||'w1'}/changes`); },
+  'ws-more'(d, el){
+    const r = el.getBoundingClientRect();
+    S.menu = { x:r.right-190, y:r.bottom+6, items:[
+      { icon:'linkOff', label:'重新绑定', act:`navigate('#/workspaces/${d.ws}/rebind');closeLayers()` },
+      { icon:'open', label:'打开端点位置（演示）', act:`toast('演示：调用平台打开目录接口（§16.5 待固定）')` },
+      { icon:'copy', label:'复制诊断信息', act:`copyDiag()` },
+    ]};
+    renderLayers();
+  },
+  'changes-scan'(d){ const w = wsOf(d.ws||S.ws); simulateScan(w.id); toast(`已开始扫描：${w.p} ↔ ${w.r}（演示 4 秒后完成）`,'ok'); },
+  'changes-plan'(d){ navigate(`#/workspaces/${S.ws}/plans/${d.kind||'sync'}`); S.plan={kind:d.kind||'sync',tab:'操作',stale:false}; render(); },
+  'set-filter'(d){ S.changes.filter = d.v; render(); },
+  'clear-filter'(){ S.changes={filter:'全部',type:'全部',search:''}; render(); },
+  'show-evidence'(d){
+    const r = DEMO.resources.find(x => x.n === d.n) || { n:d.n, t:'config', p:'—', b:'—', r:'—', v:'c' };
+    S.evidence = r; renderLayers();
+  },
+  'close-evidence'(){ S.evidence=null; renderLayers(); },
+  'plan-tab'(d){ S.plan.tab = d.v; render(); },
+  'open-rebind'(d){ navigate(`#/workspaces/${d.ws||S.ws}/rebind`); },
+  'pick-cand'(d){ S.rebind.cand = d.n; render(); },
+  'rebind-confirm'(d){
+    const provable = d.ok === '1';
+    confirmDialog({ danger:true, title:'确认重新绑定？',
+      body:`将把工作区端点重新绑定到 <b>${esc(S.rebind.cand)}</b>。`,
+      cons: provable
+        ? ['基线将被继承，工作区恢复为可分析状态','1 个草稿计划将失效（不会迁移）']
+        : ['无法证明逻辑等价：重绑定后进入「需要初始化」','旧同步基线不继承，需重新扫描并初始化'],
+      okLabel:'确认重新绑定', act:'rebind-go' });
+  },
+  'rebind-go'(){
+    closeLayers();
+    const w = wsOf('w3'); w.health='healthy'; w.scan='ready'; w.baseline='ready'; w.diff='dirty'; w.last='刚刚';
+    toast('重绑定完成（演示）：工作区恢复为「有待同步变化」','ok');
+    navigate('#/workspaces/w3/changes');
+  },
+  'src-drawer'(d){
+    const s = DEMO.sources.find(x => x.n === d.n);
+    S.sideDrawer = { title:s.n, html:`<div class="kv">
+      <dt>根路径</dt><dd class="mono">${esc(s.path)}</dd><dt>适配器</dt><dd>${esc(s.ad)}</dd>
+      <dt>解析健康</dt><dd>${st('health', s.ok?'healthy':'rebind_required')}</dd>
+      <dt>关联工作区</dt><dd>${s.refs} 个</dd><dt>最近检查</dt><dd>${esc(s.chk)}</dd></div>
+      <div class="sec">解析诊断</div><div class="rowsub">${esc(s.diag)}</div>
+      <div class="sec">技术信息</div><div class="tech mono">endpoint_id: ep_${s.n.length}f2 · fingerprint: blake2s: a1${s.n.length}…9c</div>` };
+    renderLayers();
+  },
+  'rt-drawer'(d){
+    const t = DEMO.runtimes.find(x => x.n === d.n);
+    S.sideDrawer = { title:t.n, html:`<div class="kv">
+      <dt>根路径</dt><dd class="mono">${esc(t.path)}</dd><dt>启动器</dt><dd>${esc(t.ln)}</dd>
+      <dt>绑定健康</dt><dd>${st('health', t.ok?'healthy':'endpoint_missing')}</dd>
+      <dt>关联工作区</dt><dd>${t.refs} 个</dd><dt>最近检查</dt><dd>${esc(t.chk)}</dd></div>
+      <div class="sec">诊断</div><div class="rowsub">adapter identity 与版本信息（演示数据）。</div>` };
+    renderLayers();
+  },
+  'close-side'(){ S.sideDrawer=null; renderLayers(); },
+  'src-remove'(d){
+    confirmDialog({ danger:true, title:'移除登记？', body:`移除 <b>${esc(d.n)}</b> 的 PackGradle 登记。`,
+      cons:['只移除登记，不删除磁盘文件','若仍有工作区引用，后端将阻止或进入迁移流程'], okLabel:'移除登记', act:'src-remove-go', data:`data-n="${esc(d.n)}"` });
+  },
+  'src-remove-go'(d){ closeLayers(); toast(`已移除登记：${d.n}（演示，不删除文件）`,'ok'); },
+  'copy-diag'(){ copyDiag(); },
+  'copy-text'(){ copyDiag(); },
+  'toast-demo'(){ toast('原型占位：该能力依赖尚未固定的后端契约（05 文档 §16）'); },
+  'help-open'(){
+    openDialog(`<div class="dialog"><div class="dialog-h">${I('help','sm')} 关于本原型</div>
+      <div class="dialog-b" style="font-size:12.5px">
+        <p style="margin-bottom:8px">本文件是 <b>docs/frontend/05-workspace-ux-prototype.md</b> 的 Round 1（P1 主闭环）可交互原型，规格以该文档为准。</p>
+        <p style="margin-bottom:8px">底部浮条可在画板间切换（← → 键）；所有数据为内存态<b>演示数据</b>，刷新即重置。</p>
+        <p style="margin-bottom:8px">Round 2/3 待补：冲突决议（P-03/P-04）、历史与恢复（H-01..H-03、X-01）。</p>
+        <p class="rowsub">修改入口：DEMO（数据）/ S（状态）/ BOARD（画板清单）/ SCREENS（渲染）/ ACTIONS（行为）。</p>
+      </div>
+      <div class="dialog-f"><button class="btn btn-primary" data-action="dialog-close">知道了</button></div></div>`);
+  },
+  'board-prev'(){ switchBoard((boardIdx + BOARDS.length - 1) % BOARDS.length); },
+  'board-next'(){ switchBoard((boardIdx + 1) % BOARDS.length); },
+};
+function copyDiag(){
+  const txt = 'PackGradle 原型 · 演示数据\nrelation_id: rel_demo_01\napp: prototype (workspace-ux-prototype.html)';
+  try { navigator.clipboard.writeText(txt); toast('已复制诊断信息（演示）','ok'); }
+  catch(e){ toast('当前环境不支持剪贴板（file:// 下属正常现象）'); }
+}
+function switchBoard(i){
+  boardIdx = i;
+  const b = BOARDS[i];
+  S.tasksOpen = false; S.evidence = null; S.dialog = null; S.menu = null;
+  if (b.s) b.s();
+  renderLayers();
+  navigate(b.r);
+}
+
+/* ================= 9. 层：任务中心 / 证据抽屉 / 详情抽屉 / 菜单 ================= */
+function taskIcon(st){ return { queued:'clock', running:'sync', success:'check', failed:'errC', cancelled:'ban', recovery:'warn' }[st] || 'clock'; }
+function renderLayers(){
+  const root = $('layer-root');
+  let html = '';
+  if (S.dialog) html += `<div class="dialog-wrap" data-action="dialog-backdrop">${S.dialog}</div>`;
+  if (S.tasksOpen){
+    html += `<div class="overlay" data-action="close-tasks"></div><aside class="drawer">
+      <div class="drawer-h">${I('bell','sm')} 任务中心 <div class="grow" style="flex:1"></div>
+        <button class="btn btn-text btn-sm" data-action="read-all">全部标为已读</button>
+        <button class="btn btn-icon btn-sm" data-action="close-tasks">${I('close','sm')}</button></div>
+      <div class="drawer-b">
+        <div class="rowsub" style="margin-bottom:10px">正在恢复任务状态…随后以 ListTasks / GetTask 查询结果为准（演示固定显示）。</div>
+        ${DEMO.tasks.map(t => `<div class="panel" style="margin-bottom:10px;padding:12px 14px">
+          <div style="display:flex;align-items:center;gap:8px">
+            <span class="st st-${ST.task[t.status][1]}${t.status==='running'?' pulse':''}">${I(taskIcon(t.status),'sm')} ${ST.task[t.status][0]}</span>
+            <b style="flex:1;min-width:0" class="ellipsis">${esc(t.type)} · ${esc(t.ws)}</b>
+            <span class="rowsub num">${esc(t.time)}</span></div>
+          <div class="rowsub" style="margin:6px 0 4px">${esc(t.phase)}</div>
+          ${t.status==='running'?`<div class="task-cell" style="margin-bottom:6px"><div class="prog" style="flex:1"><i style="width:${t.progress}%"></i></div><span class="num rowsub">${t.progress}%</span></div>`:''}
+          <div style="display:flex;gap:6px;margin-top:6px;flex-wrap:wrap">
+            ${t.canCancel?`<button class="btn btn-text btn-sm" data-action="cancel-task" data-id="${t.id}">取消任务</button>`:''}
+            ${t.ws!=='—'?`<button class="btn btn-tonal btn-sm" data-action="task-view-ws">查看工作区</button>`:''}
+            ${t.status==='recovery'?`<button class="btn btn-danger-t btn-sm" data-action="task-recover">处理恢复</button>`:''}
+          </div></div>`).join('')}
+        <div class="pnote">${I('info','sm')}<div><b>原型注记</b> · 任务中心抽屉宽度 min(400px, viewport−rail)；取消仅在 can_cancel=true 时显示（§5.3）。</div></div>
+      </div></aside>`;
+  }
+  if (S.evidence){
+    const r = S.evidence;
+    html += `<div class="overlay" data-action="close-evidence"></div><aside class="drawer" style="width:min(460px,calc(100vw - 68px))">
+      <div class="drawer-h">${I('file','sm')} <span class="mono ellipsis">${esc(r.n)}</span><div style="flex:1"></div>
+        ${(() => { const [vl,vc] = verdictLabel(r.v); return `<span class="st plain st-${vc==='v-s'?'mut':'warn'}">${esc(vl)}</span>`; })()}
+        <button class="btn btn-icon btn-sm" data-action="close-evidence">${I('close','sm')}</button></div>
+      <div class="drawer-b">
+        <div class="ev3">
+          <div class="evcol"><h4>${I('folder','sm')} Project</h4><div class="kv" style="grid-template-columns:64px 1fr">
+            <dt>状态</dt><dd>${esc(r.p)}</dd><dt>路径</dt><dd class="mono tech">${esc(r.n)}</dd><dt>变化原因</dt><dd>${r.v==='c'?'两侧均有本地修改（演示）':r.v.startsWith('r')?'Runtime 侧修改':'Project 侧修改'}</dd></div></div>
+          <div class="evcol"><h4>${I('clock','sm')} Baseline</h4><div class="kv" style="grid-template-columns:64px 1fr">
+            <dt>状态</dt><dd>${esc(r.b)}</dd><dt>含义</dt><dd>上次认可状态</dd></div></div>
+          <div class="evcol"><h4>${I('cube','sm')} Runtime</h4><div class="kv" style="grid-template-columns:64px 1fr">
+            <dt>状态</dt><dd>${esc(r.r)}</dd><dt>路径</dt><dd class="mono tech">${esc(r.n)}</dd></div></div>
+        </div>
+        <div class="sec">命中的 MappingRule</div>
+        <div class="rowsub mono">${r.t==='mod'?'mods/**（双向 · 复制）':r.t==='kubejs'?'kubejs/**（双向 · 复制）':'config/**（双向 · 复制）'}</div>
+        <div class="sec">技术信息</div>
+        <div class="tech mono">resource_id: res_${r.n.length}8f · snapshot: snap_14h20m · hash: blake2s: ${r.n.length}e2…7a<br>detail:（原始诊断 detail 仅出现在此处，普通视图不暴露）</div>
+      </div>
+      <div class="drawer-f"><button class="btn btn-outline btn-sm" data-action="copy-text">${I('copy','sm')} 复制诊断</button>
+        <button class="btn btn-primary btn-sm" data-action="close-evidence">关闭</button></div>
+    </aside>`;
+  }
+  if (S.sideDrawer){
+    html += `<div class="overlay" data-action="close-side"></div><aside class="drawer">
+      <div class="drawer-h">${I('info','sm')} ${esc(S.sideDrawer.title)}<div style="flex:1"></div>
+        <button class="btn btn-icon btn-sm" data-action="close-side">${I('close','sm')}</button></div>
+      <div class="drawer-b">${S.sideDrawer.html}</div>
+      <div class="drawer-f"><button class="btn btn-primary btn-sm" data-action="close-side">关闭</button></div>
+    </aside>`;
+  }
+  if (S.menu){
+    html += `<div class="overlay" style="background:transparent" data-action="menu-close"></div>
+    <div class="menu" style="left:${S.menu.x}px;top:${S.menu.y}px">
+      ${S.menu.items.map(m => `<button data-action="menu-run" data-code="${esc(m.act)}">${I(m.icon,'sm')} ${esc(m.label)}</button>`).join('')}
+    </div>`;
+  }
+  root.innerHTML = html;
+  const badge = $('bell-badge');
+  badge.style.display = S.unread > 0 ? 'flex' : 'none';
+  badge.textContent = S.unread;
+  const jump = $('pb-jump');
+  if (jump.options.length !== BOARDS.length){
+    jump.innerHTML = BOARDS.map((b,i) => `<option value="${i}">${b.id} · ${b.t}</option>`).join('');
+  }
+  jump.value = boardIdx;
+  $('pb-label').innerHTML = `<small>画板</small>${BOARDS[boardIdx].id} · ${BOARDS[boardIdx].t}`;
+}
+
+/* ================= 10. 主渲染 ================= */
+function render(){
+  const rt = parseRoute();
+  const fn = SCREENS[rt.page] || SCREENS['ws-list'];
+  const out = fn(rt);
+  $('tb-title').textContent = out.title;
+  $('tb-sub').textContent = out.sub || '';
+  $('screen').innerHTML = out.html;
+  document.querySelectorAll('.rail-btn').forEach(b => {
+    const sec = b.dataset.sec;
+    b.classList.toggle('active', sec === ({'ws-list':'workspaces',wizard:'workspaces',changes:'workspaces',mappings:'workspaces',plan:'workspaces',rebind:'workspaces'})[rt.page]);
+  });
+  // 画板序号只在「导航目标 ≠ 当前画板路由」时按路由回写，避免同路由画板（如 C-04/C-05）互相覆盖
+  if (location.hash !== BOARDS[boardIdx].r){
+    const bi = BOARDS.findIndex(b => b.r === location.hash);
+    if (bi >= 0) boardIdx = bi;
+  }
+  renderLayers();
+}
+
+/* ================= 11. 事件 ================= */
+document.addEventListener('click', (e) => {
+  if (e.target.dataset && e.target.dataset.action === 'dialog-backdrop'){ S.dialog=null; renderLayers(); return; } // 点击遮罩空白处关闭
+  const el = e.target.closest('[data-action],[data-nav]');
+  if (!el) return;
+  if (el.dataset.nav){ navigate(el.dataset.nav); return; }
+  const fn = ACTIONS[el.dataset.action];
+  if (fn){ fn(el.dataset, el); }
+});
+document.addEventListener('input', (e) => {
+  if (e.target.id === 'chg-search'){
+    S.changes.search = e.target.value;
+    const tb = $('res-tbody'), ct = $('res-count');
+    if (tb) tb.innerHTML = resTbody();
+    if (ct) ct.textContent = resourcesFiltered().length;
+  }
+});
+document.addEventListener('change', (e) => {
+  const bind = e.target.dataset.bind;
+  if (bind === 'listMode'){ S.listMode = e.target.value; if (parseRoute().page === 'ws-list') render(); else navigate('#/workspaces'); }
+  if (bind === 'chg-type'){ S.changes.type = e.target.value; render(); }
+  if (e.target.id === 'pb-jump'){ switchBoard(Number(e.target.value)); }
+});
+document.addEventListener('keydown', (e) => {
+  const tag = (document.activeElement && document.activeElement.tagName) || '';
+  if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || (document.activeElement && document.activeElement.isContentEditable)) return;
+  if (e.key === 'Escape'){ if (S.dialog){S.dialog=null;renderLayers();} else if (S.menu){S.menu=null;renderLayers();} else if (S.tasksOpen){S.tasksOpen=false;render();} else if (S.evidence){S.evidence=null;renderLayers();} else if (S.sideDrawer){S.sideDrawer=null;renderLayers();} return; }
+  if (e.key === 'ArrowLeft'){ ACTIONS['board-prev'](); }
+  if (e.key === 'ArrowRight'){ ACTIONS['board-next'](); }
+});
+window.addEventListener('hashchange', render);
+
+/* 扫描任务的模拟推进：仅演示，让进度条活起来 */
+setInterval(() => {
+  let changed = false;
+  DEMO.tasks.forEach(t => {
+    if (t.status === 'running' && t.progress < 100){
+      t.progress = Math.min(100, t.progress + 3);
+      if (t.progress >= 100){ t.status = 'success'; t.phase = '扫描完成'; t.canCancel = false; changed = true; }
+    }
+  });
+  DEMO.workspaces.forEach(w => {
+    if (w.task && w.task.progress < 100){ w.task.progress = Math.min(100, w.task.progress + 3); if (w.task.progress >= 100){ w.scan='ready'; w.diff='dirty'; w.task=null; w.last='刚刚'; changed = true; } }
+  });
+  // 任务抽屉打开时让进度条走起来；有完成事件时刷新列表/变化页（不重建对话框，避免丢输入）
+  if (changed) render();
+  else if (S.tasksOpen && !S.dialog && !S.menu) renderLayers();
+}, 1200);
+
+/* ================= 12. 启动 ================= */
+$('theme-btn').innerHTML = I('sun');
+if (!location.hash) location.hash = '#/workspaces';
+switchBoard(0);
+</script>
+</body>
+</html>

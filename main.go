@@ -7,9 +7,11 @@ import (
 	"log"
 
 	"packgradle/internal/appconfig"
+	"packgradle/internal/bootstrap"
 	"packgradle/internal/errs"
 	"packgradle/internal/service"
 	"packgradle/internal/singleinstance"
+	"packgradle/internal/store"
 
 	"github.com/wailsapp/wails/v3/pkg/application"
 )
@@ -49,7 +51,19 @@ func main() {
 		log.Printf("迁移旧版项目关联配置失败: %v", err)
 	}
 
+	// 新架构（P1 只读核心）装配：SQLite 迁移失败必须阻止启动写操作
+	newStackRoot, err := store.DefaultRoot()
+	if err != nil {
+		log.Fatalf("定位用户数据目录失败: %v", err)
+	}
+	newStack, err := bootstrap.Build(newStackRoot)
+	if err != nil {
+		log.Fatalf("新架构初始化失败: %v", err)
+	}
+	defer newStack.Close()
+
 	// 创建 Wails 应用。'Bind' 中注册的 Go 服务方法可供前端直接调用。
+	// 新旧并存：legacy 三服务保持既有行为（已冻结）；SyncService 为 P1 只读核心出口。
 	app := application.New(application.Options{
 		Name:        "PackGradle",
 		Description: "packwiz 与 Prism Launcher 整合包开发环境工具",
@@ -57,6 +71,7 @@ func main() {
 			application.NewService(service.NewEnvService(config)),
 			application.NewService(service.NewPackwizService(config)),
 			application.NewService(service.NewPrismService(config)),
+			application.NewService(newStack.Service),
 		},
 		MarshalError: marshalError,
 		Assets: application.AssetOptions{
@@ -68,13 +83,14 @@ func main() {
 	})
 
 	app.Window.NewWithOptions(application.WebviewWindowOptions{
-		Title:  "PackGradle",
-		Width:  1200,
-		Height: 780,
-		MinWidth:  940,
-		MinHeight: 620,
+		Title:            "PackGradle",
+		Width:            1200,
+		Height:           780,
+		MinWidth:         940,
+		MinHeight:        620,
+		Frameless:        true,
 		BackgroundColour: application.NewRGB(18, 18, 24),
-		URL:             "/",
+		URL:              "/",
 	})
 
 	if err := app.Run(); err != nil {

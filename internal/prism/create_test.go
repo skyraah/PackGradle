@@ -106,6 +106,33 @@ func TestCreateInstanceSanitize(t *testing.T) {
 	}
 }
 
+// Windows 保留设备名应加前缀；结尾点/空格应去除
+func TestCreateInstanceSanitizeReservedNames(t *testing.T) {
+	cases := []struct{ name, wantID string }{
+		{"CON", "_CON"},
+		{"con.txt", "_con.txt"},
+		{"LPT9", "_LPT9"},
+		{"pack.", "pack"},
+		{"pack   ", "pack"},
+	}
+	for _, c := range cases {
+		if got := sanitizeInstanceID(c.name); got != c.wantID {
+			t.Errorf("sanitizeInstanceID(%q) = %q，期望 %q", c.name, got, c.wantID)
+		}
+	}
+}
+
+// 未填写 MC 版本 / 加载器版本时应拒绝创建
+func TestCreateInstanceRequiresVersions(t *testing.T) {
+	instancesDir := t.TempDir()
+	if _, err := CreateMinimalInstance(instancesDir, CreateRequest{Name: "X"}); err == nil {
+		t.Fatal("未填写 MC 版本应报错")
+	}
+	if _, err := CreateMinimalInstance(instancesDir, CreateRequest{Name: "X", Minecraft: "1.20.1", Modloader: "fabric"}); err == nil {
+		t.Fatal("有加载器但无版本应报错")
+	}
+}
+
 // 不支持的加载器拒绝
 func TestCreateInstanceLoaderUnsupported(t *testing.T) {
 	instancesDir := t.TempDir()
