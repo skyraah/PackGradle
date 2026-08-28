@@ -63,3 +63,19 @@ tasks:
     summary: Builds and runs the Docker image
     cmds:
       - task: common:run:docker
+
+  # 验收 L0 命令集（docs/acceptance/p1-acceptance-spec.md §1.1）
+  test:
+    summary: Runs the full Go test suite (acceptance L0)
+    cmds:
+      - go test ./...
+
+  test:vet:
+    summary: Runs go vet over the whole module (acceptance L0)
+    cmds:
+      - go vet ./...
+
+  test:race:
+    summary: Runs the full Go test suite with -race (acceptance L0 hard gate; needs mingw-w64 gcc for CGO)
+    cmds:
+      - go test -race ./...
