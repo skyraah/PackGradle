@@ -159,7 +159,7 @@ func newStack(t *testing.T, dataRoot string) (*syncapp.App, *sql.DB) {
 		RuntimeScan:   prism.New(),
 		Hasher:        filesystem.NewHasher(),
 		Fingerprinter: filesystem.NewFingerprinter(),
-		Paths:         filesystem.PathNormalizer{},
+		EndpointPaths: filesystem.PathNormalizer{},
 		IDs:           ids.New,
 		Now:           time.Now,
 	})

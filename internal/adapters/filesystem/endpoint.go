@@ -6,6 +6,8 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+
+	"packgradle/internal/core/normalize"
 )
 
 // ErrEndpointUnreachable 表示端点路径不可达（不存在、IO 错误或不是目录）。
@@ -75,7 +77,9 @@ func (r *Resolver) Resolve(rel string) (string, error) {
 
 // resolveWithin 在已规范化的 realRoot 内解析 rel（ResolveWithin 的核心）。
 func resolveWithin(realRoot, rel string) (string, error) {
-	cleanRel, err := normalizeRelativePath(rel)
+	// 相对路径预检：拒绝绝对路径/卷名/`..`/空路径，统一分隔符并移除
+	// `.`/空组件（复用 core/normalize 的编码规则，保留大小写）。
+	cleanRel, err := normalize.NormalizeRelativePath(rel, false)
 	if err != nil {
 		return "", fmt.Errorf("%w: %q", ErrPathEscape, rel)
 	}

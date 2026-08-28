@@ -5,8 +5,6 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-
-	"packgradle/internal/core/normalize"
 )
 
 // ErrPathEscape 表示相对路径非法或解析后逃逸出 root
@@ -22,12 +20,6 @@ func ResolveWithin(root, rel string) (string, error) {
 		return "", err
 	}
 	return resolveWithin(realRoot, rel)
-}
-
-// normalizeRelativePath 预检相对路径：拒绝绝对路径/卷名/`..`/空路径，
-// 统一分隔符并移除 `.`/空组件（identity 编码规则复用，保留大小写）。
-func normalizeRelativePath(rel string) (string, error) {
-	return normalize.NormalizeRelativePath(rel, false)
 }
 
 // IsPlainFile 报告 path 是否为普通文件且不经过任何重解析点（junction/symlink）。

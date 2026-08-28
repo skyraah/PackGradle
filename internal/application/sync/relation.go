@@ -61,8 +61,8 @@ func (a *App) PrepareRelation(ctx context.Context, input model.PrepareRelationIn
 	projectRoot := input.ProjectRoot
 	projectReadable := false
 	projectDetail := "pack.toml 不存在（不是 Packwiz 项目根目录）"
-	if real, nerr := a.deps.Paths.NormalizeEndpointPath(input.ProjectRoot); nerr != nil {
-		projectDetail = "项目根目录不可达: " + nerr.Error()
+	if real, nerr := a.deps.EndpointPaths.NormalizeEndpointPath(input.ProjectRoot); nerr != nil {
+		projectDetail = "项目源根目录不可达: " + nerr.Error()
 	} else {
 		projectRoot = real
 		projectReadable = pathExists(filepath.Join(real, "pack.toml"))
@@ -72,9 +72,9 @@ func (a *App) PrepareRelation(ctx context.Context, input model.PrepareRelationIn
 	gameDir := ""
 	runtimeReadable := false
 	runtimeDetail := "Prism 实例目录缺少 instance.cfg 或 minecraft/ 游戏目录"
-	if real, nerr := a.deps.Paths.NormalizeEndpointPath(input.RuntimeInstanceDir); nerr != nil {
-		runtimeDetail = "实例目录不可达: " + nerr.Error()
-	} else if realGame, gerr := a.deps.Paths.NormalizeEndpointPath(filepath.Join(real, "minecraft")); gerr != nil {
+	if real, nerr := a.deps.EndpointPaths.NormalizeEndpointPath(input.RuntimeInstanceDir); nerr != nil {
+		runtimeDetail = "运行实例目录不可达: " + nerr.Error()
+	} else if realGame, gerr := a.deps.EndpointPaths.NormalizeEndpointPath(filepath.Join(real, "minecraft")); gerr != nil {
 		runtimeDetail = "游戏目录 minecraft/ 不可达: " + gerr.Error()
 	} else {
 		instanceDir = real
