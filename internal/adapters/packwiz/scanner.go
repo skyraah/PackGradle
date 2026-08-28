@@ -10,6 +10,7 @@ import (
 	"sort"
 	"strings"
 
+	"packgradle/internal/adapters/filesystem"
 	"packgradle/internal/application/ports"
 	"packgradle/internal/core/model"
 	"packgradle/internal/core/normalize"
@@ -34,13 +35,26 @@ func (s *Scanner) Name() string { return "packwiz" }
 func (s *Scanner) Version() string { return "1.0.0" }
 
 // Scan 扫描项目端点：index.toml 权威 mod 列表 + MappingPolicy 受管文件规则。
+// 全部端点内路径访问经 Resolver（realpath + root containment）强制入口。
 func (s *Scanner) Scan(ctx context.Context, root string, opts ports.ScanOptions) (model.ScanReport, error) {
 	report := model.ScanReport{}
 
-	if _, err := os.Stat(filepath.Join(root, "pack.toml")); err != nil {
+	rslv, err := filesystem.NewResolver(root)
+	if err != nil {
+		return report, fmt.Errorf("packwiz: 端点根不可达: %w", err)
+	}
+	packPath, err := rslv.Resolve("pack.toml")
+	if err != nil {
+		return report, fmt.Errorf("packwiz: pack.toml 解析失败: %w", err)
+	}
+	if _, err := os.Stat(packPath); err != nil {
 		return report, ErrNotPackwizProject
 	}
-	idx, err := parseIndex(filepath.Join(root, "index.toml"))
+	idxPath, err := rslv.Resolve("index.toml")
+	if err != nil {
+		return report, fmt.Errorf("packwiz: index.toml 解析失败: %w", err)
+	}
+	idx, err := parseIndex(idxPath)
 	if err != nil {
 		if errors.Is(err, fs.ErrNotExist) {
 			return report, ErrIndexMissing
@@ -64,7 +78,16 @@ func (s *Scanner) Scan(ctx context.Context, root string, opts ports.ScanOptions)
 			})
 			continue
 		}
-		absMeta := filepath.Join(root, filepath.FromSlash(entry.File))
+		absMeta, rerr := rslv.Resolve(entry.File)
+		if rerr != nil {
+			// 条目解析后越出端点根目录（symlink/junction 指向 root 外）：整条跳过
+			report.Diagnostics = append(report.Diagnostics, model.Diagnostic{
+				Severity: "warning", Code: "diag.scan.path_escape",
+				Args: []string{entry.File}, RelativePath: entry.File,
+				Detail: "index.toml 条目解析后越出端点根目录，已忽略: " + rerr.Error(),
+			})
+			continue
+		}
 		meta, metaErr := parseModMeta(absMeta)
 		if metaErr != nil {
 			// 容错哲学：条目保留（低置信度路径身份），错误落诊断
@@ -118,7 +141,7 @@ func (s *Scanner) Scan(ctx context.Context, root string, opts ports.ScanOptions)
 	}
 
 	// 受管文件规则（text_file/binary_file）
-	fileObs, fileDiags, err := scanManagedFiles(ctx, root, opts)
+	fileObs, fileDiags, err := scanManagedFiles(ctx, rslv, opts)
 	if err != nil {
 		return report, err
 	}
@@ -141,7 +164,9 @@ func findModRuleID(p model.MappingPolicy) string {
 }
 
 // scanManagedFiles 按 MappingPolicy 的文件规则扫描受管文件。
-func scanManagedFiles(ctx context.Context, root string, opts ports.ScanOptions) ([]model.ResourceObservation, []model.Diagnostic, error) {
+// 前缀先经 Resolver 解析（越界/非法 → 诊断并跳过该规则），遍历自
+// 解析后的 realpath base 展开，逐项再做 containment 复核。
+func scanManagedFiles(ctx context.Context, rslv *filesystem.Resolver, opts ports.ScanOptions) ([]model.ResourceObservation, []model.Diagnostic, error) {
 	var obs []model.ResourceObservation
 	var diags []model.Diagnostic
 
@@ -154,7 +179,15 @@ func scanManagedFiles(ctx context.Context, root string, opts ports.ScanOptions) 
 			continue
 		}
 		prefix := strings.ToLower(strings.ReplaceAll(strings.Trim(rule.ProjectPrefix, "/"), "\\", "/"))
-		base := filepath.Join(root, filepath.FromSlash(prefix))
+		base, rerr := rslv.Resolve(prefix)
+		if rerr != nil {
+			diags = append(diags, model.Diagnostic{
+				Severity: "warning", Code: "diag.scan.path_escape",
+				Args: []string{rule.ProjectPrefix},
+				Detail: "策略前缀解析后越出端点根目录，规则已忽略: " + rerr.Error(),
+			})
+			continue
+		}
 		if _, err := os.Stat(base); err != nil {
 			continue // 前缀目录不存在：无观察，不是错误
 		}
@@ -169,7 +202,16 @@ func scanManagedFiles(ctx context.Context, root string, opts ports.ScanOptions) 
 			if d.IsDir() || !d.Type().IsRegular() {
 				return nil
 			}
-			relToRoot, rerr := filepath.Rel(root, path)
+			// 防御性复核：WalkDir 不跟随链接，但防未来实现变化导致越界
+			if !filesystem.WithinRoot(rslv.Root(), path) {
+				diags = append(diags, model.Diagnostic{
+					Severity: "warning", Code: "diag.scan.path_escape",
+					Args: []string{path},
+					Detail: "遍历路径越出端点根目录，已忽略",
+				})
+				return nil
+			}
+			relToRoot, rerr := filepath.Rel(rslv.Root(), path)
 			if rerr != nil {
 				return nil
 			}

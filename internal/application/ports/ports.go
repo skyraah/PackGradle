@@ -168,6 +168,13 @@ type BindingFingerprinter interface {
 	Fingerprint(rootPath string) (string, error) // "sha256:<hex>"
 }
 
+// EndpointNormalizer 是端点路径规范化管线的强制入口（检视 P0-4）：
+// 相对输入绝对化 → realpath（symlink/junction/reparse 全解析）→ 目录存在性校验。
+// 端点登记、绑定指纹与包含关系判定一律以返回的 canonical 路径为准。
+type EndpointNormalizer interface {
+	NormalizeEndpointPath(rootPath string) (string, error)
+}
+
 // ScanHint 是 application 传给 Runtime 扫描器的跨侧身份提示：
 // key 为 pw.toml filename 字段的小写值，value 为对应 ResourceID。
 // 这是唯一的跨侧身份匹配通道；core/diff 不做路径→身份推断。

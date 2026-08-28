@@ -66,6 +66,7 @@ func Build(root string) (*Stack, error) {
 		RuntimeScan:   prism.New(),
 		Hasher:        hasher,
 		Fingerprinter: fingerprinter,
+		Paths:         filesystem.PathNormalizer{},
 		IDs:           ids.New,
 		Now:           defaultNow,
 	})

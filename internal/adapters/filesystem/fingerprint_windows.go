@@ -6,44 +6,61 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
-	"path/filepath"
 	"strings"
 	"syscall"
 	"unsafe"
 )
 
 // Fingerprinter 实现 ports.BindingFingerprinter（Windows）：
-// 卷序列号 + 规范化小写绝对路径 → sha256。
+// 根目录 file identity（卷序列号 + file index）+ realpath 材质 → sha256。
+// 同一路径被替换为另一个目录时 file identity 变化，指纹失配 → rebind_required。
 type Fingerprinter struct{}
 
 // NewFingerprinter 构造 Windows 指纹器。
 func NewFingerprinter() *Fingerprinter { return &Fingerprinter{} }
 
-var (
-	kernel32                  = syscall.NewLazyDLL("kernel32.dll")
-	procGetVolumeInformationW = kernel32.NewProc("GetVolumeInformationW")
-)
+// byHandleFileInformation 对应 Windows BY_HANDLE_FILE_INFORMATION 布局。
+type byHandleFileInformation struct {
+	FileAttributes     uint32
+	CreationTime       syscall.Filetime
+	LastAccessTime     syscall.Filetime
+	LastWriteTime      syscall.Filetime
+	VolumeSerialNumber uint32
+	FileSizeHigh       uint32
+	FileSizeLow        uint32
+	NumberOfLinks      uint32
+	FileIndexHigh      uint32
+	FileIndexLow       uint32
+}
 
-// Fingerprint 返回 "sha256:<hex>"。卷序列号取不到（如网络盘/权限）时
-// 回退纯路径材料并加 "novolume" 标记，保证同机稳定。
+var procGetFileInformationByHandle = kernel32.NewProc("GetFileInformationByHandle")
+
+// dirIdentity 返回句柄所指目录的绑定身份（卷序列号 + file index）。
+func dirIdentity(h syscall.Handle) (uint32, uint64, bool) {
+	var info byHandleFileInformation
+	ret, _, _ := procGetFileInformationByHandle.Call(uintptr(h), uintptr(unsafe.Pointer(&info)))
+	if ret == 0 {
+		return 0, 0, false
+	}
+	return info.VolumeSerialNumber,
+		uint64(info.FileIndexHigh)<<32 | uint64(info.FileIndexLow),
+		true
+}
+
+// Fingerprint 返回 "sha256:<hex>"。root 不可达即报错；file identity 取不到
+// （网络盘/权限/FAT）时降级为纯路径材质并加 "w-noid" 标记，保证同机稳定。
 func (f *Fingerprinter) Fingerprint(rootPath string) (string, error) {
-	abs, err := filepath.Abs(rootPath)
+	real, err := NormalizeEndpointPath(rootPath)
 	if err != nil {
 		return "", err
 	}
-	material := "novolume|" + strings.ToLower(filepath.Clean(abs))
-	if vol := filepath.VolumeName(abs); vol != "" {
-		volRoot := vol + `\`
-		var serial uint32
-		ret, _, _ := procGetVolumeInformationW.Call(
-			uintptr(unsafe.Pointer(syscall.StringToUTF16Ptr(volRoot))),
-			0, 0,
-			uintptr(unsafe.Pointer(&serial)),
-			0, 0, 0, 0,
-		)
-		if ret != 0 && serial != 0 {
-			material = fmt.Sprintf("%d|%s", serial, strings.ToLower(filepath.Clean(abs)))
+	realLower := strings.ToLower(real)
+	material := "w-noid|" + realLower
+	if h, herr := openDirHandle(real); herr == nil {
+		if serial, fileID, ok := dirIdentity(h); ok {
+			material = fmt.Sprintf("w|%d|%d|%s", serial, fileID, realLower)
 		}
+		procCloseHandle.Call(uintptr(h))
 	}
 	sum := sha256.Sum256([]byte(material))
 	return "sha256:" + hex.EncodeToString(sum[:]), nil

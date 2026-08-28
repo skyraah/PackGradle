@@ -56,19 +56,39 @@ func (a *App) PrepareRelation(ctx context.Context, input model.PrepareRelationIn
 		return model.PreparationCheck{Code: code, Passed: passed, Severity: "blocking", Detail: detail, Args: args}
 	}
 
-	projectRoot := filepath.Clean(input.ProjectRoot)
-	instanceDir := filepath.Clean(input.RuntimeInstanceDir)
-	gameDir := filepath.Join(instanceDir, "minecraft")
+	// 端点路径规范化管线（P0-4 强制入口）：相对输入绝对化 → realpath →
+	// 目录校验；登记与指纹一律使用 canonical 路径。不可达落到对应 readable 检查。
+	projectRoot := input.ProjectRoot
+	projectReadable := false
+	projectDetail := "pack.toml 不存在（不是 Packwiz 项目根目录）"
+	if real, nerr := a.deps.Paths.NormalizeEndpointPath(input.ProjectRoot); nerr != nil {
+		projectDetail = "项目根目录不可达: " + nerr.Error()
+	} else {
+		projectRoot = real
+		projectReadable = pathExists(filepath.Join(real, "pack.toml"))
+	}
+
+	instanceDir := input.RuntimeInstanceDir
+	gameDir := ""
+	runtimeReadable := false
+	runtimeDetail := "Prism 实例目录缺少 instance.cfg 或 minecraft/ 游戏目录"
+	if real, nerr := a.deps.Paths.NormalizeEndpointPath(input.RuntimeInstanceDir); nerr != nil {
+		runtimeDetail = "实例目录不可达: " + nerr.Error()
+	} else if realGame, gerr := a.deps.Paths.NormalizeEndpointPath(filepath.Join(real, "minecraft")); gerr != nil {
+		runtimeDetail = "游戏目录 minecraft/ 不可达: " + gerr.Error()
+	} else {
+		instanceDir = real
+		gameDir = realGame
+		runtimeReadable = pathExists(filepath.Join(real, "instance.cfg"))
+	}
 
 	// 1. Project 端点可达且有 pack.toml
-	projectReadable := pathExists(filepath.Join(projectRoot, "pack.toml"))
 	checks = append(checks, blocking("check.endpoint.readable", projectReadable,
-		"pack.toml 不存在（不是 Packwiz 项目根目录）", projectRoot))
+		projectDetail, projectRoot))
 
 	// 2. Runtime 端点可达（实例目录 + instance.cfg + 游戏目录）
-	runtimeReadable := pathExists(filepath.Join(instanceDir, "instance.cfg")) && pathExists(gameDir)
 	checks = append(checks, blocking("check.endpoint.readable", runtimeReadable,
-		"Prism 实例目录缺少 instance.cfg 或 minecraft/ 游戏目录", instanceDir))
+		runtimeDetail, instanceDir))
 
 	var fpProject, fpRuntime string
 	if projectReadable {

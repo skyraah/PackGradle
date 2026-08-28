@@ -17,6 +17,7 @@ import (
 
 	"github.com/BurntSushi/toml"
 
+	"packgradle/internal/adapters/filesystem"
 	"packgradle/internal/application/ports"
 	"packgradle/internal/core/model"
 	"packgradle/internal/core/normalize"
@@ -57,15 +58,33 @@ type indexDownload struct {
 
 // Scan 扫描运行时端点（root 为游戏目录，其下有 mods/）：
 // A. mods 一级目录 *.jar（不递归）；B. MappingPolicy 受管文件规则；C. 排序输出。
+// 全部端点内路径访问经 Resolver（realpath + root containment）强制入口。
 func (s *Scanner) Scan(ctx context.Context, root string, opts ports.ScanOptions) (model.ScanReport, error) {
 	report := model.ScanReport{}
 	seen := map[model.ResourceID]bool{}
 
+	rslv, err := filesystem.NewResolver(root)
+	if err != nil {
+		return report, fmt.Errorf("prism: 端点根不可达: %w", err)
+	}
+
 	// ---- A. mods 扫描 ----
-	modsDir := filepath.Join(root, "mods")
-	entries, err := os.ReadDir(modsDir)
-	if err != nil && !errors.Is(err, fs.ErrNotExist) {
-		return report, fmt.Errorf("prism: 读取 mods 目录 %s: %w", modsDir, err)
+	modsDir, rerr := rslv.Resolve("mods")
+	if rerr != nil {
+		// mods/ 解析后越出端点根目录：跳过 mods 段并诊断（受管文件规则照常）
+		report.Diagnostics = append(report.Diagnostics, model.Diagnostic{
+			Severity: "warning", Code: "diag.scan.path_escape",
+			Args: []string{"mods"},
+			Detail: "mods 目录解析后越出端点根目录，已跳过: " + rerr.Error(),
+		})
+		modsDir = ""
+	}
+	var entries []os.DirEntry
+	if modsDir != "" {
+		entries, err = os.ReadDir(modsDir)
+		if err != nil && !errors.Is(err, fs.ErrNotExist) {
+			return report, fmt.Errorf("prism: 读取 mods 目录 %s: %w", modsDir, err)
+		}
 	}
 	// mods/ 不存在 → 空，不算错误（entries 为 nil，循环不执行）
 
@@ -86,13 +105,23 @@ func (s *Scanner) Scan(ctx context.Context, root string, opts ports.ScanOptions)
 			})
 			continue
 		}
+		jarPath, jerr := rslv.Resolve(relPath)
+		if jerr != nil {
+			// ReadDir 来自已解析的 modsDir，此处仅为纵深防御
+			report.Diagnostics = append(report.Diagnostics, model.Diagnostic{
+				Severity: "warning", Code: "diag.scan.path_escape",
+				Args: []string{relPath}, RelativePath: relPath,
+				Detail: "mods 条目解析后越出端点根目录，已跳过: " + jerr.Error(),
+			})
+			continue
+		}
 		id, identity := jarIdentity(hint, name)
 		if seen[id] {
 			report.Diagnostics = append(report.Diagnostics, duplicateIdentityDiag(id))
 			continue
 		}
 		// .index 元数据失败不阻断观察，只是缺 metadata
-		metadata := readIndexMetadata(modsDir, name, &report.Diagnostics)
+		metadata := readIndexMetadata(rslv, name, &report.Diagnostics)
 
 		// Content 必填：无哈希函数或哈希失败的 jar 不产出观察，只落诊断
 		if opts.HashFile == nil {
@@ -103,7 +132,7 @@ func (s *Scanner) Scan(ctx context.Context, root string, opts ports.ScanOptions)
 			})
 			continue
 		}
-		content, _, herr := opts.HashFile(ctx, filepath.Join(modsDir, name))
+		content, _, herr := opts.HashFile(ctx, jarPath)
 		if herr != nil {
 			report.Diagnostics = append(report.Diagnostics, model.Diagnostic{
 				Severity: "warning", Code: "diag.scan.hash_failed",
@@ -128,7 +157,7 @@ func (s *Scanner) Scan(ctx context.Context, root string, opts ports.ScanOptions)
 	}
 
 	// ---- B. 受管文件规则（text_file/binary_file）----
-	fileObs, fileDiags, err := scanManagedFiles(ctx, root, opts, seen)
+	fileObs, fileDiags, err := scanManagedFiles(ctx, rslv, opts, seen)
 	if err != nil {
 		return report, err
 	}
@@ -169,10 +198,19 @@ func lowercaseHintKeys(m map[string]string) map[string]string {
 }
 
 // readIndexMetadata 读取 mods/.index/<jar文件名>.pw.toml 并转为保留键元数据；
-// 条目不存在 → nil（正常情况）；存在但解析失败 → 追加 index_meta_unreadable
-// 诊断并返回 nil（资源仍产出，仅缺 metadata）。
-func readIndexMetadata(modsDir, jarName string, diags *[]model.Diagnostic) map[string]string {
-	indexPath := filepath.Join(modsDir, ".index", jarName+".pw.toml")
+// 条目不存在 → nil（正常情况）；解析失败 → 追加 index_meta_unreadable 诊断并
+// 返回 nil（资源仍产出，仅缺 metadata）；解析后越出端点根目录 → path_escape
+// 诊断并返回 nil。
+func readIndexMetadata(rslv *filesystem.Resolver, jarName string, diags *[]model.Diagnostic) map[string]string {
+	indexPath, rerr := rslv.Resolve("mods/.index/" + jarName + ".pw.toml")
+	if rerr != nil {
+		*diags = append(*diags, model.Diagnostic{
+			Severity: "warning", Code: "diag.scan.path_escape",
+			Args: []string{"mods/.index/" + jarName + ".pw.toml"}, RelativePath: "mods/" + jarName,
+			Detail: ".index 条目解析后越出端点根目录，元数据未读取: " + rerr.Error(),
+		})
+		return nil
+	}
 	if _, err := os.Stat(indexPath); err != nil {
 		return nil
 	}
@@ -261,8 +299,9 @@ func duplicateIdentityDiag(id model.ResourceID) model.Diagnostic {
 }
 
 // scanManagedFiles 按 MappingPolicy 的文件规则（RuntimePrefix 非空的
-// text_file/binary_file）扫描受管文件，行为与 packwiz 侧对称。
-func scanManagedFiles(ctx context.Context, root string, opts ports.ScanOptions, seen map[model.ResourceID]bool) ([]model.ResourceObservation, []model.Diagnostic, error) {
+// text_file/binary_file）扫描受管文件，行为与 packwiz 侧对称：
+// 前缀先经 Resolver 解析（越界/非法 → 诊断并跳过该规则）。
+func scanManagedFiles(ctx context.Context, rslv *filesystem.Resolver, opts ports.ScanOptions, seen map[model.ResourceID]bool) ([]model.ResourceObservation, []model.Diagnostic, error) {
 	var obs []model.ResourceObservation
 	var diags []model.Diagnostic
 
@@ -275,7 +314,15 @@ func scanManagedFiles(ctx context.Context, root string, opts ports.ScanOptions, 
 			continue
 		}
 		prefix := strings.ToLower(strings.ReplaceAll(strings.Trim(rule.RuntimePrefix, "/"), "\\", "/"))
-		base := filepath.Join(root, filepath.FromSlash(prefix))
+		base, rerr := rslv.Resolve(prefix)
+		if rerr != nil {
+			diags = append(diags, model.Diagnostic{
+				Severity: "warning", Code: "diag.scan.path_escape",
+				Args: []string{rule.RuntimePrefix},
+				Detail: "策略前缀解析后越出端点根目录，规则已忽略: " + rerr.Error(),
+			})
+			continue
+		}
 		if _, err := os.Stat(base); err != nil {
 			continue // 前缀目录不存在：无观察，不是错误
 		}
@@ -290,7 +337,16 @@ func scanManagedFiles(ctx context.Context, root string, opts ports.ScanOptions, 
 			if d.IsDir() || !d.Type().IsRegular() {
 				return nil
 			}
-			relToRoot, rerr := filepath.Rel(root, path)
+			// 防御性复核：WalkDir 不跟随链接，但防未来实现变化导致越界
+			if !filesystem.WithinRoot(rslv.Root(), path) {
+				diags = append(diags, model.Diagnostic{
+					Severity: "warning", Code: "diag.scan.path_escape",
+					Args: []string{path},
+					Detail: "遍历路径越出端点根目录，已忽略",
+				})
+				return nil
+			}
+			relToRoot, rerr := filepath.Rel(rslv.Root(), path)
 			if rerr != nil {
 				return nil
 			}

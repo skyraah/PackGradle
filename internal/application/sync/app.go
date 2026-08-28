@@ -49,6 +49,7 @@ type AppDeps struct {
 	RuntimeScan   ports.RuntimeScanner
 	Hasher        ports.FileHasher
 	Fingerprinter ports.BindingFingerprinter
+	Paths         ports.EndpointNormalizer
 	IDs           func(prefix string) string
 	Now           func() time.Time
 }
@@ -84,6 +85,7 @@ func New(deps AppDeps) (*App, error) {
 		{"RuntimeScan", deps.RuntimeScan != nil},
 		{"Hasher", deps.Hasher != nil},
 		{"Fingerprinter", deps.Fingerprinter != nil},
+		{"Paths", deps.Paths != nil},
 		{"IDs", deps.IDs != nil},
 		{"Now", deps.Now != nil},
 	}

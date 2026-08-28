@@ -2,7 +2,6 @@ package filesystem
 
 import (
 	"errors"
-	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -15,62 +14,23 @@ import (
 var ErrPathEscape = errors.New("filesystem: 路径逃逸或非法")
 
 // ResolveWithin 把 root-relative 路径安全解析为 root 内的绝对路径。
-// 规则：先 normalize（拒绝绝对路径/../空路径），join 后做 EvalSymlinks，
-// 解析结果必须仍在 root（同样 EvalSymlinks 后）之内；大小写不敏感卷上
-// 前缀比较统一小写。
+// root 先经 NormalizeEndpointPath 规范化（绝对化 + realpath），随后按
+// Resolver.Resolve 语义做 containment 校验。批量访问请用 Resolver（root 只解析一次）。
 func ResolveWithin(root, rel string) (string, error) {
-	cleanRel, err := normalize.NormalizeRelativePath(rel, false)
-	if err != nil {
-		return "", fmt.Errorf("%w: %q", ErrPathEscape, rel)
-	}
-	absRoot, err := filepath.Abs(root)
+	realRoot, err := NormalizeEndpointPath(root)
 	if err != nil {
 		return "", err
 	}
-	realRoot, err := filepath.EvalSymlinks(absRoot)
-	if err != nil {
-		return "", fmt.Errorf("filesystem: root 不可达 %s: %w", absRoot, err)
-	}
-
-	joined := filepath.Join(realRoot, filepath.FromSlash(cleanRel))
-	resolved, err := filepath.EvalSymlinks(joined)
-	if err != nil {
-		// 目标尚不存在（如计划写入的新文件）：逐级解析已存在的最近父目录，
-		// 剩余部分不允许携带分隔符之外的特殊成分（NormalizeRelativePath 已保证无 ..）。
-		resolved, err = resolvePartial(joined)
-		if err != nil {
-			return "", fmt.Errorf("%w: %q", ErrPathEscape, rel)
-		}
-	}
-	if !withinRoot(realRoot, resolved) {
-		return "", fmt.Errorf("%w: %q 解析到 %s", ErrPathEscape, rel, resolved)
-	}
-	return resolved, nil
+	return resolveWithin(realRoot, rel)
 }
 
-// resolvePartial 解析到最深可解析祖先，再拼回尚不存在的尾部。
-func resolvePartial(joined string) (string, error) {
-	dir, tail := filepath.Split(joined)
-	if tail == "" {
-		return "", errors.New("空路径")
-	}
-	realDir, err := filepath.EvalSymlinks(filepath.Clean(dir))
-	if err != nil {
-		return "", err
-	}
-	return filepath.Join(realDir, tail), nil
+// normalizeRelativePath 预检相对路径：拒绝绝对路径/卷名/`..`/空路径，
+// 统一分隔符并移除 `.`/空组件（identity 编码规则复用，保留大小写）。
+func normalizeRelativePath(rel string) (string, error) {
+	return normalize.NormalizeRelativePath(rel, false)
 }
 
-func withinRoot(root, target string) bool {
-	rootSlash := strings.ToLower(filepath.ToSlash(filepath.Clean(root))) + "/"
-	targetSlash := strings.ToLower(filepath.ToSlash(filepath.Clean(target)))
-	if targetSlash+"/" == rootSlash {
-		return true // target 即 root 本身
-	}
-	return strings.HasPrefix(targetSlash, rootSlash)
-}
-
-// IsDirPlainFile 报告 path 是否为普通文件且不经过任何重解析点（junction/symlink）。
+// IsPlainFile 报告 path 是否为普通文件且不经过任何重解析点（junction/symlink）。
 // 删除/覆盖前的所有权检查使用。
 func IsPlainFile(path string) (bool, error) {
 	st, err := os.Lstat(path)
@@ -78,4 +38,21 @@ func IsPlainFile(path string) (bool, error) {
 		return false, err
 	}
 	return st.Mode()&os.ModeSymlink == 0 && st.Mode().IsRegular(), nil
+}
+
+// WithinRoot 报告 target 是否位于 root 内（含 root 本身），大小写不敏感。
+// 从 resolver 解析出的 base 展开批量遍历（WalkDir）时的逐项防御性复核用。
+func WithinRoot(root, target string) bool {
+	return withinRoot(root, target)
+}
+
+// withinRoot 报告 target（解析后）是否落在 root 之内或就是 root。
+// 大小写不敏感卷上前缀比较统一小写。
+func withinRoot(root, target string) bool {
+	rootSlash := strings.ToLower(filepath.ToSlash(filepath.Clean(root))) + "/"
+	targetSlash := strings.ToLower(filepath.ToSlash(filepath.Clean(target)))
+	if targetSlash+"/" == rootSlash {
+		return true // target 即 root 本身
+	}
+	return strings.HasPrefix(targetSlash, rootSlash)
 }
