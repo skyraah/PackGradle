@@ -11,12 +11,14 @@ export {
 };
 
 export type {
+    ActionAvailabilityDTO,
     ConfirmationRequirementDTO,
     ConflictDTO,
     ContentRefDTO,
     DiagnosticDTO,
     EndpointDTO,
     EndpointHealthDTO,
+    HashCacheStatsDTO,
     MappingRuleDTO,
     OperationDTO,
     PlanSummaryDTO,
@@ -39,6 +41,7 @@ export type {
     TaskDTO,
     TaskPageDTO,
     WorkspaceDTO,
+    WorkspaceFeaturesDTO,
     WorkspacePageDTO,
     WorkspaceStateDTO
 } from "./models.js";

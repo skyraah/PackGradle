@@ -53,16 +53,20 @@ func (a *App) GetWorkspace(ctx context.Context, relationID string) (view.Workspa
 		return view.WorkspaceView{}, err
 	}
 
-	activeTasks, _, err := a.deps.Tasks.ListByRelation(ctx, relationID, true, ports.PageRequest{Limit: 1})
+	activeTasks, _, err := a.deps.Tasks.ListByRelation(ctx, relationID, true, ports.PageRequest{Limit: ports.MaxPageLimit})
 	if err != nil {
 		return view.WorkspaceView{}, err
 	}
+	hasActiveTask := len(activeTasks) > 0
 	var activeTaskID string
 	var activeScanStatus string
-	if len(activeTasks) > 0 {
-		activeTaskID = activeTasks[0].TaskID
-		if activeTasks[0].Kind == model.TaskKindScan {
-			activeScanStatus = activeTasks[0].Status
+	for _, t := range activeTasks {
+		if activeTaskID == "" {
+			activeTaskID = t.TaskID
+		}
+		if t.Kind == model.TaskKindScan {
+			activeScanStatus = t.Status
+			break
 		}
 	}
 
@@ -147,6 +151,8 @@ func (a *App) GetWorkspace(ctx context.Context, relationID string) (view.Workspa
 		SchemaVersion: model.CurrentSchemaVersion,
 		Relation:      relationView(rel, proj, rt),
 		State:         state,
+		Features:      p1Features(),
+		Availability:  deriveAvailability(string(rel.Health), state.ScanState, hasActiveTask),
 	}
 	if okP {
 		w.LatestProjectSnapshot = snapshotSummary(snapP)

@@ -102,7 +102,16 @@ func (s *Scanner) Scan(ctx context.Context, root string, opts ports.ScanOptions)
 	for _, entry := range entries {
 		name := entry.Name()
 		if strings.ToLower(filepath.Ext(name)) != ".jar" {
-			continue // 非 .jar 文件（含 .index 目录）忽略，不诊断
+			// 非 .jar 常规文件（.jar.disabled、.zip 等）无法按 mod 观察：
+			// 标记 unsupported；目录与非常规条目（.index 等）静默跳过
+			if entry.Type().IsRegular() {
+				report.Diagnostics = append(report.Diagnostics, model.Diagnostic{
+					Severity: "info", Code: "diag.scan.unsupported",
+					Args:   []string{"mods/" + name}, RelativePath: "mods/" + name,
+					Detail: "mods 目录中的非 .jar 文件无法按 mod 观察，已忽略",
+				})
+			}
+			continue
 		}
 		relPath := "mods/" + name
 		if !entry.Type().IsRegular() {
@@ -127,6 +136,15 @@ func (s *Scanner) Scan(ctx context.Context, root string, opts ports.ScanOptions)
 		if seen[id] {
 			report.Diagnostics = append(report.Diagnostics, duplicateIdentityDiag(id))
 			continue
+		}
+		if identity.Provider == "jar" {
+			// hint 未命中 → 项目包未包含的 runtime 本地内容（roadmap Step 4.3
+			// 「明确标记 runtime_local」）：低置信度本地身份观察 + 证据性诊断
+			report.Diagnostics = append(report.Diagnostics, model.Diagnostic{
+				Severity: "info", Code: "diag.scan.runtime_local",
+				Args: []string{relPath, string(id)}, ResourceID: id, RelativePath: relPath,
+				Detail: "runtime 本地内容（项目包未包含），以低置信度本地身份观察",
+			})
 		}
 		// .index 元数据失败不阻断观察，只是缺 metadata
 		metadata := readIndexMetadata(rslv, name, &report.Diagnostics)

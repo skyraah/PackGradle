@@ -30,10 +30,26 @@ export function CreateRelation(preparationID: string): $CancellablePromise<$mode
 }
 
 /**
+ * GetHashCacheStats 返回 hash cache 命中统计（进程生命周期累计；
+ * 热扫描命中证明与 T14 性能基线供数口）。
+ */
+export function GetHashCacheStats(): $CancellablePromise<$models.HashCacheStatsDTO> {
+    return $Call.ByID(4242908060);
+}
+
+/**
  * GetPlan 查询计划（stale/expired 为读取时投影）。
  */
 export function GetPlan(planID: string): $CancellablePromise<$models.SyncPlanDTO> {
     return $Call.ByID(1492305782, planID);
+}
+
+/**
+ * GetSnapshotDiagnostics 返回快照持久化的诊断列表（diag.mapping.collision、
+ * diag.scan.* 等；票 #17：mapping_collision 等诊断在快照中可查）。
+ */
+export function GetSnapshotDiagnostics(relationID: string, snapshotID: string): $CancellablePromise<$models.DiagnosticDTO[] | null> {
+    return $Call.ByID(1990565243, relationID, snapshotID);
 }
 
 /**

@@ -100,11 +100,44 @@ type SnapshotSummaryView struct {
 
 // WorkspaceView 是工作区详情。
 type WorkspaceView struct {
-	SchemaVersion         int                  `json:"schema_version"`
-	Relation              RelationView         `json:"relation"`
-	State                 WorkspaceStateView   `json:"state"`
-	LatestProjectSnapshot *SnapshotSummaryView `json:"latest_project_snapshot,omitempty"`
-	LatestRuntimeSnapshot *SnapshotSummaryView `json:"latest_runtime_snapshot,omitempty"`
+	SchemaVersion         int                     `json:"schema_version"`
+	Relation              RelationView            `json:"relation"`
+	State                 WorkspaceStateView      `json:"state"`
+	Features              WorkspaceFeaturesView   `json:"features"`
+	Availability          []ActionAvailabilityView `json:"availability"`
+	LatestProjectSnapshot *SnapshotSummaryView    `json:"latest_project_snapshot,omitempty"`
+	LatestRuntimeSnapshot *SnapshotSummaryView    `json:"latest_runtime_snapshot,omitempty"`
+}
+
+// WorkspaceFeaturesView 表达当前版本/平台实现的能力（契约 03 §2.1；架构 §10.4）。
+// feature=false 的动作不注册：不出现在 availability 中，前端不渲染入口。
+type WorkspaceFeaturesView struct {
+	Scan                 bool     `json:"scan"`
+	SyncPreview          bool     `json:"sync_preview"`
+	SyncApply            bool     `json:"sync_apply"`
+	ConflictInspection   bool     `json:"conflict_inspection"`
+	ConflictResolution   string   `json:"conflict_resolution"` // none|choose_side|merge
+	HistoryView          bool     `json:"history_view"`
+	RestorePreview       bool     `json:"restore_preview"`
+	RestoreApply         bool     `json:"restore_apply"`
+	MaterializationModes []string `json:"materialization_modes"` // P1 恒 []；Phase 2 起为 ["copy"]
+}
+
+// ActionAvailabilityView 是单动作可用性，由后端按当前状态推导（架构 §10.4）。
+// 前端不得自行推断；不可用动作必须带原因码供 locale 渲染。
+type ActionAvailabilityView struct {
+	Action     string   `json:"action"` // scan|prepare_sync|apply_sync|prepare_restore|apply_restore|rebind
+	Available  bool     `json:"available"`
+	ReasonCode string   `json:"reason_code,omitempty"`
+	ReasonArgs []string `json:"reason_args,omitempty"`
+}
+
+// HashCacheStatsView 是 hash cache 命中统计（进程生命周期累计，
+// 为 T14 性能基线供数；热扫描命中证明）。
+type HashCacheStatsView struct {
+	Hits     int64   `json:"hits"`
+	Misses   int64   `json:"misses"`
+	HitRatio float64 `json:"hit_ratio"` // hits/(hits+misses)，无查询时为 0
 }
 
 // WorkspacePage 是工作区分页。

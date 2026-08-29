@@ -7,6 +7,7 @@ import (
 	"context"
 	"fmt"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"packgradle/internal/application/ports"
@@ -28,6 +29,10 @@ type Application interface {
 	GetTask(ctx context.Context, taskID string) (view.TaskView, error)
 	ListTasks(ctx context.Context, relationID string, active bool, page ports.PageRequest) (view.TaskPage, error)
 	CancelTask(ctx context.Context, taskID string) error
+	// GetSnapshotDiagnostics 查询快照持久化诊断（票 #17：mapping_collision 等在快照中可查）。
+	GetSnapshotDiagnostics(ctx context.Context, relationID, snapshotID string) ([]model.Diagnostic, error)
+	// GetHashCacheStats 查询 hash cache 命中统计（票 #17：命中计数/命中率可查询）。
+	GetHashCacheStats(ctx context.Context) (view.HashCacheStatsView, error)
 }
 
 var _ Application = (*App)(nil)
@@ -65,6 +70,11 @@ type App struct {
 	scanMu sync.Mutex
 	// startGate 保证同一 Relation 的 StartScan 创建段互斥（复用活动任务语义）。
 	startGate sync.Map // relationID -> *sync.Mutex
+
+	// hash cache 命中统计（进程生命周期累计；GetHashCacheStats 查询，
+	// 为 T14 性能基线供数）。cachedHash 的每次 Lookup 归入 hit 或 miss。
+	cacheHits   atomic.Int64
+	cacheMisses atomic.Int64
 }
 
 // New 构造应用；依赖缺失返回错误。

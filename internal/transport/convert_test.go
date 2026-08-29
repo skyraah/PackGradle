@@ -74,3 +74,48 @@ func TestEndpointDTOConversion(t *testing.T) {
 		t.Fatalf("空候选应序列化为 []: %s", emptyProjects)
 	}
 }
+
+// TestWorkspaceFeaturesAvailabilityDTO 验证 features/availability 内嵌 WorkspaceDTO
+//（契约 03 §2.1）：availability 归一为空数组、reason_args 归一、materialization_modes 归一。
+func TestWorkspaceFeaturesAvailabilityDTO(t *testing.T) {
+	v := view.WorkspaceView{
+		SchemaVersion: model.CurrentSchemaVersion,
+		Features: view.WorkspaceFeaturesView{
+			Scan: true, SyncPreview: true, ConflictInspection: true,
+			ConflictResolution: "choose_side", MaterializationModes: []string{},
+		},
+		Availability: []view.ActionAvailabilityView{
+			{Action: "scan", Available: false, ReasonCode: "err.scan.already_running"},
+			{Action: "prepare_sync", Available: true},
+		},
+	}
+	dto := workspaceDTO(v)
+	if !dto.Features.Scan || !dto.Features.SyncPreview || !dto.Features.ConflictInspection {
+		t.Errorf("features 布尔位错误: %+v", dto.Features)
+	}
+	if dto.Features.ConflictResolution != "choose_side" || len(dto.Features.MaterializationModes) != 0 {
+		t.Errorf("features 固定值错误: %+v", dto.Features)
+	}
+	if len(dto.Availability) != 2 {
+		t.Fatalf("availability 应 2 条: %+v", dto.Availability)
+	}
+	if dto.Availability[0].ReasonCode != "err.scan.already_running" || len(dto.Availability[0].ReasonArgs) != 0 {
+		t.Errorf("availability 原因码/args 归一错误: %+v", dto.Availability[0])
+	}
+	if dto.Availability[1].Available != true || dto.Availability[1].ReasonCode != "" {
+		t.Errorf("可用动作不应带原因码: %+v", dto.Availability[1])
+	}
+
+	// 空availability 归一为 []（非 null）
+	empty := workspaceDTO(view.WorkspaceView{SchemaVersion: model.CurrentSchemaVersion})
+	if empty.Availability == nil || len(empty.Availability) != 0 {
+		t.Errorf("availability 应归一为空数组: %v", empty.Availability)
+	}
+	b, err := json.Marshal(empty)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(b) == "" || !json.Valid(b) {
+		t.Fatalf("序列化失败: %s", b)
+	}
+}

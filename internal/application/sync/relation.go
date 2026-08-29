@@ -33,6 +33,10 @@ const (
 	CodeRelationScanRunning     = "err.scan.already_running"
 	CodeScanEndpointMissing     = "err.scan.endpoint_missing"
 	CodeScanAdapterFailed       = "err.scan.adapter_failed"
+	// CodeScanIncomplete / CodeRecoveryInProgress 是 availability 原因码（契约 03 §2.1），
+	// 只出现在 ActionAvailabilityDTO.reason_code，不作为调用级错误抛出。
+	CodeScanIncomplete     = "err.scan.incomplete"
+	CodeRecoveryInProgress = "err.recovery.in_progress"
 	CodePlanNotFound            = "err.plan.not_found"
 	CodePlanStale               = "err.plan.stale"
 	CodePlanResolutionInvalid   = "err.plan.resolution_invalid"

@@ -97,13 +97,38 @@ type SnapshotSummaryDTO struct {
 	ResourceCount  int    `json:"resource_count"`
 }
 
+// WorkspaceFeaturesDTO 表达当前版本/平台实现的能力（契约 03 §2.1；架构 §10.4）。
+// feature=false 的动作不注册：不出现在 availability 中，前端不渲染入口。
+type WorkspaceFeaturesDTO struct {
+	Scan                 bool     `json:"scan"`
+	SyncPreview          bool     `json:"sync_preview"`
+	SyncApply            bool     `json:"sync_apply"`
+	ConflictInspection   bool     `json:"conflict_inspection"`
+	ConflictResolution   string   `json:"conflict_resolution"` // none|choose_side|merge
+	HistoryView          bool     `json:"history_view"`
+	RestorePreview       bool     `json:"restore_preview"`
+	RestoreApply         bool     `json:"restore_apply"`
+	MaterializationModes []string `json:"materialization_modes"` // P1 恒 []；Phase 2 起为 ["copy"]
+}
+
+// ActionAvailabilityDTO 是单动作可用性，由后端按当前状态推导（架构 §10.4）。
+// 前端不得自行推断；不可用动作必须带原因码供 locale 渲染。
+type ActionAvailabilityDTO struct {
+	Action     string   `json:"action"` // scan|prepare_sync|apply_sync|prepare_restore|apply_restore|rebind
+	Available  bool     `json:"available"`
+	ReasonCode string   `json:"reason_code,omitempty"`
+	ReasonArgs []string `json:"reason_args,omitempty"`
+}
+
 // WorkspaceDTO 是工作区详情。
 type WorkspaceDTO struct {
-	SchemaVersion         int                 `json:"schema_version"`
-	Relation              RelationDTO         `json:"relation"`
-	State                 WorkspaceStateDTO   `json:"state"`
-	LatestProjectSnapshot *SnapshotSummaryDTO `json:"latest_project_snapshot,omitempty"`
-	LatestRuntimeSnapshot *SnapshotSummaryDTO `json:"latest_runtime_snapshot,omitempty"`
+	SchemaVersion         int                     `json:"schema_version"`
+	Relation              RelationDTO             `json:"relation"`
+	State                 WorkspaceStateDTO       `json:"state"`
+	Features              WorkspaceFeaturesDTO    `json:"features"`
+	Availability          []ActionAvailabilityDTO `json:"availability"`
+	LatestProjectSnapshot *SnapshotSummaryDTO     `json:"latest_project_snapshot,omitempty"`
+	LatestRuntimeSnapshot *SnapshotSummaryDTO     `json:"latest_runtime_snapshot,omitempty"`
 }
 
 // WorkspacePageDTO 是工作区分页。
@@ -223,6 +248,15 @@ type DiagnosticDTO struct {
 	Detail       string   `json:"detail,omitempty"`
 	ResourceID   string   `json:"resource_id,omitempty"`
 	RelativePath string   `json:"relative_path,omitempty"`
+}
+
+// HashCacheStatsDTO 是 hash cache 命中统计（进程生命周期累计；
+// 热扫描命中证明与 T14 性能基线供数）。
+type HashCacheStatsDTO struct {
+	SchemaVersion int     `json:"schema_version"`
+	Hits          int64   `json:"hits"`
+	Misses        int64   `json:"misses"`
+	HitRatio      float64 `json:"hit_ratio"`
 }
 
 type PlanSummaryDTO struct {

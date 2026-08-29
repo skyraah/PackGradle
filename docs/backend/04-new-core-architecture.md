@@ -31,7 +31,7 @@ internal/
     view/                   # 用例返回投影
     project/                # 项目源端点用例：DiscoverProjects/RegisterProject/GetProjectHealth/ListProjects
     runtime/                # 运行实例端点用例：DiscoverRuntimes/RegisterRuntime/GetRuntimeHealth/ListRuntimes
-    sync/                   # 用例：PrepareRelation/CreateRelation/StartScan/PrepareSync/ResolvePlan/GetPlan/GetWorkspace...
+    sync/                   # 用例：PrepareRelation/CreateRelation/StartScan/PrepareSync/ResolvePlan/GetPlan/GetWorkspace/GetSnapshotDiagnostics/GetHashCacheStats...
   adapters/
     filesystem/             # 流式 sha256、原子写、ResolveWithin 路径安全、卷序列号 binding fingerprint
     packwiz/                # Project 扫描：index.toml 权威 + modrinth/curseforge 身份 + [download] 声明 hash；DiscoverProjects 有限深度发现

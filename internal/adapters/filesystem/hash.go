@@ -20,7 +20,7 @@ type Hasher struct{}
 // NewHasher 构造流式哈希器。
 func NewHasher() *Hasher { return &Hasher{} }
 
-// HashFile 返回文件内容指纹与观察事实（size/mtime；FileKey P1 不采集）。
+// HashFile 返回文件内容指纹与观察事实（size/mtime/FileKey）。
 func (h *Hasher) HashFile(ctx context.Context, absPath string) (model.ContentRef, ports.FileFacts, error) {
 	f, err := os.Open(absPath)
 	if err != nil {
@@ -47,8 +47,14 @@ func (h *Hasher) HashFile(ctx context.Context, absPath string) (model.ContentRef
 		}, ports.FileFacts{
 			SizeBytes:          st.Size(),
 			ModifiedAtUnixNano: st.ModTime().UnixNano(),
+			FileKey:            fileKeyFromOpenFile(f),
 		}, nil
 }
+
+// FileKey 返回平台文件标识（Windows 卷+file index / Unix dev+ino）；
+// 取不到为 ""。供 hash cache 键使用：size+mtime+file identity 全一致才复用
+//（检视报告 P1-5：防止保 mtime 的替换文件命中旧 hash）。
+func (h *Hasher) FileKey(absPath string) string { return fileKey(absPath) }
 
 func sha256File(r io.Reader) (string, error) {
 	h := sha256.New()

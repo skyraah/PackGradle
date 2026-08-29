@@ -87,12 +87,45 @@ func workspaceDTO(v view.WorkspaceView) WorkspaceDTO {
 			DiffState: v.State.DiffState, RelationHealth: v.State.RelationHealth,
 			ActiveTaskID: v.State.ActiveTaskID, RelationRevision: v.State.RelationRevision,
 		},
+		Features:     featuresDTO(v.Features),
+		Availability: availabilityDTO(v.Availability),
 	}
 	if v.LatestProjectSnapshot != nil {
 		out.LatestProjectSnapshot = snapshotSummaryDTO(*v.LatestProjectSnapshot)
 	}
 	if v.LatestRuntimeSnapshot != nil {
 		out.LatestRuntimeSnapshot = snapshotSummaryDTO(*v.LatestRuntimeSnapshot)
+	}
+	return out
+}
+
+func featuresDTO(f view.WorkspaceFeaturesView) WorkspaceFeaturesDTO {
+	return WorkspaceFeaturesDTO{
+		Scan: f.Scan, SyncPreview: f.SyncPreview, SyncApply: f.SyncApply,
+		ConflictInspection: f.ConflictInspection, ConflictResolution: f.ConflictResolution,
+		HistoryView: f.HistoryView, RestorePreview: f.RestorePreview, RestoreApply: f.RestoreApply,
+		MaterializationModes: strs(f.MaterializationModes),
+	}
+}
+
+func availabilityDTO(in []view.ActionAvailabilityView) []ActionAvailabilityDTO {
+	out := make([]ActionAvailabilityDTO, 0, len(in))
+	for _, a := range in {
+		out = append(out, ActionAvailabilityDTO{
+			Action: a.Action, Available: a.Available,
+			ReasonCode: a.ReasonCode, ReasonArgs: strs(a.ReasonArgs),
+		})
+	}
+	return out
+}
+
+func diagnosticDTOs(in []model.Diagnostic) []DiagnosticDTO {
+	out := make([]DiagnosticDTO, 0, len(in))
+	for _, d := range in {
+		out = append(out, DiagnosticDTO{
+			Severity: d.Severity, Code: d.Code, Args: strs(d.Args), Detail: d.Detail,
+			ResourceID: string(d.ResourceID), RelativePath: d.RelativePath,
+		})
 	}
 	return out
 }
@@ -182,13 +215,7 @@ func planDTO(v view.SyncPlanView) SyncPlanDTO {
 	for _, r := range v.ConfirmationRequirements {
 		reqs = append(reqs, ConfirmationRequirementDTO{Code: r.Code, Severity: r.Severity, ResourceCount: r.ResourceCount})
 	}
-	diags := make([]DiagnosticDTO, 0, len(v.Diagnostics))
-	for _, d := range v.Diagnostics {
-		diags = append(diags, DiagnosticDTO{
-			Severity: d.Severity, Code: d.Code, Args: strs(d.Args), Detail: d.Detail,
-			ResourceID: string(d.ResourceID), RelativePath: d.RelativePath,
-		})
-	}
+	diags := diagnosticDTOs(v.Diagnostics)
 	return SyncPlanDTO{
 		SchemaVersion: v.SchemaVersion, PlanID: v.PlanID, RelationID: v.RelationID,
 		Kind: v.Kind, ResolvedFromPlanID: v.ResolvedFromPlanID,

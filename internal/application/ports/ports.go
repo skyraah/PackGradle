@@ -195,6 +195,9 @@ type FileFacts struct {
 // FileHasher 流式计算文件内容指纹（大文件不得整读内存）。
 type FileHasher interface {
 	HashFile(ctx context.Context, absPath string) (model.ContentRef, FileFacts, error)
+	// FileKey 返回平台文件标识（Windows 卷+file index / Unix dev+ino）；
+	// 取不到为 ""。hash cache 键的 file identity 通道（检视 P1-5）。
+	FileKey(absPath string) string
 }
 
 // BindingFingerprinter 计算端点绑定指纹（卷/文件 identity + 规范化路径）。

@@ -34,6 +34,8 @@
 | Runtime 发现 | `DiscoverRuntimes(ctx) ([]view.RuntimeCandidateView, error)` | `RuntimeService.DiscoverRuntimes() ([]RuntimeCandidateDTO, error)` | **新增** |
 | Runtime 登记 | `RegisterRuntime(ctx, RegisterEndpointInput) (view.EndpointView, error)` | `RuntimeService.RegisterRuntime(input RegisterEndpointDTO) (EndpointDTO, error)` | **新增** |
 | Runtime 健康 | `GetRuntimeHealth(ctx, endpointID) (view.EndpointHealthView, error)` | `RuntimeService.GetRuntimeHealth(endpointID string) (EndpointHealthDTO, error)` | **新增** |
+| 快照诊断查询 | `GetSnapshotDiagnostics(ctx, relationID, snapshotID) ([]model.Diagnostic, error)` | `GetSnapshotDiagnostics(relationID, snapshotID string) ([]DiagnosticDTO, error)` | **新增**（T07 执行增补，票 #17：mapping_collision 等诊断在快照中可查；跨 Relation 按 not found 处理） |
+| hash cache 统计 | `GetHashCacheStats(ctx) (view.HashCacheStatsView, error)` | `GetHashCacheStats() (HashCacheStatsDTO, error)` | **新增**（T07 执行增补，票 #17：命中计数/命中率可查询，为 T14 性能基线供数；进程生命周期累计） |
 
 服务归属：Project/Runtime 端点用例按架构 §4.2 落在 `internal/application/project`、`internal/application/runtime` 两个新 app 包；`GetChanges`/Mapping/Rebind 留在 `internal/application/sync`。transport 侧对应 `ProjectService`、`RuntimeService` 两个新服务（与 `SyncService` 并列注册）。
 
@@ -312,6 +314,9 @@ type SyncPlanDTO struct {
 | `err.changes.snapshot_pair_invalid` | — | 快照对不属同 relation 或非同侧 |
 | `err.recovery.in_progress` | — | 恢复任务占用（availability reason） |
 | `err.scan.incomplete` | — | scan_state 非 ready（availability reason） |
+| `diag.scan.ignored` | {0}=path | 包内追踪但不在受管范围（index.toml 非 mods/ metafile 条目），从观察剔除（T07，票 #17） |
+| `diag.scan.unsupported` | {0}=path | runtime mods 目录中无法按 mod 观察的非 .jar 常规文件（T07，票 #17） |
+| `diag.scan.runtime_local` | {0}=path, {1}=resource_id | runtime 本地内容（项目包未包含），以低置信度本地身份观察（T07，票 #17） |
 
 ## 4. 硬约束落实对照
 

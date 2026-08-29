@@ -458,3 +458,62 @@ func TestReadINIKey(t *testing.T) {
 		t.Fatalf("文件不存在应返回 (false, nil): got (%v, %v)", ok, err)
 	}
 }
+
+// runtime 本地内容（hint 未命中）标记 runtime_local；mods/ 中非 .jar 常规文件
+// 标记 unsupported；.index 目录静默跳过（roadmap Step 4.3 诊断分类）。
+func TestScanRuntimeLocalAndUnsupportedDiagnostics(t *testing.T) {
+	root := makeGameDir(t)
+	mustWrite(t, root, "mods/legacy.zip", "not a jar")
+	mustWrite(t, root, "mods/sodium-0.6.5.jar.disabled", "disabled jar")
+	report, err := New().Scan(context.Background(), root, ports.ScanOptions{
+		Policy:   modsOnlyPolicy(),
+		Hint:     ports.ScanHint{FilenameToResourceID: baseHint()},
+		HashFile: fakeHash(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n := countDiag(report, "diag.scan.runtime_local"); n != 1 {
+		t.Fatalf("runtime_local 诊断应恰好 1 条（runtimeonly jar），得到 %d: %v", n, report.Diagnostics)
+	}
+	var local *model.Diagnostic
+	for i := range report.Diagnostics {
+		if report.Diagnostics[i].Code == "diag.scan.runtime_local" {
+			local = &report.Diagnostics[i]
+		}
+	}
+	if local.ResourceID != "mod:jar:runtimeonly-1.0.jar" || local.RelativePath != "mods/runtimeonly-1.0.jar" {
+		t.Errorf("runtime_local 证据不符: %+v", local)
+	}
+	if local.Args[0] != "mods/runtimeonly-1.0.jar" || local.Args[1] != "mod:jar:runtimeonly-1.0.jar" {
+		t.Errorf("runtime_local args 不符: %v", local.Args)
+	}
+	// hint 命中的 sodium/jei 不产生 runtime_local；.index 目录不产生 unsupported
+	if n := countDiag(report, "diag.scan.unsupported"); n != 2 {
+		t.Fatalf("unsupported 诊断应恰好 2 条（.zip 与 .disabled），得到 %d: %v", n, report.Diagnostics)
+	}
+	// 低置信度观察本身仍产出（诊断是证据，不改变事实）
+	if _, ok := byID(report)["mod:jar:runtimeonly-1.0.jar"]; !ok {
+		t.Fatal("runtime 本地 jar 应以低置信度身份观察")
+	}
+}
+
+// mods 中伪装 .jar 的目录仍走 not_regular_file，不误报 unsupported。
+func TestScanUnsupportedNotForDirJar(t *testing.T) {
+	root := makeGameDir(t)
+	if err := os.MkdirAll(filepath.Join(root, "mods", "fake.jar"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	report, err := New().Scan(context.Background(), root, ports.ScanOptions{
+		Policy: modsOnlyPolicy(), HashFile: fakeHash(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n := countDiag(report, "diag.scan.not_regular_file"); n != 1 {
+		t.Fatalf("not_regular_file 应 1 条，得到 %d", n)
+	}
+	if n := countDiag(report, "diag.scan.unsupported"); n != 0 {
+		t.Fatalf("目录伪装 .jar 不应记 unsupported，得到 %d", n)
+	}
+}

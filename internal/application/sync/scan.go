@@ -246,7 +246,9 @@ func assembleSnapshot(relationID string, side model.Side, fingerprint, polDigest
 }
 
 // cachedHash 返回带 hash cache 闭包的哈希函数：
-// (fingerprint, path, size, mtime) 全部一致时复用；缓存只是性能优化，不是事实来源。
+// (fingerprint, path, size, mtime, filekey) 全部一致时复用；缓存只是性能优化，
+// 不是事实来源。FileKey 是 file identity 通道（检视 P1-5）：保 mtime 的替换文件
+// 不会命中旧 hash。命中/未命中计入进程级统计（GetHashCacheStats 查询）。
 func (a *App) cachedHash(rootFingerprint, root string) func(ctx context.Context, absPath string) (model.ContentRef, ports.FileFacts, error) {
 	return func(ctx context.Context, absPath string) (model.ContentRef, ports.FileFacts, error) {
 		rel, err := filepath.Rel(root, absPath)
@@ -263,13 +265,17 @@ func (a *App) cachedHash(rootFingerprint, root string) func(ctx context.Context,
 			RelativePath:    relLower,
 			SizeBytes:       st.Size(),
 			MtimeUnixNano:   st.ModTime().UnixNano(),
+			FileKey:         a.deps.Hasher.FileKey(absPath),
 		}
 		if digest, found, err := a.deps.HashCache.Lookup(ctx, key); err == nil && found {
+			a.cacheHits.Add(1)
 			return model.ContentRef{Algorithm: "sha256", Digest: digest, Size: st.Size()}, ports.FileFacts{
 				SizeBytes:          st.Size(),
 				ModifiedAtUnixNano: st.ModTime().UnixNano(),
+				FileKey:            key.FileKey,
 			}, nil
 		}
+		a.cacheMisses.Add(1)
 		ref, facts, err := a.deps.Hasher.HashFile(ctx, absPath)
 		if err != nil {
 			return ref, facts, err

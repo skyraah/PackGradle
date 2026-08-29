@@ -74,6 +74,13 @@ func (s *Scanner) Scan(ctx context.Context, root string, opts ports.ScanOptions)
 
 	for _, entry := range idx.Files {
 		if !isModMetafile(entry) {
+			// 包内追踪但不在受管范围（非 mods/ metafile）：标记 ignored（证据性诊断，
+			// roadmap Step 4.3「扫描受 MappingPolicy 约束，明确标记 ignored」）
+			report.Diagnostics = append(report.Diagnostics, model.Diagnostic{
+				Severity: "info", Code: "diag.scan.ignored",
+				Args: []string{entry.File}, RelativePath: entry.File,
+				Detail: "index.toml 条目不在受管范围（非 mods/ metafile），已忽略",
+			})
 			continue
 		}
 		relLower, err := normalize.NormalizeRelativePath(entry.File, true)

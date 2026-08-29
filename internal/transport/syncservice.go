@@ -156,6 +156,29 @@ func (s *SyncService) CancelTask(taskID string) error {
 	return s.app.CancelTask(context.Background(), taskID)
 }
 
+// GetSnapshotDiagnostics 返回快照持久化的诊断列表（diag.mapping.collision、
+// diag.scan.* 等；票 #17：mapping_collision 等诊断在快照中可查）。
+func (s *SyncService) GetSnapshotDiagnostics(relationID, snapshotID string) ([]DiagnosticDTO, error) {
+	diags, err := s.app.GetSnapshotDiagnostics(context.Background(), relationID, snapshotID)
+	if err != nil {
+		return nil, err
+	}
+	return diagnosticDTOs(diags), nil
+}
+
+// GetHashCacheStats 返回 hash cache 命中统计（进程生命周期累计；
+// 热扫描命中证明与 T14 性能基线供数口）。
+func (s *SyncService) GetHashCacheStats() (HashCacheStatsDTO, error) {
+	v, err := s.app.GetHashCacheStats(context.Background())
+	if err != nil {
+		return HashCacheStatsDTO{}, err
+	}
+	return HashCacheStatsDTO{
+		SchemaVersion: model.CurrentSchemaVersion,
+		Hits:          v.Hits, Misses: v.Misses, HitRatio: v.HitRatio,
+	}, nil
+}
+
 func pageRequest(cursor string, limit int) ports.PageRequest {
 	return ports.PageRequest{Cursor: cursor, Limit: limit}
 }

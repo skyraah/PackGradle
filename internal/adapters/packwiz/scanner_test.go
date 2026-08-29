@@ -292,3 +292,66 @@ func TestScanManagedFilesPolicy(t *testing.T) {
 		t.Fatal("缺少 hasher_missing 诊断")
 	}
 }
+
+// index.toml 中非 mods/ metafile 条目（包内追踪但不在受管范围）标记 ignored。
+func TestScanIgnoresNonMetafileEntries(t *testing.T) {
+	dir := t.TempDir()
+	write := func(rel, content string) {
+		path := filepath.Join(dir, filepath.FromSlash(rel))
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write("pack.toml", "name = \"Collapse\"\n")
+	write("index.toml", `index = { file = "index.toml", hash-format = "sha256", hash = "0" }
+
+[[files]]
+file = "mods/sodium.pw.toml"
+hash = "1"
+metafile = true
+
+[[files]]
+file = "config/jei.ini"
+hash = "2"
+
+[[files]]
+file = "README.md"
+hash = "3"
+metafile = false
+`)
+	write("mods/sodium.pw.toml", tomlModrinth)
+	write("config/jei.ini", "key=value\n")
+	write("README.md", "readme\n")
+
+	report, err := New().Scan(context.Background(), dir, ports.ScanOptions{Policy: modsOnlyPolicy()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	n := 0
+	for _, d := range report.Diagnostics {
+		if d.Code == "diag.scan.ignored" {
+			n++
+		}
+	}
+	if n != 2 {
+		t.Fatalf("ignored 诊断应恰好 2 条，得到 %d: %v", n, report.Diagnostics)
+	}
+	paths := map[string]bool{}
+	for _, d := range report.Diagnostics {
+		if d.Code == "diag.scan.ignored" {
+			paths[d.RelativePath] = true
+		}
+	}
+	if !paths["config/jei.ini"] || !paths["README.md"] {
+		t.Errorf("ignored 证据应含两个非受管条目: %v", paths)
+	}
+	// 非受管条目不产出观察
+	for _, o := range report.Observations {
+		if o.Representation.RelativePath == "config/jei.ini" || o.Representation.RelativePath == "README.md" {
+			t.Errorf("ignored 条目不应产出观察: %+v", o)
+		}
+	}
+}
