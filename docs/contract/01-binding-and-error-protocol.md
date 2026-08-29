@@ -204,7 +204,7 @@ type AppError struct {
 | 窗口控制 | `Window.IsMaximised()/Minimise()/ToggleMaximise()/Close()` |
 | 窗口事件 | `Events.On(Events.Types.Windows.WindowMaximise, cb)`、`WindowUnMaximise` |
 | mods 监听事件 | `Events.On('packgradle:mods-diff', cb)`，数据为 `prism.ModsWatchEvent`（类型已由生成绑定写入 `Events.CustomEvents`） |
-| 系统对话框 | `Dialogs.OpenFile`（经 `src/utils/dialogs.ts` 封装：pickPackToml / pickToolPath / pickDirectory，取消返回 null）；消息类对话框（Question 等）在构建版有挂起 bug，确认/询问一律用 Vuetify 对话框 |
+| 系统对话框 | `Dialogs.OpenFile`（经 `src/utils/dialogs.ts` 封装：`pickDirectory(title?)`，取消返回 null）；消息类对话框（Question 等）在构建版有挂起 bug，确认/询问一律用 shadcn AlertDialog |
 | 底层调用 | 生成绑定内部 `Call.ByID(callID, ...args)` |
 
 `Events.On` 返回取消订阅函数，组件卸载时应调用（App.vue 已在 `onBeforeUnmount` 处理）。

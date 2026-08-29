@@ -63,7 +63,7 @@
 
 1. **新页面/新功能一律 shadcn-vue**（`@/components/ui/*`）：`/workspaces` 系列、新设置页等全部如此，零回归风险。
 2. **旧页面保持 Vuetify 现状**：不再逐页迁移 shadcn，仅缺陷修复；通用组件（`src/components/common/*`）只为仍存活的页面按需替换。
-3. **切换发布 = 旧栈整体删除 + Vuetify 收尾拆除**：P1 验收通过的发布中删除旧路由/页面/旧 store/旧 mocks，同发布卸载 `vuetify`、`@mdi/font`、`@fontsource/roboto`（如不再用）、`plugins/vuetify.ts`、main.css 中 `--pg-*` 与 v-* 覆盖样式、main.ts 的 vuetify 装载、`.v-theme--dark` 令牌选择器，并移除 `syncDarkClass` 的 Vuetify 依赖、保留 `html.dark` 机制。
+3. **切换发布 = 旧栈整体删除 + Vuetify 收尾拆除**（已按此执行）：删除旧路由/页面/旧 store/旧 mocks，同发布卸载 `vuetify`、`@mdi/font`、`@fontsource/roboto`、`plugins/vuetify.ts`、main.css 中 `--pg-*` 与 v-* 覆盖样式、main.ts 的 vuetify 装载、`.v-theme--dark` 令牌选择器，主题经 `stores/theme.ts`（三态偏好 + prefers-color-scheme 监听）落到 `html.dark`。mock 生产裁剪（§6 验收）经 `vite define __DEV__` 静态门 + dev 组件异步门控 + `stripDevMockLocale` locale 剔除插件三件套实现。
 
 ## 6. 验证
 

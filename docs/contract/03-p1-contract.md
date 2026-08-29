@@ -332,6 +332,8 @@ T11 执行落地（票 #21）：`model.SyncPlan.RequestedExactness`（json `requ
 
 T13 执行落地（票 #23）：locale 全量审计 + code→locale conformance test（`internal/errs/locale_conformance_test.go`，纳入 `task test`）。审计发现并补齐两处 P0 既有码缺键——`err.relation.rebind_required`（StartScan 端点指纹失配，{0}=relation_id）与 `err.relation.preparation_not_found`（CreateRelation 预检不存在，{0}=preparation_id）——及运行器动态构造的 `msg.task.<kind>.queued`（apply/restore/gc 三类，scan 既有）；删除无发射点的死键 `err.junction.link_occupied`。conformance test 三向校验：正向（遍历非测试 Go 源的 err.*/msg.* 码字面量，逐码比对 zh-CN.json 键，缺键即红）、反向（locale 的 err.* 键必须有 Go 发射点，死键即红；msg.* 含运行器动态构造故不做字面量反向检查，由任务矩阵覆盖）、任务矩阵（按 model `TaskKind` 常量校验 `msg.task.<kind>.queued` 与前端回退键 `workspaces.taskKind.<kind>`，新任务类型自动纳入）。约定：错误码必须以字面量出现于 Go 源（当前无动态拼接 err.* 码）；测试只比对键存在性，{0} 插值与 args 对应由本清单人工维护。
 
+T16 执行落地（票 #26，ADR-0001）：单发布切换——一级导航收敛为工作区/项目源/运行实例/设置（默认首页 `/workspaces`），旧路由 `/`、`/projects*`、`/instances`、`/dev` 与 catch-all 静默重定向 `/workspaces`；旧页面（Dashboard/Projects/ProjectDetail/Instances/Dev）、旧组件（`components/prism|projects` 与 ConfirmDialog/PageHeader 等通用件）、旧 store（env/instances/projects/apiKeyGuide/taskCenter）与 `utils/cf.ts` 整体删除。任务中心改为后端任务投影（syncCache 活跃任务，取消/查看工作区内联动作，状态徽标六态 `tasks.status.*`）。设置页只迁新栈消费项：主题三态（`stores/theme`，html.dark 唯一开关）与语言；dev 构建另有 mock 卡片（`settings/DevMockCard`，`__DEV__` 门控异步装载）。mock 生产裁剪三件套：`vite define __DEV__`（mocks 动态导入与目录选择 mock 路径的静态门）+ dev 组件异步门控（MockBadge/DevMockCard）+ `stripDevMockLocale` 插件（生产剔除 `mock.*` 与 `app.mockBadgeTip` 文案键）；验收 `grep -ri mock dist/` 零命中。Vuetify/`@mdi/font`/`@fontsource/roboto` 依赖拆除，bindings 重新生成无差异（68 方法不变）。locale 857→497 键（err.* 101、diag.* 12、msg.* 9 不变）；顺手补齐 T09 时代两处缺键 `sources.registerBtn`/`runtimes.registerBtn`（登记按钮此前裸显键名）。
+
 ## 4. 硬约束落实对照
 
 | 硬约束 | 落实位置 |

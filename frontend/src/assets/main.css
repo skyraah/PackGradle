@@ -1,9 +1,7 @@
 /* ————————————————————————————————————————————————
- * shadcn-vue 迁移准备层（Tailwind v4）
+ * 全局基座（Tailwind v4 + shadcn-vue 令牌）
  * - 令牌取自 docs/frontend/workspace-ux-prototype.html（概念风格：祖母绿 + 深墨蓝）
- * - .v-theme--dark 选择器：迁移期 Vuetify 未移除时，应用内元素也能命中暗色令牌
- * - Vuetify 样式未进 CSS layer，优先级天然高于 Tailwind 的 base/utilities layer，
- *   迁移期两者共存时现有页面不受影响；Vuetify 移除后此块即唯一主题源
+ * - html.dark 是唯一主题开关（ADR-0001 切换发布后 Vuetify 已拆除）
  * ———————————————————————————————————————————————— */
 @import "tailwindcss";
 @import "tw-animate-css";
@@ -34,7 +32,7 @@
     --input: rgba(15, 23, 42, 0.14);
     --ring: #16a34a;
 
-    /* 原型扩展令牌（迁移保真用：bg-surface-2 / text-faint / bg-tint-primary …） */
+    /* 原型扩展令牌（bg-surface-2 / text-faint / bg-tint-primary …） */
     --surface-2: #edf1f6;
     --surface-3: #e3e9f0;
     --rail: #ffffff;
@@ -45,8 +43,7 @@
     --tint-error: rgba(220, 38, 38, 0.09);
 }
 
-.dark,
-.v-theme--dark {
+.dark {
     /* 概念风格 · 暗色（应用默认） */
     --background: #1b212d;
     --foreground: #e9edf3;
@@ -116,40 +113,15 @@
     --radius-xl: calc(var(--radius) + 4px);
 }
 
-/* PackGradle application shell — PCL2-inspired design tokens & shell styles. */
-
 :root {
     font-family: 'Segoe UI Variable Text', 'Segoe UI', system-ui, 'Microsoft YaHei UI', 'Microsoft YaHei', sans-serif;
     font-synthesis: none;
     letter-spacing: 0;
-}
-
-.v-theme--light {
     color-scheme: light;
-    --pg-border: rgba(0, 0, 0, 0.08);
-    --pg-border-strong: rgba(0, 0, 0, 0.16);
-    --pg-layer: rgba(255, 255, 255, 0.72);
-    --pg-layer-hover: rgba(255, 255, 255, 0.96);
-    --pg-bar: rgba(250, 250, 250, 0.86);
-    --pg-nav-active: rgba(10, 132, 214, 0.14);
-    --pg-nav-hover: rgba(10, 132, 214, 0.07);
-    --pg-code-bg: #F7F7F8;
-    --pg-scroll: rgba(0, 0, 0, 0.2);
-    --pg-scroll-hover: rgba(0, 0, 0, 0.34);
 }
 
-.v-theme--dark {
+html.dark {
     color-scheme: dark;
-    --pg-border: rgba(255, 255, 255, 0.07);
-    --pg-border-strong: rgba(255, 255, 255, 0.15);
-    --pg-layer: rgba(255, 255, 255, 0.04);
-    --pg-layer-hover: rgba(255, 255, 255, 0.08);
-    --pg-bar: rgba(30, 31, 36, 0.9);
-    --pg-nav-active: rgba(76, 194, 255, 0.16);
-    --pg-nav-hover: rgba(76, 194, 255, 0.07);
-    --pg-code-bg: #1A1B1F;
-    --pg-scroll: rgba(255, 255, 255, 0.18);
-    --pg-scroll-hover: rgba(255, 255, 255, 0.32);
 }
 
 html,
@@ -165,6 +137,8 @@ body {
     overflow: hidden;
     user-select: none;
     -webkit-user-select: none;
+    background: var(--background);
+    color: var(--foreground);
 }
 
 input,
@@ -182,42 +156,9 @@ textarea {
     letter-spacing: 0;
 }
 
-::selection {
-    color: rgb(var(--v-theme-on-primary));
-    background: rgb(var(--v-theme-primary));
-}
-
-.v-application {
-    font-family: inherit;
-    letter-spacing: 0;
-}
-
-.v-btn {
-    font-weight: 600;
-    letter-spacing: 0;
-    text-transform: none;
-}
-
-.v-chip,
-.v-list-item-title,
-.v-list-item-subtitle {
-    letter-spacing: 0;
-}
-
 :focus-visible {
-    outline: 2px solid rgb(var(--v-theme-primary));
+    outline: 2px solid var(--primary);
     outline-offset: 2px;
-}
-
-/* 对话框打开时 Vuetify 会把焦点移到容器上，容器不显示焦点边线 */
-.v-overlay__content:focus-visible {
-    outline: none;
-}
-
-/* 输入框聚焦态由 Vuetify field outline 表达，原生 input 不再叠加浏览器焦点边线 */
-.v-field input:focus-visible,
-.v-field textarea:focus-visible {
-    outline: none;
 }
 
 .app-drag {
@@ -238,226 +179,15 @@ html.window-maximised body {
     border-radius: 0;
 }
 
-/* 窗口控制按钮组（最小化/最大化/关闭） */
-.window-controls {
-    display: flex;
-    align-items: center;
-    margin-left: 4px;
-}
-
-.window-controls .v-btn {
-    border-radius: 0;
-}
-
-.window-controls .window-close-btn:hover {
-    background: #e81123 !important;
-    color: #fff !important;
-}
-
-/* —— 顶栏 —— */
-
-.shell-bar {
-    background: var(--pg-bar) !important;
-    border-bottom: 1px solid var(--pg-border) !important;
-    backdrop-filter: blur(18px) saturate(125%);
-}
-
-.shell-bar .v-toolbar__content {
-    padding-inline: 10px;
-}
-
-.brand-lockup {
-    display: flex;
-    flex: 0 0 auto;
-    align-items: center;
-    gap: 9px;
-    min-width: 0;
-}
-
-.brand-mark {
-    display: grid;
-    width: 30px;
-    height: 30px;
-    color: rgb(var(--v-theme-on-primary));
-    background: linear-gradient(135deg, rgb(var(--v-theme-primary)), #2b8fd6);
-    border-radius: 8px;
-    place-items: center;
-}
-
-.brand-name {
-    font-size: 14px;
-    font-weight: 650;
-}
-
-.title-divider {
-    align-self: center;
-    width: 1px;
-    height: 20px;
-    margin-inline: 14px;
-    background: var(--pg-border-strong);
-}
-
-.integration-chip {
-    cursor: pointer;
-    transition: background-color 120ms ease;
-}
-
-/* —— 左侧 icon rail（PCL2 骨架）—— */
-
-.shell-rail {
-    background: rgb(var(--v-theme-background)) !important;
-    border-right: 1px solid var(--pg-border) !important;
-}
-
-.rail-item {
-    position: relative;
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    gap: 4px;
-    width: 56px;
-    height: 56px;
-    margin: 4px auto;
-    color: rgba(var(--v-theme-on-surface), 0.62);
-    border-radius: 10px;
-    cursor: pointer;
-    transition:
-        background-color 120ms ease,
-        color 120ms ease;
-}
-
-.rail-item:hover {
-    color: rgb(var(--v-theme-on-surface));
-    background: var(--pg-nav-hover);
-}
-
-.rail-item.rail-active {
-    color: rgb(var(--v-theme-primary));
-    background: var(--pg-nav-active);
-}
-
-.rail-item.rail-active::before {
-    position: absolute;
-    top: 12px;
-    bottom: 12px;
-    left: -6px;
-    width: 3px;
-    content: '';
-    background: rgb(var(--v-theme-primary));
-    border-radius: 0 3px 3px 0;
-}
-
-.rail-label {
-    font-size: 10px;
-    line-height: 1;
-}
-
-.shell-main {
-    background: rgb(var(--v-theme-background));
-    /* body 为 overflow:hidden，页面内容必须在 v-main 内部滚动，否则超出视口的内容被直接截断 */
-    max-height: calc(100dvh - var(--v-layout-top, 0px));
-    overflow-y: auto;
-}
-
-.shell-main .v-container {
-    width: min(100%, 1440px);
-    margin-inline: auto;
-}
-
-/* —— 卡片与层级 —— */
-
-.v-card {
-    border-color: var(--pg-border) !important;
-}
-
-.surface-tile {
-    padding: 14px;
-    background: var(--pg-layer);
-    border: 1px solid var(--pg-border);
-    border-radius: 12px;
-}
-
-.hover-card {
-    cursor: pointer;
-    transition:
-        transform 140ms ease,
-        box-shadow 140ms ease,
-        background-color 120ms ease,
-        border-color 120ms ease;
-}
-
-.hover-card:hover {
-    background: var(--pg-layer-hover) !important;
-    border-color: var(--pg-border-strong) !important;
-    box-shadow: 0 8px 22px rgba(0, 0, 0, 0.18);
-    transform: translateY(-2px);
-}
-
-/* 项目卡片错误态：左侧红条一眼定位 */
-.card-error {
-    border-left: 4px solid rgb(var(--v-theme-error)) !important;
-}
-
-.v-field {
-    background: var(--pg-layer);
-}
-
-.v-field:hover .v-field__outline {
-    --v-field-border-opacity: 0.5;
-}
-
-.v-field--focused .v-field__outline {
-    --v-field-border-opacity: 1;
-}
-
-.v-dialog > .v-overlay__content > .dialog-card,
-.v-dialog > .v-overlay__content > .v-card {
-    border: 1px solid var(--pg-border-strong) !important;
-    box-shadow: 0 18px 48px rgba(0, 0, 0, 0.28) !important;
-}
-
+/* 任务详情等可展开的 CLI 输出块 */
 .output-pre {
-    color: rgb(var(--v-theme-on-surface));
-    background: var(--pg-code-bg) !important;
-    border: 1px solid var(--pg-border) !important;
-    border-radius: 8px !important;
-}
-
-.app-snackbar .v-snackbar__wrapper {
-    min-width: min(390px, calc(100vw - 32px));
-    max-width: 460px;
-    border: 1px solid var(--pg-border-strong);
-    border-radius: 10px;
-}
-
-.notice-content {
-    display: flex;
-    align-items: flex-start;
-    gap: 10px;
-    line-height: 1.45;
-}
-
-/* 页头主操作按钮（PCL2 大色块按钮） */
-.primary-action {
-    min-width: 148px;
-    height: 40px !important;
-    font-size: 14px !important;
-    box-shadow: 0 4px 14px rgba(76, 194, 255, 0.28);
-}
-
-/* 表格行操作成功后的短暂高亮 */
-@keyframes row-flash {
-    0% {
-        background-color: rgba(108, 203, 95, 0.22);
-    }
-    100% {
-        background-color: transparent;
-    }
-}
-
-.row-flash {
-    animation: row-flash 1.8s ease-out forwards;
+    padding: 8px 10px;
+    overflow-x: auto;
+    white-space: pre-wrap;
+    word-break: break-all;
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+    border-radius: 8px;
 }
 
 ::-webkit-scrollbar {
@@ -470,25 +200,15 @@ html.window-maximised body {
 }
 
 ::-webkit-scrollbar-thumb {
-    background: var(--pg-scroll);
+    background: var(--muted-foreground);
     border: 3px solid transparent;
     border-radius: 8px;
     background-clip: content-box;
+    opacity: 0.4;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-    background-color: var(--pg-scroll-hover);
     background-clip: content-box;
-}
-
-@media (max-width: 900px) {
-    .integration-chip {
-        display: none;
-    }
-
-    .shell-main .v-container {
-        padding: 16px !important;
-    }
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -499,13 +219,5 @@ html.window-maximised body {
         transition-duration: 0.01ms !important;
         animation-duration: 0.01ms !important;
         animation-iteration-count: 1 !important;
-    }
-}
-
-@media (max-width: 520px) {
-    .brand-name,
-    .title-divider,
-    .page-title {
-        display: none;
     }
 }
