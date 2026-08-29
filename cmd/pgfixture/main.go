@@ -73,10 +73,15 @@ func runEval(spec string) int {
 		return 2
 	}
 
+	// 命中率由 hits/misses 现算，不信任记录中的存储值（防御写入端口径漂移）
+	ratio := 0.0
+	if total := warm.HashCache.Hits + warm.HashCache.Misses; total > 0 {
+		ratio = float64(warm.HashCache.Hits) / float64(total)
+	}
 	fmt.Printf("冷扫描 %d ms（门槛 ≤%d ms）\n", cold.ScanTotalMS, coldBudgetMS)
 	fmt.Printf("热扫描 %d ms（门槛 ≤%d ms）\n", warm.ScanTotalMS, warmBudgetMS)
 	fmt.Printf("热命中率 %.2f%%（门槛 ≥%.2f%%，hits=%d misses=%d）\n",
-		warm.HashCache.HitRatio*100, warmHitRatioGate*100, warm.HashCache.Hits, warm.HashCache.Misses)
+		ratio*100, warmHitRatioGate*100, warm.HashCache.Hits, warm.HashCache.Misses)
 
 	failed := false
 	if cold.ScanTotalMS > coldBudgetMS {
@@ -87,7 +92,7 @@ func runEval(spec string) int {
 		fmt.Printf("FAIL: 热扫描超门槛\n")
 		failed = true
 	}
-	if warm.HashCache.HitRatio < warmHitRatioGate {
+	if ratio < warmHitRatioGate {
 		fmt.Printf("FAIL: 热命中率低于门槛\n")
 		failed = true
 	}

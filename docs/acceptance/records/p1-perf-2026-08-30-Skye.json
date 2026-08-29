@@ -19,18 +19,18 @@
   "procedure": "task acceptance:perf：go build pgheadless → 生成 fixture → rm -rf build/perf/data → 冷扫描（全新数据目录）→ 热扫描（同目录同 fixture 紧接二次）→ pgfixture -eval 门槛评估",
   "cold": {
     "schema": "p1-perf-run/1",
-    "captured_at": "2026-08-29T18:33:51Z",
-    "scan_phases_ms": { "project_scan": 50, "runtime_scan": 3031, "normalize": 10, "persist": 38 },
-    "scan_total_ms": 3137,
-    "run_total_ms": 3322,
+    "captured_at": "2026-08-29T18:44:21Z",
+    "scan_phases_ms": { "project_scan": 50, "runtime_scan": 8360, "normalize": 10, "persist": 41 },
+    "scan_total_ms": 8488,
+    "run_total_ms": 8618,
     "hash_cache": { "hits": 0, "misses": 2700, "hit_ratio": 0 }
   },
   "warm": {
     "schema": "p1-perf-run/1",
-    "captured_at": "2026-08-29T18:33:51Z",
-    "scan_phases_ms": { "project_scan": 44, "runtime_scan": 410, "normalize": 10, "persist": 38 },
-    "scan_total_ms": 523,
-    "run_total_ms": 712,
+    "captured_at": "2026-08-29T18:44:31Z",
+    "scan_phases_ms": { "project_scan": 44, "runtime_scan": 408, "normalize": 10, "persist": 41 },
+    "scan_total_ms": 515,
+    "run_total_ms": 702,
     "hash_cache": { "hits": 2700, "misses": 0, "hit_ratio": 1 }
   },
   "thresholds": {
@@ -42,6 +42,12 @@
     "cold_pass": true,
     "warm_pass": true,
     "warm_hit_ratio_pass": true,
-    "conclusion": "冷 3137ms ≤ 10s、热 523ms ≤ 2s、热命中率 100%（2700 hit / 0 miss）≥ 95%，三项全过，性能基线首测达标"
-  }
+    "conclusion": "冷 8488ms ≤ 10s、热 515ms ≤ 2s、热命中率 100%（2700 hit / 0 miss）≥ 95%，三项全过，性能基线首测达标"
+  },
+  "variance_note": "冷扫描跨运行方差显著：同机同 fixture 首次测得 3137ms，其后两轮稳定在 8.4~8.5s（runtime_scan 相独大，纯哈希 ~800MB）。归档值为保守的稳定复现值。怀疑主因是 Defender 实时扫描对刚生成的高熵伪随机文件逐个查验；正式 A/B 口径验收时若超标，优先把 build/perf/ 加入 Defender 排除目录后重测并另行归档。",
+  "variance_runs": [
+    { "cold_scan_total_ms": 3137, "warm_scan_total_ms": 523, "warm_hit_ratio": 1.0 },
+    { "cold_scan_total_ms": 8505, "warm_scan_total_ms": 515, "warm_hit_ratio": 1.0 },
+    { "cold_scan_total_ms": 8488, "warm_scan_total_ms": 515, "warm_hit_ratio": 1.0 }
+  ]
 }

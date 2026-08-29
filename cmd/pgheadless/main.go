@@ -16,6 +16,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"time"
 
 	"packgradle/internal/application/ports"
@@ -38,6 +39,13 @@ func main() {
 	}
 	runStart := time.Now()
 
+	// 绝对化输入：库内端点登记使用 canonical 绝对路径，复用匹配与 metrics
+	// 记录都必须与之一致
+	projectAbs, err := filepath.Abs(*projectRoot)
+	fatalOn(err, "解析项目根绝对路径")
+	instanceAbs, err := filepath.Abs(*instanceDir)
+	fatalOn(err, "解析实例目录绝对路径")
+
 	root := *dataRoot
 	if root == "" {
 		var err error
@@ -59,7 +67,7 @@ func main() {
 	before, err := app.GetHashCacheStats(ctx)
 	fatalOn(err, "GetHashCacheStats")
 
-	rel := ensureRelation(ctx, app, *projectRoot, *instanceDir)
+	rel := ensureRelation(ctx, app, projectAbs, instanceAbs)
 	dump("Relation", rel)
 
 	task, err := app.StartScan(ctx, rel.RelationID)
@@ -95,8 +103,8 @@ func main() {
 		writeMetrics(*metricsPath, metricsRecord{
 			Schema:      "p1-perf-run/1",
 			CapturedAt:  time.Now().UTC().Format(time.RFC3339),
-			ProjectRoot: *projectRoot,
-			InstanceDir: *instanceDir,
+			ProjectRoot: projectAbs,
+			InstanceDir: instanceAbs,
 			DataRoot:    root,
 			Machine: machineInfo{
 				Host: hostName(), OS: runtime.GOOS, Arch: runtime.GOARCH,
@@ -117,13 +125,24 @@ func main() {
 	}
 }
 
-// ensureRelation 返回给定端点对的 Relation：数据目录里已有（热扫描重跑、
-// 重复执行）→ 直接复用首个工作区；否则走 PrepareRelation（带 §2.1 受管范围
-// 建议）→ CreateRelation。fixture 场景单 Relation，取 ListWorkspaces 首项。
+// ensureRelation 返回给定端点对的 Relation：数据目录里已有同一端点对
+//（热扫描重跑、重复执行）→ 直接复用；没有匹配项 → 走 PrepareRelation
+//（带 §2.1 受管范围建议）→ CreateRelation。绝不盲取无关工作区——
+// -metrics 记录的端点路径必须与 -project/-instance 指向一致。
 func ensureRelation(ctx context.Context, app syncapp.Application, projectRoot, instanceDir string) view.RelationView {
-	if page, err := app.ListWorkspaces(ctx, ports.PageRequest{Limit: 10}); err == nil && len(page.Items) > 0 {
-		return page.Items[0].Relation
+	page, err := app.ListWorkspaces(ctx, ports.PageRequest{Limit: 10})
+	fatalOn(err, "ListWorkspaces")
+	if page.NextCursor != "" {
+		log.Fatalf("工作区超过一页，pgheadless 仅支持单 Relation fixture 场景")
 	}
+	gameDir := filepath.Join(filepath.Clean(instanceDir), "minecraft")
+	for _, ws := range page.Items {
+		if sameDir(ws.Relation.Project.RootPath, projectRoot) &&
+			sameDir(ws.Relation.Runtime.RootPath, gameDir) {
+			return ws.Relation
+		}
+	}
+
 	prep, err := app.PrepareRelation(ctx, model.PrepareRelationInput{
 		ProjectRoot:        projectRoot,
 		RuntimeInstanceDir: instanceDir,
@@ -136,6 +155,11 @@ func ensureRelation(ctx context.Context, app syncapp.Application, projectRoot, i
 	rel, err := app.CreateRelation(ctx, prep.PreparationID)
 	fatalOn(err, "CreateRelation")
 	return rel
+}
+
+// sameDir 容忍盘符大小写与路径分隔符差异的目录相等比较（Windows）。
+func sameDir(a, b string) bool {
+	return strings.EqualFold(filepath.ToSlash(filepath.Clean(a)), filepath.ToSlash(filepath.Clean(b)))
 }
 
 // lastScanTiming 经非导出能力读取扫描分相耗时（不入 transport 契约）。

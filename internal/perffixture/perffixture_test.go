@@ -110,7 +110,7 @@ func TestGenerateLayoutAndSizes(t *testing.T) {
 
 	// JAR：数量、大小分布（i%10==0 → 5~20MB；其余 200KB~5MB）
 	for i := 0; i < mods; i++ {
-		st, err := os.Stat(filepath.Join(gameDir, "mods", jarFileName(Options{}, i)))
+		st, err := os.Stat(filepath.Join(gameDir, "mods", jarFileName(i)))
 		if err != nil {
 			t.Fatal(err)
 		}

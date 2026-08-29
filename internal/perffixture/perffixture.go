@@ -22,6 +22,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 )
 
 // Options 是生成参数。Mods/TextFiles 供测试收缩规模；生产基线用默认值。
@@ -66,15 +67,15 @@ func Generate(ctx context.Context, opts Options) (Result, error) {
 	// ---- Project 侧：mods/*.pw.toml + index.toml + pack.toml ----
 	var indexEntries []string
 	for i := 0; i < opts.Mods; i++ {
-		metaName, jarName, err := writeProjectMod(ctx, res.ProjectRoot, opts, i)
+		metaName, metaDigest, err := writeProjectMod(ctx, res.ProjectRoot, opts, i)
 		if err != nil {
 			return res, err
 		}
 		res.Files++
 		indexEntries = append(indexEntries,
-			fmt.Sprintf("\n[[files]]\nfile = \"mods/%s\"\nhash = \"%s\"\nmetafile = true\n", metaName, jarName))
+			fmt.Sprintf("\n[[files]]\nfile = \"mods/%s\"\nhash = \"%s\"\nmetafile = true\n", metaName, metaDigest))
 	}
-	indexToml := "hash-format = \"sha256\"\n" + concat(indexEntries)
+	indexToml := "hash-format = \"sha256\"\n" + strings.Join(indexEntries, "")
 	if _, err := writeFile(ctx, filepath.Join(res.ProjectRoot, "index.toml"), indexToml); err != nil {
 		return res, err
 	}
@@ -97,7 +98,7 @@ func Generate(ctx context.Context, opts Options) (Result, error) {
 	res.Files++
 	gameDir := filepath.Join(res.InstanceDir, "minecraft")
 	for i := 0; i < opts.Mods; i++ {
-		jarPath := filepath.Join(gameDir, "mods", jarFileName(opts, i))
+		jarPath := filepath.Join(gameDir, "mods", jarFileName(i))
 		if _, err := writeRandomFile(ctx, jarPath, fileSeed(opts.Seed, 1_000_000+uint64(i)), jarSize(i)); err != nil {
 			return res, err
 		}
@@ -122,14 +123,6 @@ func Generate(ctx context.Context, opts Options) (Result, error) {
 		return nil
 	})
 	return res, nil
-}
-
-func concat(ss []string) string {
-	out := make([]byte, 0, 128*len(ss))
-	for _, s := range ss {
-		out = append(out, s...)
-	}
-	return string(out)
 }
 
 // fileSeed 把 (全局种子, 文件序号) 混合为独立文件种子（splitmix64 终混）。
@@ -174,7 +167,7 @@ func (p *prng) fill(buf []byte) {
 
 // jarFileName 返回第 i 个 mod 的 JAR 文件名（与项目侧 metafile filename 一致，
 // 供跨侧身份 hint 匹配）。
-func jarFileName(opts Options, i int) string {
+func jarFileName(i int) string {
 	return fmt.Sprintf("fixture-mod-%04d-1.2.%d.jar", i, i%9+1)
 }
 
@@ -194,9 +187,10 @@ func metaFileName(i int) string {
 
 // writeProjectMod 写入第 i 个 mod 的 metafile，来源按 i%3 轮换
 // modrinth / curseforge / url（§2.1 混合来源）；声明 hash 为 JAR 种子派生的
-// 确定性占位摘要（扫描器只记录不校验）。
-func writeProjectMod(ctx context.Context, projectRoot string, opts Options, i int) (metaName, jarName string, err error) {
-	jarName = jarFileName(opts, i)
+// 确定性占位摘要（扫描器只记录不校验）。返回 metafile 文件名与其内容摘要
+//（index.toml 条目的 hash 字段）。
+func writeProjectMod(ctx context.Context, projectRoot string, opts Options, i int) (metaName, metaDigest string, err error) {
+	jarName := jarFileName(i)
 	jarDigest := fmt.Sprintf("%064x", fileSeed(opts.Seed, 1_000_000+uint64(i)))
 	rng := prng{state: fileSeed(opts.Seed, 3_000_000+uint64(i))}
 	side := []string{"both", "client", "server"}[rng.next()%3]
@@ -214,8 +208,8 @@ func writeProjectMod(ctx context.Context, projectRoot string, opts Options, i in
 			i, jarName, side, jarName, jarDigest)
 	}
 	metaName = metaFileName(i)
-	_, err = writeFile(ctx, filepath.Join(projectRoot, "mods", metaName), content)
-	return metaName, jarName, err
+	metaDigest, err = writeFile(ctx, filepath.Join(projectRoot, "mods", metaName), content)
+	return metaName, metaDigest, err
 }
 
 // textRelPath 返回第 i 个受管文件的 root 相对路径：轮换 config/kubejs/scripts
