@@ -532,7 +532,7 @@
   "workspacesNew.createdTitle": "工作区已创建",
   "workspacesNew.createdNote": "创建成功。扫描与差异视图将在后续版本提供。",
   "workspacesNew.createdToast": "工作区创建成功",
-  "workspacesNew.revisionBadge": "策略第 {0} 代",
+  "workspacesNew.direction.bidirectional": "双向同步",
   "workspacesNew.suggestions.config": "config（配置文件）",
   "workspacesNew.suggestions.kubejs": "kubejs（KubeJS 脚本）",
   "workspacesNew.suggestions.scripts": "scripts（脚本目录）",
@@ -548,5 +548,6 @@
   "check.legacy.materialization": "旧架构痕迹",
   "check.endpoint.binding": "绑定指纹",
   "err.relation.prep_expired": "预检已过期，请重新预检: {0}",
-  "err.relation.prep_consumed": "预检已被使用，请刷新页面（工作区可能已创建）: {0}"
+  "err.relation.prep_consumed": "预检已被使用，请刷新页面（工作区可能已创建）: {0}",
+  "err.mapping.unknown_policy": "未知策略集或建议规则: {0}"
 }

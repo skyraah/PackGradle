@@ -44,8 +44,8 @@ func DefaultV1() model.MappingPolicy {
 
 // MergeSuggestions 把用户勾选的建议规则并入模板 policy（/workspaces/new 页
 // 选择受管范围）。ids 必须是 Suggestions() 返回的规则 ID；未知 ID 返回错误
-// （调用方映射 err.mapping.unknown_policy）。合并结果必须再过 policy.Validate
-// 编译校验后才可写入预检或 Relation。
+// （调用方映射 err.mapping.unknown_policy）。不修改入参模板（Rules 显式拷贝）；
+// 合并结果必须再过 policy.Validate 编译校验后才可写入预检或 Relation。
 func MergeSuggestions(pol model.MappingPolicy, ids []string) (model.MappingPolicy, error) {
 	if len(ids) == 0 {
 		return pol, nil
@@ -54,6 +54,10 @@ func MergeSuggestions(pol model.MappingPolicy, ids []string) (model.MappingPolic
 	for _, r := range suggestionRules {
 		byID[r.ID] = r
 	}
+	// 显式拷贝 Rules：不修改入参模板切片的底层数组
+	rules := make([]model.MappingRule, 0, len(pol.Rules)+len(ids))
+	rules = append(rules, pol.Rules...)
+	pol.Rules = rules
 	for _, id := range ids {
 		r, ok := byID[id]
 		if !ok {

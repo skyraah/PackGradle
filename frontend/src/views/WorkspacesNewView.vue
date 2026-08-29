@@ -85,7 +85,9 @@ async function prepare() {
     try {
         prep.value = await SyncService.PrepareRelation({
             project_root: selectedProject.value.root_path,
-            runtime_instance_dir: selectedRuntime.value.instance_dir || selectedRuntime.value.root_path,
+            // 已登记运行实例的登记输入：后端派生的实例目录（缺值时留空，
+            // 由预检检查项可见地报「实例目录不可达」，不静默替换为游戏目录）
+            runtime_instance_dir: selectedRuntime.value.instance_dir ?? '',
             policy_set: 'default-v1',
             suggestions: [...checkedSuggestions.value],
         })
@@ -143,7 +145,6 @@ function checkVariant(c: PreparationCheckDTO): 'default' | 'destructive' | 'seco
                 </div>
                 <div class="flex items-center gap-2">
                     <Badge variant="outline">{{ created.policy_set }}</Badge>
-                    <Badge>{{ t('workspacesNew.revisionBadge', [created.revision]) }}</Badge>
                 </div>
             </CardContent>
         </Card>
@@ -219,7 +220,7 @@ function checkVariant(c: PreparationCheckDTO): 'default' | 'destructive' | 'seco
                             {{ t('workspacesNew.suggestions.' + s.id) }}
                         </span>
                         <span class="text-muted-foreground text-xs">
-                            {{ t('workspacesNew.suggestionMeta', [t('workspacesNew.kind.' + s.resource_kind), s.direction, t('workspacesNew.materialization.' + s.materialization)]) }}
+                            {{ t('workspacesNew.suggestionMeta', [t('workspacesNew.kind.' + s.resource_kind), t('workspacesNew.direction.' + s.direction), t('workspacesNew.materialization.' + s.materialization)]) }}
                         </span>
                     </button>
                 </div>

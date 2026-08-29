@@ -67,7 +67,7 @@
 - 技术栈：Go 1.25 + Wails v3（beta.7），Vue 3 + TypeScript + Vite + vue-i18n + vue-router（hash 模式）；UI 层正从 Vuetify 4 迁移到 shadcn-vue + Tailwind v4（共存规则见 [frontend/06-shadcn-migration.md](./frontend/06-shadcn-migration.md)），视觉基准为 [概念风格.pdf](./概念风格.pdf)。
 - 后端向 Wails 注册 6 个服务：`EnvService`（7 个方法）、`PackwizService`（8 个方法）、`PrismService`（26 个方法）+ 新架构 `SyncService`（11 个方法）、`ProjectService`（4 个方法）、`RuntimeService`（4 个方法），共 60 个可调用方法。
 - 前后端经 `src/api` 门面按契约调用真实绑定；mock 层（`src/mocks` 内存库）保留，可经设置页开关 / 顶栏 MOCK 徽标一键切换；文件/目录选择经 `utils/dialogs.ts`（`Dialogs.OpenFile`）。
-- 错误只以 `err.*` 错误码从 Go 端传递，文案统一在 `frontend/src/locales/zh-CN.json`（506 个键，其中 71 个 `err.*`）。
+- 错误只以 `err.*` 错误码从 Go 端传递，文案统一在 `frontend/src/locales/zh-CN.json`（551 个键，其中 74 个 `err.*`）。
 - 新栈前端页：`/sources`（项目源）与 `/runtimes`（运行实例）已落 shadcn-vue（发现·登记·健康走查）；其余工作区页随切换发布票施工。
 - 新架构（store/sqlite + transport + pgheadless）已入主干：headless 入口 `cmd/pgheadless`（PrepareRelation → CreateRelation → StartScan → PrepareSync → GetPlan 可重复执行）；验收 L0 命令已挂 Taskfile：`task test` / `task test:vet` / `task test:race`（`-race` 需 mingw-w64 gcc 提供 CGO 工具链）。
 - 持久化位置：全局 `%AppData%\PackGradle\config.toml`；项目级 `<项目目录>\packgradle.toml`。
