@@ -43,8 +43,8 @@ type mmcPack struct {
 }
 
 // DiscoverRuntimes 定位 Prism 实例根目录并枚举实例候选。
-// 实例根不可定位返回 *ports.InstancesDirError；单个实例元数据读取失败按空
-// 元数据保留候选（路径事实成立），不影响其余实例。
+// 定位或读取失败统一返回 *ports.InstancesDirError（携带尝试目录与底层原因）；
+// 单个实例元数据读取失败按空元数据保留候选（路径事实成立），不影响其余实例。
 func (d *Discoverer) DiscoverRuntimes(ctx context.Context) ([]ports.RuntimeCandidate, error) {
 	dir, err := d.instancesDir()
 	if err != nil {
@@ -52,7 +52,7 @@ func (d *Discoverer) DiscoverRuntimes(ctx context.Context) ([]ports.RuntimeCandi
 	}
 	instances, err := DiscoverInstances(dir)
 	if err != nil {
-		return nil, err
+		return nil, &ports.InstancesDirError{DataDir: dir, Err: err}
 	}
 	candidates := make([]ports.RuntimeCandidate, 0, len(instances))
 	for _, inst := range instances {
@@ -72,18 +72,18 @@ func (d *Discoverer) DiscoverRuntimes(ctx context.Context) ([]ports.RuntimeCandi
 	return candidates, nil
 }
 
-// instancesDir 解析实例根目录；数据目录缺失返回 *ports.InstancesDirError。
+// instancesDir 解析实例根目录；定位失败返回 *ports.InstancesDirError。
 func (d *Discoverer) instancesDir() (string, error) {
 	if d.InstancesDir != nil {
 		return d.InstancesDir()
 	}
 	dataDir := filepath.Join(os.Getenv("APPDATA"), "PrismLauncher")
 	if _, err := os.Stat(dataDir); err != nil {
-		return "", &ports.InstancesDirError{DataDir: dataDir}
+		return "", &ports.InstancesDirError{DataDir: dataDir, Err: err}
 	}
 	dir, ok, err := readINIKey(filepath.Join(dataDir, "prismlauncher.cfg"), "InstanceDir")
 	if err != nil {
-		return "", fmt.Errorf("prism: 读取 prismlauncher.cfg: %w", err)
+		return "", &ports.InstancesDirError{DataDir: dataDir, Err: fmt.Errorf("读取 prismlauncher.cfg: %w", err)}
 	}
 	if !ok {
 		return filepath.Join(dataDir, "instances"), nil

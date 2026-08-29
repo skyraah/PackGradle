@@ -1,10 +1,11 @@
 <script setup lang="ts">
 // /sources：Packwiz 项目源端点管理（发现·登记·健康；契约 03 §2.5，IA 见 05 原型 §7.9）。
 // 只管理端点登记与健康，不含任何跨端同步操作。
-import { onMounted, reactive, ref } from 'vue'
+import { onMounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { ProjectService } from '../api'
-import type { EndpointDTO, EndpointHealthDTO, ProjectCandidateDTO } from '../api'
+import type { ProjectCandidateDTO } from '../api'
+import { useEndpointPage } from '../composables/useEndpointPage'
 import { showSnackbar } from '../stores/ui'
 import { errText } from '../utils/errors'
 import { Badge } from '@/components/ui/badge'
@@ -15,28 +16,19 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 
 const { t } = useI18n()
 
-const registered = ref<EndpointDTO[]>([])
+const page = useEndpointPage({
+    list: () => ProjectService.ListProjects(),
+    register: (rootPath) => ProjectService.RegisterProject({ root_path: rootPath }),
+    health: (endpointID) => ProjectService.GetProjectHealth(endpointID),
+})
+const { registered, loadingList, registering, health, loadRegistered, register, checkHealth, healthOf, healthBadgeVariant } = page
+
 const candidates = ref<ProjectCandidateDTO[]>([])
 const parentDir = ref('')
 const manualPath = ref('')
-const loadingList = ref(false)
 const discovering = ref(false)
-const registering = ref(false)
-// endpoint_id -> 健康结果；'checking' 表示检查进行中
-const health = reactive(new Map<string, EndpointHealthDTO | 'checking'>())
 
 onMounted(loadRegistered)
-
-async function loadRegistered() {
-    loadingList.value = true
-    try {
-        registered.value = (await ProjectService.ListProjects()) ?? []
-    } catch (e) {
-        showSnackbar(errText(e), 'error')
-    } finally {
-        loadingList.value = false
-    }
-}
 
 async function discover() {
     if (!parentDir.value.trim()) return
@@ -51,40 +43,13 @@ async function discover() {
     }
 }
 
-async function register(rootPath: string) {
-    registering.value = true
-    try {
-        const ep = await ProjectService.RegisterProject({ root_path: rootPath })
-        showSnackbar(t('endpoints.registerOk', [ep.display_name]), 'success')
+// registerFromPath 登记后联动重发现（刷新候选的 registered 状态）
+async function registerFromPath(rootPath: string) {
+    const ep = await register(rootPath)
+    if (ep) {
         manualPath.value = ''
-        await Promise.all([loadRegistered(), discover()])
-    } catch (e) {
-        showSnackbar(errText(e), 'error')
-    } finally {
-        registering.value = false
+        discover()
     }
-}
-
-async function checkHealth(ep: EndpointDTO) {
-    health.set(ep.id, 'checking')
-    try {
-        health.set(ep.id, await ProjectService.GetProjectHealth(ep.id))
-    } catch (e) {
-        health.delete(ep.id)
-        showSnackbar(errText(e), 'error')
-    }
-}
-
-function healthBadgeVariant(status: string) {
-    if (status === 'ok') return 'default' as const
-    if (status === 'missing') return 'destructive' as const
-    return 'secondary' as const
-}
-
-// healthOf 取健康结果；'checking' 哨兵视为无结果（供模板收窄）
-function healthOf(id: string): EndpointHealthDTO | undefined {
-    const h = health.get(id)
-    return h && h !== 'checking' ? h : undefined
 }
 </script>
 
@@ -140,7 +105,7 @@ function healthOf(id: string): EndpointHealthDTO | undefined {
                     </TableBody>
                 </Table>
                 <p v-else class="text-muted-foreground text-sm">
-                    {{ loadingList ? t('endpoints.health.checking') : t('sources.registeredEmpty') }}
+                    {{ loadingList ? t('endpoints.loading') : t('sources.registeredEmpty') }}
                 </p>
             </CardContent>
         </Card>
@@ -173,14 +138,14 @@ function healthOf(id: string): EndpointHealthDTO | undefined {
                             id="sources-manual-path"
                             v-model="manualPath"
                             :placeholder="t('endpoints.pathPlaceholder')"
-                            @keydown.enter="register(manualPath.trim())"
+                            @keydown.enter="registerFromPath(manualPath.trim())"
                         />
                     </div>
                     <Button
                         variant="secondary"
                         :disabled="registering || !manualPath.trim()"
                         class="mt-5"
-                        @click="register(manualPath.trim())"
+                        @click="registerFromPath(manualPath.trim())"
                     >
                         {{ t('sources.registerBtn') }}
                     </Button>
@@ -205,8 +170,8 @@ function healthOf(id: string): EndpointHealthDTO | undefined {
                             <TableCell>{{ c.minecraft || '—' }}</TableCell>
                             <TableCell>{{ c.modloader || '—' }}</TableCell>
                             <TableCell>
-                                <Badge v-if="c.registered" variant="secondary">{{ t('sources.registeredTitle') }}</Badge>
-                                <Button v-else variant="outline" size="sm" :disabled="registering" @click="register(c.root_path)">
+                                <Badge v-if="c.registered" variant="secondary">{{ t('endpoints.registeredBadge') }}</Badge>
+                                <Button v-else variant="outline" size="sm" :disabled="registering" @click="registerFromPath(c.root_path)">
                                     {{ t('sources.registerBtn') }}
                                 </Button>
                             </TableCell>

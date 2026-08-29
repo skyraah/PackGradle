@@ -55,8 +55,9 @@ func Build(root string) (*Stack, error) {
 
 	hasher := filesystem.NewHasher()
 	fingerprinter := filesystem.NewFingerprinter()
+	endpoints := sqlite.NewEndpointRepository(db)
 	app, err := syncapp.New(syncapp.AppDeps{
-		Endpoints:     sqlite.NewEndpointRepository(db),
+		Endpoints:     endpoints,
 		Relations:     sqlite.NewRelationRepository(db),
 		Snapshots:     sqlite.NewSnapshotRepository(db),
 		Baselines:     sqlite.NewBaselineRepository(db),
@@ -86,9 +87,10 @@ func Build(root string) (*Stack, error) {
 		return nil, fmt.Errorf("bootstrap: 启动任务恢复失败: %w", err)
 	}
 
-	// 端点管理用例（/sources、/runtimes 页）：与 sync 共用同一批仓库与适配器
+	// 端点管理用例（/sources、/runtimes 页）：与 sync 共用同一数据库、
+	// 同一端点仓库与指纹/规范化适配器；发现适配器按侧分立（packwiz/prism）。
 	projectSvc, err := projectapp.New(projectapp.Deps{
-		Endpoints:     sqlite.NewEndpointRepository(db),
+		Endpoints:     endpoints,
 		Paths:         filesystem.PathNormalizer{},
 		Fingerprinter: fingerprinter,
 		Discovery:     packwiz.New(),
@@ -100,7 +102,7 @@ func Build(root string) (*Stack, error) {
 		return nil, fmt.Errorf("bootstrap: 装配项目源端点用例: %w", err)
 	}
 	runtimeSvc, err := runtimeapp.New(runtimeapp.Deps{
-		Endpoints:     sqlite.NewEndpointRepository(db),
+		Endpoints:     endpoints,
 		Paths:         filesystem.PathNormalizer{},
 		Fingerprinter: fingerprinter,
 		Discovery:     prism.NewDiscoverer(),

@@ -76,11 +76,13 @@ func New(deps Deps) (*App, error) {
 func (a *App) DiscoverRuntimes(ctx context.Context) ([]view.RuntimeCandidateView, error) {
 	cands, err := a.deps.Discovery.DiscoverRuntimes(ctx)
 	if err != nil {
+		// 发现失败统一映射 instances_dir_not_found（args {0}=尝试的数据目录，
+		// 由 *ports.InstancesDirError 携带）
 		var ide *ports.InstancesDirError
 		if errors.As(err, &ide) {
 			return nil, errs.NewDetail(endpoint.CodeInstancesDirNotFound, err.Error(), ide.DataDir)
 		}
-		return nil, errs.NewDetail(endpoint.CodeInstancesDirNotFound, err.Error())
+		return nil, errs.NewDetail(endpoint.CodeInstancesDirNotFound, err.Error(), "")
 	}
 	out := make([]view.RuntimeCandidateView, 0, len(cands))
 	for _, c := range cands {
@@ -128,9 +130,8 @@ func (a *App) RegisterRuntime(ctx context.Context, input view.RegisterEndpointIn
 		return view.EndpointView{}, err
 	}
 	if found {
-		if !strings.EqualFold(filepath.Clean(existing.RootPath), filepath.Clean(gameDir)) {
-			return view.EndpointView{}, errs.NewDetail(endpoint.CodeIdentityMismatch,
-				"同名实例目录已登记为不同路径: "+existing.RootPath, existing.RuntimeID)
+		if err := requireSamePath(existing, gameDir); err != nil {
+			return view.EndpointView{}, err
 		}
 		return runtimeView(existing), nil
 	}
@@ -149,9 +150,8 @@ func (a *App) RegisterRuntime(ctx context.Context, input view.RegisterEndpointIn
 		// 并发登记同一实例：唯一约束命中后回读（幂等；路径不同仍拒绝）
 		if errors.Is(err, ports.ErrDuplicate) {
 			if existing, found, ferr := a.deps.Endpoints.FindRuntimeByIdentity(ctx, runtimeAdapter, identity); ferr == nil && found {
-				if !strings.EqualFold(filepath.Clean(existing.RootPath), filepath.Clean(gameDir)) {
-					return view.EndpointView{}, errs.NewDetail(endpoint.CodeIdentityMismatch,
-						"同名实例目录已登记为不同路径: "+existing.RootPath, existing.RuntimeID)
+				if err := requireSamePath(existing, gameDir); err != nil {
+					return view.EndpointView{}, err
 				}
 				return runtimeView(existing), nil
 			}
@@ -159,6 +159,16 @@ func (a *App) RegisterRuntime(ctx context.Context, input view.RegisterEndpointIn
 		return view.EndpointView{}, err
 	}
 	return runtimeView(rt), nil
+}
+
+// requireSamePath 强制同名实例目录指向同一路径（端点身份原则）：
+// 否则会把新登记静默绑到另一个启动器安装的同名实例上。
+func requireSamePath(existing model.Runtime, gameDir string) error {
+	if !strings.EqualFold(filepath.Clean(existing.RootPath), filepath.Clean(gameDir)) {
+		return errs.NewDetail(endpoint.CodeIdentityMismatch,
+			"同名实例目录已登记为不同路径: "+existing.RootPath, existing.RuntimeID)
+	}
+	return nil
 }
 
 // GetRuntimeHealth 只读健康检查：游戏目录存在性 + 绑定指纹匹配。

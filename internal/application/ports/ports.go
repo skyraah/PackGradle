@@ -253,8 +253,19 @@ type RuntimeDiscovery interface {
 	DiscoverRuntimes(ctx context.Context) ([]RuntimeCandidate, error)
 }
 
-// InstancesDirError 是 RuntimeDiscovery 定位实例根目录失败的结构化错误：
-// DataDir 为尝试定位的 Prism 数据目录（application 映射 err.endpoint.instances_dir_not_found 的 args {0}）。
-type InstancesDirError struct{ DataDir string }
+// InstancesDirError 是 RuntimeDiscovery 定位/读取实例根目录失败的结构化错误：
+// DataDir 为尝试定位的 Prism 数据目录（application 映射 err.endpoint.instances_dir_not_found
+// 的 args {0}=path），Err 为底层原因（Unwrap 可达）。
+type InstancesDirError struct {
+	DataDir string
+	Err     error
+}
 
-func (e *InstancesDirError) Error() string { return "ports: Prism 实例根目录不可定位: " + e.DataDir }
+func (e *InstancesDirError) Error() string {
+	if e.Err != nil {
+		return "ports: Prism 实例根目录不可定位: " + e.DataDir + ": " + e.Err.Error()
+	}
+	return "ports: Prism 实例根目录不可定位: " + e.DataDir
+}
+
+func (e *InstancesDirError) Unwrap() error { return e.Err }

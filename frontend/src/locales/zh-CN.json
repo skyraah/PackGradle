@@ -468,7 +468,7 @@
   "err.endpoint.not_found": "未找到端点: {0}",
   "err.endpoint.invalid_path": "路径无法解析或不是有效的端点目录: {0}",
   "err.endpoint.missing": "端点路径不存在: {0}",
-  "err.endpoint.identity_mismatch": "端点身份不匹配，建议重新绑定: {0}",
+  "err.endpoint.identity_mismatch": "端点身份不匹配，建议重绑: {0}",
   "err.endpoint.discovery_failed": "无法在 {0} 中发现项目源",
   "err.endpoint.instances_dir_not_found": "无法定位 Prism 实例目录: {0}",
   "endpoints.colName": "名称",
@@ -502,10 +502,7 @@
   "endpoints.pathLabel": "端点路径",
   "endpoints.pathPlaceholder": "输入端点根目录路径",
   "endpoints.registerOk": "已登记端点「{0}」",
-  "endpoints.registerDuplicate": "该端点已登记，直接复用",
   "endpoints.checkBtn": "检查健康",
-  "endpoints.fingerprintMismatch": "绑定指纹不匹配：端点可能已被移动或重建，建议重新绑定",
-  "endpoints.adapterIdentity": "实例身份: {0}",
-  "endpoints.notFound": "未找到端点",
-  "endpoints.discoverFailed": "发现失败"
+  "endpoints.loading": "加载中…",
+  "endpoints.registeredBadge": "已登记"
 }

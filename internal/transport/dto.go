@@ -231,7 +231,8 @@ type PlanSummaryDTO struct {
 }
 
 // SyncPlanDTO 是计划投影（Status 反映读取时计算的 stale/expired）。
-type SyncPlanDTO struct {	SchemaVersion              int                          `json:"schema_version"`
+type SyncPlanDTO struct {
+	SchemaVersion              int                          `json:"schema_version"`
 	PlanID                     string                       `json:"plan_id"`
 	RelationID                 string                       `json:"relation_id"`
 	Kind                       string                       `json:"kind"`
