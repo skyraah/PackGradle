@@ -330,6 +330,8 @@ T11 执行落地（票 #21）：`model.SyncPlan.RequestedExactness`（json `requ
 | `diag.scan.unsupported` | {0}=path | runtime mods 目录中无法按 mod 观察的非 .jar 常规文件（T07，票 #17） |
 | `diag.scan.runtime_local` | {0}=path, {1}=resource_id | runtime 本地内容（项目包未包含），以低置信度本地身份观察（T07，票 #17） |
 
+T13 执行落地（票 #23）：locale 全量审计 + code→locale conformance test（`internal/errs/locale_conformance_test.go`，纳入 `task test`）。审计发现并补齐两处 P0 既有码缺键——`err.relation.rebind_required`（StartScan 端点指纹失配，{0}=relation_id）与 `err.relation.preparation_not_found`（CreateRelation 预检不存在，{0}=preparation_id）——及运行器动态构造的 `msg.task.<kind>.queued`（apply/restore/gc 三类，scan 既有）；删除无发射点的死键 `err.junction.link_occupied`。conformance test 三向校验：正向（遍历非测试 Go 源的 err.*/msg.* 码字面量，逐码比对 zh-CN.json 键，缺键即红）、反向（locale 的 err.* 键必须有 Go 发射点，死键即红；msg.* 含运行器动态构造故不做字面量反向检查，由任务矩阵覆盖）、任务矩阵（按 model `TaskKind` 常量校验 `msg.task.<kind>.queued` 与前端回退键 `workspaces.taskKind.<kind>`，新任务类型自动纳入）。约定：错误码必须以字面量出现于 Go 源（当前无动态拼接 err.* 码）；测试只比对键存在性，{0} 插值与 args 对应由本清单人工维护。
+
 ## 4. 硬约束落实对照
 
 | 硬约束 | 落实位置 |
