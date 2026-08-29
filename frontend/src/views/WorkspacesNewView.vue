@@ -4,6 +4,7 @@
 // 用户确认（CreateRelation）前不写入受管范围。
 import { computed, onMounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
+import { useRouter } from 'vue-router'
 import { ProjectService, RuntimeService, SyncService } from '../api'
 import type {
     EndpointDTO,
@@ -20,6 +21,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 
 const { t } = useI18n()
+const router = useRouter()
 
 const projects = ref<EndpointDTO[]>([])
 const runtimes = ref<EndpointDTO[]>([])
@@ -98,8 +100,7 @@ async function prepare() {
     }
 }
 
-// create 确认创建：成功即进入已建工作区（本票交付创建闭环；
-// 扫描与差异视图由 T07/T08 后续接入）
+// create 确认创建：成功即进入已建工作区（创建流交付后由事件管线驱动列表/状态刷新）
 async function create() {
     if (!prep.value) return
     creating.value = true
@@ -145,6 +146,9 @@ function checkVariant(c: PreparationCheckDTO): 'default' | 'destructive' | 'seco
                 </div>
                 <div class="flex items-center gap-2">
                     <Badge variant="outline">{{ created.policy_set }}</Badge>
+                    <Button size="sm" variant="outline" @click="router.push('/workspaces')">
+                        {{ t('workspacesNew.goList') }}
+                    </Button>
                 </div>
             </CardContent>
         </Card>

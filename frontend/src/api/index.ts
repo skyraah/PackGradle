@@ -90,7 +90,7 @@ export const SyncService: typeof RealSyncService = proxyService(
     {},
 ) as typeof RealSyncService
 
-// 端点管理页的类型出口（真实绑定模型）
+// 端点管理页与工作区页的类型出口（真实绑定模型）
 export type {
     EndpointDTO,
     ProjectCandidateDTO,
@@ -102,4 +102,12 @@ export type {
     PolicyDTO,
     MappingRuleDTO,
     RelationDTO,
+    WorkspaceDTO,
+    WorkspacePageDTO,
+    WorkspaceStateDTO,
+    WorkspaceFeaturesDTO,
+    ActionAvailabilityDTO,
+    TaskDTO,
+    TaskPageDTO,
+    SnapshotSummaryDTO,
 } from '../../bindings/packgradle/internal/transport/models'

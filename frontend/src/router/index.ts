@@ -59,13 +59,21 @@ const runtimes: RouteRecordRaw = {
     meta: { titleKey: 'nav.runtimes', icon: 'mdi-gamepad-variant-outline' },
 }
 
+// 新栈工作区页（shadcn-vue；契约 04 缓存骨架 + 列表页；导航 IA 见 docs/frontend/05 §4.1）
+const workspaces: RouteRecordRaw = {
+    path: '/workspaces',
+    name: 'workspaces',
+    component: () => import('../views/WorkspacesView.vue'),
+    meta: { titleKey: 'nav.workspaces', icon: 'mdi-view-grid-outline' },
+}
+
 // 新栈创建页（shadcn-vue；Prepare → Apply 建工作区，UX 原型 §7.2。
-// T08 建 /workspaces 列表页后由其「新建工作区」入口承接，导航项届时调整）
+// 列表页头部与空态的「新建工作区」入口承接本页，不再占用侧栏导航项）
 const workspacesNew: RouteRecordRaw = {
     path: '/workspaces/new',
     name: 'workspaces-new',
     component: () => import('../views/WorkspacesNewView.vue'),
-    meta: { titleKey: 'nav.workspacesNew', icon: 'mdi-plus-box-outline' },
+    meta: { titleKey: 'nav.workspacesNew' },
 }
 
 const settings: RouteRecordRaw = {
@@ -76,11 +84,11 @@ const settings: RouteRecordRaw = {
 }
 
 // 侧栏导航项（不含详情页等二级路由）
-export const navRoutes: RouteRecordRaw[] = [dashboard, projects, dev, instances, sources, runtimes, workspacesNew, settings]
+export const navRoutes: RouteRecordRaw[] = [workspaces, dashboard, projects, dev, instances, sources, runtimes, settings]
 
 const router = createRouter({
     history: createWebHashHistory(),
-    routes: [...navRoutes, projectDetail, { path: '/:pathMatch(.*)*', redirect: '/' }],
+    routes: [...navRoutes, projectDetail, workspacesNew, { path: '/:pathMatch(.*)*', redirect: '/' }],
     // 返回时恢复滚动位置（keep-alive 视图由组件自身状态保留）
     scrollBehavior(_to, _from, savedPosition) {
         return savedPosition ?? { top: 0 }
