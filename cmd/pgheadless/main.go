@@ -1,6 +1,11 @@
 // pgheadless 是新架构 P1 只读核心的 headless 验证入口：
 // 不启动 Wails，直接跑通 PrepareRelation → CreateRelation → StartScan → PrepareSync → GetPlan。
-// 用法：pgheadless -project <packwiz项目根> -instance <Prism实例目录> [-data <用户数据目录>]
+// 用法：pgheadless -project <packwiz项目根> -instance <Prism实例目录> [-data <用户数据目录>] [-resolve]
+//
+// -resolve（A 口径 headless 链路，验收规格 §1.1）：PrepareSync 后对 draft
+// 计划执行 ResolvePlan → GetPlan，补全规格要求的完整链路。冲突选择取固定
+// 策略（initialize_choice 取 project 侧优先、modify 类取 take_project）；
+// 不可裁决冲突（identity_ambiguous/mapping_collision）直接失败带证据。
 //
 // T14 性能基线：-metrics <file> 时输出分项 JSON（扫描四相耗时 + 本次扫描
 // hash cache 命中 delta，schema p1-perf-run/1），供 task acceptance:perf
@@ -32,6 +37,7 @@ func main() {
 	instanceDir := flag.String("instance", "", "Prism 实例目录（含 instance.cfg）")
 	dataRoot := flag.String("data", "", "用户数据目录（默认系统用户数据目录下 PackGradle）")
 	metricsPath := flag.String("metrics", "", "分项指标 JSON 输出路径（T14 性能基线，可选）")
+	resolve := flag.Bool("resolve", false, "PrepareSync 后执行 ResolvePlan → GetPlan（A 口径 headless 链路）")
 	flag.Parse()
 	if *projectRoot == "" || *instanceDir == "" {
 		flag.Usage()
@@ -97,7 +103,21 @@ func main() {
 	got, err := app.GetPlan(ctx, plan.PlanID)
 	fatalOn(err, "GetPlan")
 	dump("GetPlan", got)
-	fmt.Println("headless 全链路完成")
+
+	if *resolve {
+		resolved, err := app.ResolvePlan(ctx, view.ResolvePlanInput{
+			PlanID:      plan.PlanID,
+			Resolutions: defaultResolutions(plan.Conflicts),
+		})
+		fatalOn(err, "ResolvePlan")
+		dump("ResolvePlan", resolved)
+		final, err := app.GetPlan(ctx, resolved.PlanID)
+		fatalOn(err, "GetPlan(resolved)")
+		dump("GetPlan(resolved)", final)
+		fmt.Println("headless 全链路完成（含 ResolvePlan → GetPlan）")
+	} else {
+		fmt.Println("headless 链路完成（-resolve 未指定，止于 GetPlan）")
+	}
 
 	if *metricsPath != "" {
 		writeMetrics(*metricsPath, metricsRecord{
@@ -160,6 +180,29 @@ func ensureRelation(ctx context.Context, app syncapp.Application, projectRoot, i
 // sameDir 容忍盘符大小写与路径分隔符差异的目录相等比较（Windows）。
 func sameDir(a, b string) bool {
 	return strings.EqualFold(filepath.ToSlash(filepath.Clean(a)), filepath.ToSlash(filepath.Clean(b)))
+}
+
+// defaultResolutions 为 draft 计划的全部冲突生成固定策略选择：
+// initialize_choice 优先 project 侧（packwiz 是事实源）、modify 类取
+// take_project。identity_ambiguous/mapping_collision 不可经 Resolution
+// 裁决（plan.validChoice 拒绝），出现即 fatal 带证据。
+func defaultResolutions(conflicts []model.Conflict) []model.Resolution {
+	res := make([]model.Resolution, 0, len(conflicts))
+	for _, c := range conflicts {
+		switch c.Kind {
+		case model.ConflictInitialize:
+			choice := model.ChoiceInitializeFromRuntime
+			if c.Project != nil {
+				choice = model.ChoiceInitializeFromProject
+			}
+			res = append(res, model.Resolution{ResourceID: c.ResourceID, Choice: choice})
+		case model.ConflictModifyModify, model.ConflictDeleteModify:
+			res = append(res, model.Resolution{ResourceID: c.ResourceID, Choice: model.ChoiceTakeProject})
+		default:
+			log.Fatalf("不可裁决冲突 %s（kind=%s, detail=%s）", c.ResourceID, c.Kind, c.Detail)
+		}
+	}
+	return res
 }
 
 // lastScanTiming 经非导出能力读取扫描分相耗时（不入 transport 契约）。

@@ -2,7 +2,7 @@
 //
 // 生成（单命令可重放；产物不入 git，内容由 seed 确定性派生）：
 //
-//	pgfixture -out <目录> [-seed N]
+//	pgfixture -out <目录> [-seed N] [-mods N] [-text-files N]
 //
 // 评估（读 pgheadless -metrics 产出的两份记录，校验冷/热/命中率门槛，
 // 全过退出码 0，任一超标退出码 1）：
@@ -31,6 +31,8 @@ const (
 func main() {
 	out := flag.String("out", "", "fixture 生成目标目录（-eval 未指定时必填）")
 	seed := flag.Int64("seed", 20260830, "全局确定性种子")
+	mods := flag.Int("mods", 0, "mod 数量（0 取生产规模默认值；acceptance:headless 用小规模）")
+	textFiles := flag.Int("text-files", 0, "config/kubejs/scripts 文件数量（0 取生产规模默认值）")
 	eval := flag.String("eval", "", "评估模式：逗号分隔的 cold,warm 两份 metrics JSON 路径")
 	flag.Parse()
 
@@ -38,16 +40,18 @@ func main() {
 	case *eval != "":
 		os.Exit(runEval(*eval))
 	default:
-		runGenerate(*out, *seed)
+		runGenerate(*out, *mods, *textFiles, *seed)
 	}
 }
 
-func runGenerate(out string, seed int64) {
+func runGenerate(out string, mods, textFiles int, seed int64) {
 	if out == "" {
 		flag.Usage()
 		os.Exit(2)
 	}
-	res, err := perffixture.Generate(context.Background(), perffixture.Options{OutDir: out, Seed: seed})
+	res, err := perffixture.Generate(context.Background(), perffixture.Options{
+		OutDir: out, Seed: seed, Mods: mods, TextFiles: textFiles,
+	})
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "生成失败:", err)
 		os.Exit(1)

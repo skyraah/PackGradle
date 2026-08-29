@@ -16,6 +16,8 @@
 | `task build:docker` | 构建服务器模式 Docker 镜像 |
 | `task run:docker` | 构建并运行镜像（宿主机端口默认 8080） |
 | `task setup:docker` | 构建交叉编译用 Docker 镜像 `wails-cross` |
+| `task test` / `test:vet` / `test:race` | 验收 L0：全量测试 / `go vet` / `-race` 硬门槛（需 mingw-w64 gcc） |
+| `task acceptance:headless` / `acceptance:perf` | 验收 L0：headless 全链路两遍（全新数据目录）/ 性能基线冷热扫描与门槛评估（见 [验收规格](../acceptance/p1-acceptance-spec.md) §1.1） |
 
 > 平台范围说明：Taskfile 模板虽含 darwin/linux/ios/android 任务，但当前后端
 > `internal/envutil`、`junction`、`links.go` 为 Windows 专属实现，实际构建仅 Windows

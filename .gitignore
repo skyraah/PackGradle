@@ -24,3 +24,5 @@ build/android/build/
 *.gz
 # P1 性能基线（acceptance:perf）产物：fixture 与用户数据目录不入 git
 build/perf/
+# A 口径 headless 链路（acceptance:headless）产物：fixture 与用户数据目录不入 git
+build/headless/

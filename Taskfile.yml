@@ -80,6 +80,19 @@ tasks:
     cmds:
       - go test -race ./...
 
+  # A 口径 headless 链路验收（验收规格 §1.1；票 #25）：小规模确定性 fixture +
+  # 全新用户数据目录跑 Register → Scan → Snapshot → PrepareSync → ResolvePlan
+  # → GetPlan 全链路（-resolve）；第二遍同目录重跑验证可重复执行（复用
+  # Relation 路径）。任一步失败退出码非 0。
+  acceptance:headless:
+    summary: Runs the pgheadless full chain (Register → Scan → Snapshot → PrepareSync → ResolvePlan → GetPlan) on a fresh data dir, twice (acceptance L0)
+    cmds:
+      - go build -o bin/pgheadless.exe ./cmd/pgheadless
+      - go run ./cmd/pgfixture -out build/headless/fixture -mods 6 -text-files 12
+      - rm -rf build/headless/data
+      - bin/pgheadless.exe -project build/headless/fixture/project -instance build/headless/fixture/instance -data build/headless/data -resolve
+      - bin/pgheadless.exe -project build/headless/fixture/project -instance build/headless/fixture/instance -data build/headless/data -resolve
+
   # 性能基线（验收规格 §2；票 #24）：3,000 资源确定性 fixture（产物入 build/perf，
   # 不入 git）→ 冷扫描（全新数据目录）→ 热扫描（同目录紧接二次）→ 门槛评估
   #（冷 ≤10s / 热 ≤2s / 热命中率 ≥95%，任一超标退出码 1）。
