@@ -302,3 +302,26 @@ type UpdateMappingPolicyInput struct {
 	ExpectedRevision int                 `json:"expected_revision"`
 	Rules            []model.MappingRule `json:"rules"`
 }
+
+// PrepareRebindInput 是重绑预检输入（契约 03 §2.4；一次只重绑一侧）。
+type PrepareRebindInput struct {
+	RelationID string `json:"relation_id"`
+	Side       string `json:"side"`      // project|runtime
+	RootPath   string `json:"root_path"` // 新端点根路径（project: pack.toml 所在目录；runtime: Prism 实例目录）
+}
+
+// RebindPreparationView 是 PrepareRebind 结果（契约 03 §2.4）。NewEndpoint 与
+// OldEndpoint 共享同一端点 ID：ApplyRebind 原位更新该端点行的绑定。
+type RebindPreparationView struct {
+	SchemaVersion        int                    `json:"schema_version"`
+	PreparationID        string                 `json:"preparation_id"`
+	CreatedAt            string                 `json:"created_at"`
+	ExpiresAt            string                 `json:"expires_at"`
+	Side                 string                 `json:"side"`
+	Checks               []PreparationCheckView `json:"checks"`
+	OldEndpoint          EndpointView           `json:"old_endpoint"`
+	NewEndpoint          EndpointView           `json:"new_endpoint"`
+	FingerprintChanged   bool                   `json:"fingerprint_changed"`
+	BaselineInheritance  string                 `json:"baseline_inheritance"` // inherit|reinitialize
+	InvalidatedPlanCount int                    `json:"invalidated_plan_count"`
+}

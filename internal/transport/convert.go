@@ -103,6 +103,24 @@ func relationDTO(v view.RelationView) RelationDTO {
 	}
 }
 
+// rebindPreparationDTO 是重绑预检投影转换（契约 03 §2.4；票 #22）。
+func rebindPreparationDTO(v view.RebindPreparationView) RebindPreparationDTO {
+	checks := make([]PreparationCheckDTO, 0, len(v.Checks))
+	for _, c := range v.Checks {
+		checks = append(checks, PreparationCheckDTO{
+			Code: c.Code, Passed: c.Passed, Severity: c.Severity, Args: strs(c.Args), Detail: c.Detail,
+		})
+	}
+	return RebindPreparationDTO{
+		SchemaVersion: v.SchemaVersion, PreparationID: v.PreparationID,
+		CreatedAt: v.CreatedAt, ExpiresAt: v.ExpiresAt, Side: v.Side,
+		Checks: checks,
+		OldEndpoint: endpointDTO(v.OldEndpoint), NewEndpoint: endpointDTO(v.NewEndpoint),
+		FingerprintChanged: v.FingerprintChanged, BaselineInheritance: v.BaselineInheritance,
+		InvalidatedPlanCount: v.InvalidatedPlanCount,
+	}
+}
+
 func workspaceDTO(v view.WorkspaceView) WorkspaceDTO {
 	out := WorkspaceDTO{
 		SchemaVersion: v.SchemaVersion,

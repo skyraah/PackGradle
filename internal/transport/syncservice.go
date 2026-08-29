@@ -225,6 +225,28 @@ func (s *SyncService) UpdateMappingPolicy(input UpdateMappingPolicyDTO) (PolicyD
 	return policyViewDTO(v), nil
 }
 
+// PrepareRebind 执行重绑预检（契约 03 §2.4；票 #22）。
+func (s *SyncService) PrepareRebind(input PrepareRebindDTO) (RebindPreparationDTO, error) {
+	v, err := s.app.PrepareRebind(context.Background(), view.PrepareRebindInput{
+		RelationID: input.RelationID,
+		Side:       input.Side,
+		RootPath:   input.RootPath,
+	})
+	if err != nil {
+		return RebindPreparationDTO{}, err
+	}
+	return rebindPreparationDTO(v), nil
+}
+
+// ApplyRebind 消费重绑预检并原位更新端点绑定（ADR-0003 单事务；恒 reinitialize）。
+func (s *SyncService) ApplyRebind(preparationID string) (RelationDTO, error) {
+	v, err := s.app.ApplyRebind(context.Background(), preparationID)
+	if err != nil {
+		return RelationDTO{}, err
+	}
+	return relationDTO(v), nil
+}
+
 func pageRequest(cursor string, limit int) ports.PageRequest {
 	return ports.PageRequest{Cursor: cursor, Limit: limit}
 }

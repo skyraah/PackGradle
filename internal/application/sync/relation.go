@@ -228,14 +228,8 @@ func (a *App) CreateRelation(ctx context.Context, preparationID string) (view.Re
 			}
 		}
 		// 预检结果冻结于 prep；blocking 未通过 → 回滚消费（预检保持可重试）。
-		for _, c := range prep.Checks {
-			if c.Severity == "blocking" && !c.Passed {
-				args := make([]any, len(c.Args))
-				for i, a := range c.Args {
-					args[i] = a
-				}
-				return errs.NewDetail(CodeRelationInvalidEndpoint, "预检未通过: "+c.Code, args...)
-			}
+		if err := blockingCheckFailure(prep.Checks); err != nil {
+			return err
 		}
 
 		project := *prep.Project
@@ -312,6 +306,22 @@ func (a *App) CreateRelation(ctx context.Context, preparationID string) (view.Re
 	// 事务已提交（事件发布恒在提交之后；创建流当前无事件，规则在此落锚——
 	// 后续在本流程加事件必须保持在 RunInTx 返回成功之后）。
 	return result, nil
+}
+
+// blockingCheckFailure 返回预检中首个未通过 blocking 检查项的结构化错误；全部
+// 通过返回 nil。CreateRelation/ApplyRebind 共用：预检结果冻结于 preparation，
+// Apply 侧复核失败即拒绝并回滚消费（预检保持可重试）。
+func blockingCheckFailure(checks []model.PreparationCheck) error {
+	for _, c := range checks {
+		if c.Severity == "blocking" && !c.Passed {
+			args := make([]any, len(c.Args))
+			for i, a := range c.Args {
+				args[i] = a
+			}
+			return errs.NewDetail(CodeRelationInvalidEndpoint, "预检未通过: "+c.Code, args...)
+		}
+	}
+	return nil
 }
 
 func pathExists(p string) bool {

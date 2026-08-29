@@ -141,6 +141,44 @@ FROM runtimes WHERE adapter=? AND adapter_identity=?`, adapter, adapterIdentity)
 	return rt, true, nil
 }
 
+// UpdateProject 原位更新项目端点绑定（重绑 Apply，契约 03 §2.4）：端点 ID 与
+// 登记时间不变，root_path/display_name/binding_fingerprint 随新位置更新。
+// 不存在返回 ErrNotFound；新 root_path 撞其他项目行（UNIQUE(adapter, root_path)）
+// 返回 ErrDuplicate。
+func (r *EndpointRepository) UpdateProject(ctx context.Context, p model.Project) error {
+	return r.updateEndpoint("Project", p.ProjectID, func() (sql.Result, error) {
+		return r.db.ExecContext(ctx, `
+UPDATE projects SET display_name=?, root_path=?, binding_fingerprint=? WHERE id=?`,
+			p.DisplayName, p.RootPath, p.BindingFingerprint, p.ProjectID)
+	})
+}
+
+// UpdateRuntime 原位更新运行实例绑定（重绑 Apply）：实例目录迁移时 adapter_identity
+// （= 实例目录名）与 display_name 同步更新，保持「identity 即实例目录名」不变量。
+// 错误语义同 UpdateProject（UNIQUE(adapter, adapter_identity)）。
+func (r *EndpointRepository) UpdateRuntime(ctx context.Context, rt model.Runtime) error {
+	return r.updateEndpoint("Runtime", rt.RuntimeID, func() (sql.Result, error) {
+		return r.db.ExecContext(ctx, `
+UPDATE runtimes SET display_name=?, root_path=?, adapter_identity=?, binding_fingerprint=? WHERE id=?`,
+			rt.DisplayName, rt.RootPath, rt.AdapterIdentity, rt.BindingFingerprint, rt.RuntimeID)
+	})
+}
+
+// updateEndpoint 收敛 UpdateProject/UpdateRuntime 的错误映射。
+func (r *EndpointRepository) updateEndpoint(what, id string, exec func() (sql.Result, error)) error {
+	res, err := exec()
+	if err != nil {
+		if isUniqueViolation(err) {
+			return fmt.Errorf("sqlite: 更新 %s %s 绑定: %w", what, id, ErrDuplicate)
+		}
+		return fmt.Errorf("sqlite: 更新 %s %s 绑定: %w", what, id, err)
+	}
+	if n, err := res.RowsAffected(); err == nil && n == 0 {
+		return fmt.Errorf("sqlite: 更新 %s %s 绑定: %w", what, id, ErrNotFound)
+	}
+	return nil
+}
+
 // ListRuntimes 返回全部已登记运行实例（display_name 升序；/runtimes 页列表）。
 func (r *EndpointRepository) ListRuntimes(ctx context.Context) ([]model.Runtime, error) {
 	rows, err := r.db.QueryContext(ctx, `

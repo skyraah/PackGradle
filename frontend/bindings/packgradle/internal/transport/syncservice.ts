@@ -16,6 +16,13 @@ import { Call as $Call, CancellablePromise as $CancellablePromise } from "@wails
 import * as $models from "./models.js";
 
 /**
+ * ApplyRebind 消费重绑预检并原位更新端点绑定（ADR-0003 单事务；恒 reinitialize）。
+ */
+export function ApplyRebind(preparationID: string): $CancellablePromise<$models.RelationDTO> {
+    return $Call.ByID(2617810235, preparationID);
+}
+
+/**
  * CancelTask 取消任务。
  */
 export function CancelTask(taskID: string): $CancellablePromise<void> {
@@ -101,6 +108,13 @@ export function ListTasks(relationID: string, active: boolean, cursor: string, l
  */
 export function ListWorkspaces(cursor: string, limit: number): $CancellablePromise<$models.WorkspacePageDTO> {
     return $Call.ByID(181626509, cursor, limit);
+}
+
+/**
+ * PrepareRebind 执行重绑预检（契约 03 §2.4；票 #22）。
+ */
+export function PrepareRebind(input: $models.PrepareRebindDTO): $CancellablePromise<$models.RebindPreparationDTO> {
+    return $Call.ByID(3483894384, input);
 }
 
 /**

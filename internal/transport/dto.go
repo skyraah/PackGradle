@@ -349,6 +349,29 @@ type UpdateMappingPolicyDTO struct {
 	Rules            []MappingRuleDTO `json:"rules"`
 }
 
+// PrepareRebindDTO 是重绑预检输入（契约 03 §2.4；一次只重绑一侧）。
+type PrepareRebindDTO struct {
+	RelationID string `json:"relation_id"`
+	Side       string `json:"side"`      // project|runtime
+	RootPath   string `json:"root_path"` // 新端点根路径（project: pack.toml 所在目录；runtime: Prism 实例目录）
+}
+
+// RebindPreparationDTO 是 PrepareRebind 结果（契约 03 §2.4）。new_endpoint 与
+// old_endpoint 共享同一端点 ID：ApplyRebind 原位更新该端点行的绑定。
+type RebindPreparationDTO struct {
+	SchemaVersion        int                   `json:"schema_version"`
+	PreparationID        string                `json:"preparation_id"`
+	CreatedAt            string                `json:"created_at"`
+	ExpiresAt            string                `json:"expires_at"`
+	Side                 string                `json:"side"`
+	Checks               []PreparationCheckDTO `json:"checks"`
+	OldEndpoint          EndpointDTO           `json:"old_endpoint"`
+	NewEndpoint          EndpointDTO           `json:"new_endpoint"`
+	FingerprintChanged   bool                  `json:"fingerprint_changed"`
+	BaselineInheritance  string                `json:"baseline_inheritance"` // inherit|reinitialize
+	InvalidatedPlanCount int                   `json:"invalidated_plan_count"`
+}
+
 // GetChangesDTO 是资源级 Changes 查询输入（契约 03 §2.2；读时计算，快照对缺省
 // 取两侧最新）。分页按 resource_id 字节序，cursor 为上一页最后一条 resource_id。
 type GetChangesDTO struct {

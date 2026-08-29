@@ -26,8 +26,8 @@
 | 资源级 Changes | `GetChanges(ctx, GetChangesInput) (view.ChangesPage, error)` | `GetChanges(input GetChangesDTO) (ChangesPageDTO, error)` | **新增**（T09 执行落地，票 #19：`internal/application/sync/changes.go` + `/workspaces/:id/changes` 页） |
 | Mapping 读 | `GetMappingPolicy(ctx, relationID) (view.PolicyView, error)` | `GetMappingPolicy(relationID string) (PolicyDTO, error)` | **新增**（T10 执行落地，票 #20：`internal/application/sync/mapping.go` + `/workspaces/:id/mappings` 页） |
 | Mapping 写 | `UpdateMappingPolicy(ctx, UpdateMappingPolicyInput) (view.PolicyView, error)` | `UpdateMappingPolicy(input UpdateMappingPolicyDTO) (PolicyDTO, error)` | **新增**（T10 执行落地，票 #20：同上；乐观锁 + 编译校验 + 修订号同事务） |
-| Rebind 预检 | `PrepareRebind(ctx, PrepareRebindInput) (view.RebindPreparationView, error)` | `PrepareRebind(input PrepareRebindDTO) (RebindPreparationDTO, error)` | **新增**（架构 §4.4 已定签名） |
-| Rebind 执行 | `ApplyRebind(ctx, preparationID) (view.RelationView, error)` | `ApplyRebind(preparationID string) (RelationDTO, error)` | **新增**（架构 §4.4 已定签名） |
+| Rebind 预检 | `PrepareRebind(ctx, PrepareRebindInput) (view.RebindPreparationView, error)` | `PrepareRebind(input PrepareRebindDTO) (RebindPreparationDTO, error)` | **新增**（T12 执行落地，票 #22：`internal/application/sync/rebind.go` + `/workspaces/:id/rebind` 页） |
+| Rebind 执行 | `ApplyRebind(ctx, preparationID) (view.RelationView, error)` | `ApplyRebind(preparationID string) (RelationDTO, error)` | **新增**（T12 执行落地，票 #22：ADR-0003 单事务，恒 reinitialize 不继承基线） |
 | Project 发现 | `DiscoverProjects(ctx, parentDir) ([]view.ProjectCandidateView, error)` | `ProjectService.DiscoverProjects(parentDir string) ([]ProjectCandidateDTO, error)` | **新增** |
 | Project 登记 | `RegisterProject(ctx, RegisterEndpointInput) (view.EndpointView, error)` | `ProjectService.RegisterProject(input RegisterEndpointDTO) (EndpointDTO, error)` | **新增** |
 | Project 健康 | `GetProjectHealth(ctx, endpointID) (view.EndpointHealthView, error)` | `ProjectService.GetProjectHealth(endpointID string) (EndpointHealthDTO, error)` | **新增** |
@@ -220,6 +220,8 @@ type RebindPreparationDTO struct {
 - `baseline_inheritance`：P1 恒为 `reinitialize`——ApplyRebind 后 `baseline_state="none"`、`diff_state="initialization_required"`，直到完整扫描证明新旧端点逻辑等价（等价证明与继承机制留 Phase 2）。字段保留 `inherit` 取值空间供 Phase 2。
 - ApplyRebind：消费 preparation、更新端点与 fingerprint、`health="healthy"`、发布 `relation_invalidated` 事件。
 
+T12 执行落地（票 #22）：`PrepareRebind` 复用 PrepareRelation 的路径规范化管线与检查项形态（`check.endpoint.readable` / `check.endpoint.binding` / `check.path.containment` / `check.pair.duplicate` blocking + `check.legacy.materialization` warning 识别不覆盖），runtime 侧输入为 Prism 实例目录（游戏目录 = `<实例>/minecraft`，identity = 实例目录名）；`fingerprint_changed` 为新旧指纹对比（不设检查行）；`invalidated_plan_count` 取该关系下 draft/resolved 计划数（`PlanRepository.CountByRelation` 新增）。占用判定：新端点绑定身份（project=指纹 / runtime=实例目录名）被其他端点行持有即拒绝（`err.relation.duplicate_pair`）——端点行 UNIQUE 约束（projects UNIQUE(adapter, root_path)、runtimes UNIQUE(adapter, adapter_identity)）使原位更新撞行时物理不可行，且重复指纹/身份会让幂等登记歧义；「重复 pair」是其真子集。`ApplyRebind` 按 ADR-0003 单事务 doctrine：消费 preparation（拆码 `rebind_prep_expired`/`rebind_prep_consumed`）→ blocking 复核 → 占用复核（预检到应用之间登记可能变化）→ `UpdateProject`/`UpdateRuntime` 原位更新绑定（端点 ID 不变，runtime 侧 identity/display_name 随实例目录同步，ports 只增两方法）→ `health=healthy` → 清除 `head_baseline_id`（reinitialize，不继承）；修订号不动（ADR-0002 决议 2），旧 plan 失效由 GetPlan 读取时 `expected_bindings` 与当前端点指纹的比对投影为 stale（本票补齐该校验；revision 失配校验不变）。事件发布恒在事务提交之后。存储：v4 迁移新增 `rebind_preparations` 表（side/baseline_inheritance CHECK + relation 外键，无既有数据回填）。前端 `/workspaces/:id/rebind` 页（shadcn-vue，UX 原型 §7.6）：左栏当前登记 / 右栏候选端点（侧别切换 + 新路径 + 目录选择器）+ 预检区（检查项表、指纹变化徽标、将失效计划计数、reinitialize 说明），主操作「确认重新绑定」只在预检有效时出现，执行中锁定提交区，成功进入变化页，失败保留候选端点与预检证据；入口在工作区列表行（availability 驱动，`utils/plans.canRebind`）与变化页头部（health=rebind_required，UX 原型 C-06）。
+
 ### 2.5 端点发现 / 登记 / 健康
 
 ```go
@@ -315,6 +317,7 @@ T11 执行落地（票 #21）：`model.SyncPlan.RequestedExactness`（json `requ
 | `diag.mapping.collision` | {0}=rule_a, {1}=rule_b（证据另含命中路径 relative_path） | 扫描期多规则无法唯一决议，路径从观察剔除（诊断，非 err.*；随 Snapshot/Plan/DTO 透出，见 §2.3） |
 | `err.relation.rebind_prep_not_found` | {0}=preparation_id | 重绑预检不存在 |
 | `err.relation.rebind_prep_expired` | {0}=preparation_id | 重绑预检过期 |
+| `err.relation.rebind_prep_consumed` | {0}=preparation_id | 重绑预检已被应用（引导刷新，工作区可能已重绑——双击/双窗口；ADR-0003 决议 4 拆码在重绑流的同款场景，T12，票 #22） |
 | `err.relation.rebind_invalid_side` | {0}=side | side 非 project/runtime |
 | `err.relation.prep_expired` | {0}=preparation_id | 创建预检已过期（引导重新预检；ADR-0003 决议 4） |
 | `err.relation.prep_consumed` | {0}=preparation_id | 创建预检已被消费（引导刷新，关系可能已建成——双击/双窗口；ADR-0003 决议 4） |

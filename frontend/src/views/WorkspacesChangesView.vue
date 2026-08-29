@@ -117,6 +117,11 @@ watch(relationID, reload, { immediate: true })
 const preparing = ref(false)
 const canPrepareSyncNow = computed(() => canPrepareSync(wsRow.value))
 
+// —— 重新绑定入口（T12 重绑页承接，UX 原型 C-06）：关系健康为 rebind_required 时在
+// 变化页头部提供入口。导航不做可用性门控（预检/应用在重绑页完成），绑定失效时
+// 用户总能到达重绑定页查看证据 ——
+const rebindRequired = computed(() => wsRow.value?.relation.health === 'rebind_required')
+
 async function prepareSyncPlan(): Promise<void> {
     const ws = wsRow.value
     if (!ws || preparing.value) return
@@ -229,6 +234,9 @@ const kindOptions = ['mod', 'text_file', 'binary_file']
                 </p>
             </div>
             <div class="flex shrink-0 gap-2">
+                <Button v-if="rebindRequired" variant="outline" size="sm" @click="router.push('/workspaces/' + relationID + '/rebind')">
+                    {{ t('changes.rebindAction') }}
+                </Button>
                 <Button v-if="canPrepareSyncNow" variant="outline" size="sm" :disabled="preparing" @click="prepareSyncPlan">
                     {{ t('changes.planAction') }}
                 </Button>

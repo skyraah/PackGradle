@@ -1,6 +1,8 @@
 package sync
 
 import (
+	"path/filepath"
+
 	"packgradle/internal/application/view"
 	"packgradle/internal/core/model"
 )
@@ -11,25 +13,37 @@ func relationView(rel model.Relation, proj model.Project, rt model.Runtime) view
 	return view.RelationView{
 		SchemaVersion: rel.SchemaVersion,
 		RelationID:    rel.RelationID,
-		Project: view.EndpointView{
-			ID:                 proj.ProjectID,
-			Adapter:            proj.Adapter,
-			DisplayName:        proj.DisplayName,
-			RootPath:           proj.RootPath,
-			BindingFingerprint: proj.BindingFingerprint,
-		},
-		Runtime: view.EndpointView{
-			ID:                 rt.RuntimeID,
-			Adapter:            rt.Adapter,
-			DisplayName:        rt.DisplayName,
-			RootPath:           rt.RootPath,
-			AdapterIdentity:    rt.AdapterIdentity,
-			BindingFingerprint: rt.BindingFingerprint,
-		},
-		PolicySet: rel.PolicySet,
-		Revision:  rel.Revision,
-		Health:    string(rel.Health),
-		CreatedAt: rel.CreatedAt,
+		Project:       projectEndpointView(proj),
+		Runtime:       runtimeEndpointView(rt),
+		PolicySet:     rel.PolicySet,
+		Revision:      rel.Revision,
+		Health:        string(rel.Health),
+		CreatedAt:     rel.CreatedAt,
+	}
+}
+
+// projectEndpointView 是项目端点投影。
+func projectEndpointView(p model.Project) view.EndpointView {
+	return view.EndpointView{
+		ID:                 p.ProjectID,
+		Adapter:            p.Adapter,
+		DisplayName:        p.DisplayName,
+		RootPath:           p.RootPath,
+		BindingFingerprint: p.BindingFingerprint,
+	}
+}
+
+// runtimeEndpointView 是运行实例投影。InstanceDir 是登记输入来源（游戏目录父目录，
+// 登记不变量 gameDir=<实例>/minecraft；重绑候选输入的取值来源）。
+func runtimeEndpointView(rt model.Runtime) view.EndpointView {
+	return view.EndpointView{
+		ID:                 rt.RuntimeID,
+		Adapter:            rt.Adapter,
+		DisplayName:        rt.DisplayName,
+		RootPath:           rt.RootPath,
+		AdapterIdentity:    rt.AdapterIdentity,
+		BindingFingerprint: rt.BindingFingerprint,
+		InstanceDir:        filepath.Dir(rt.RootPath),
 	}
 }
 

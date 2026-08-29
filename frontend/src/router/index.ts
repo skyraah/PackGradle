@@ -104,6 +104,16 @@ const workspacesPlan: RouteRecordRaw = {
     meta: { titleKey: 'nav.workspacesPlan' },
 }
 
+// 新栈工作区详情：重新绑定页（shadcn-vue；PrepareRebind/ApplyRebind 重绑闭环，
+// UX 原型 §7.6，票 #22。入口在工作区列表行操作与变化页头部（rebind_required），
+// 不占侧栏导航项）
+const workspacesRebind: RouteRecordRaw = {
+    path: '/workspaces/:id/rebind',
+    name: 'workspaces-rebind',
+    component: () => import('../views/WorkspacesRebindView.vue'),
+    meta: { titleKey: 'nav.workspacesRebind' },
+}
+
 const settings: RouteRecordRaw = {
     path: '/settings',
     name: 'settings',
@@ -116,7 +126,7 @@ export const navRoutes: RouteRecordRaw[] = [workspaces, dashboard, projects, dev
 
 const router = createRouter({
     history: createWebHashHistory(),
-    routes: [...navRoutes, projectDetail, workspacesNew, workspacesChanges, workspacesMappings, workspacesPlan, { path: '/:pathMatch(.*)*', redirect: '/' }],
+    routes: [...navRoutes, projectDetail, workspacesNew, workspacesChanges, workspacesMappings, workspacesPlan, workspacesRebind, { path: '/:pathMatch(.*)*', redirect: '/' }],
     // 返回时恢复滚动位置（keep-alive 视图由组件自身状态保留）
     scrollBehavior(_to, _from, savedPosition) {
         return savedPosition ?? { top: 0 }

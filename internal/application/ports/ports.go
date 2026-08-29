@@ -66,6 +66,13 @@ type EndpointRepository interface {
 	FindRuntimeByIdentity(ctx context.Context, adapter, adapterIdentity string) (model.Runtime, bool, error)
 	// ListRuntimes 返回全部已登记运行实例（display_name 升序）。
 	ListRuntimes(ctx context.Context) ([]model.Runtime, error)
+	// UpdateProject 原位更新项目端点绑定（重绑 Apply，契约 03 §2.4）：
+	// root_path/display_name/binding_fingerprint 随新位置更新，端点 ID 不变。
+	// 不存在返回 ErrNotFound；新 root_path 与其他项目行冲突返回 ErrDuplicate。
+	UpdateProject(ctx context.Context, p model.Project) error
+	// UpdateRuntime 原位更新运行实例绑定（重绑 Apply）：root_path/adapter_identity/
+	// display_name/binding_fingerprint 随新位置更新，端点 ID 不变。错误语义同 UpdateProject。
+	UpdateRuntime(ctx context.Context, r model.Runtime) error
 }
 
 // RelationRepository 管理 Relation 聚合根。
@@ -76,6 +83,9 @@ type RelationRepository interface {
 	UpdateHealth(ctx context.Context, id string, health model.RelationHealth) error
 	IncrementRevision(ctx context.Context, id string) (int, error)
 	PairExists(ctx context.Context, projectID, runtimeID string) (bool, error)
+	// UpdateHeadBaseline 设置/清除关系基线引用（空串清除）。重绑 Apply 用它重置基线
+	// （契约 03 §2.4：P1 恒 reinitialize，不继承）；Phase 2 Apply 产生基线时复用写入。
+	UpdateHeadBaseline(ctx context.Context, id, baselineID string) error
 }
 
 // SnapshotRepository 持久化不可变观察快照。
@@ -98,6 +108,9 @@ type BaselineRepository interface {
 type PlanRepository interface {
 	Insert(ctx context.Context, p model.SyncPlan) error // 同事务展开 conflicts 行
 	Get(ctx context.Context, id string) (model.SyncPlan, error)
+	// CountByRelation 统计关系下仍可推进（draft/resolved）的计划数——重绑预检的
+	// invalidated_plan_count 数据源（这些计划将因绑定指纹失配投影为 stale）。
+	CountByRelation(ctx context.Context, relationID string) (int, error)
 }
 
 // TaskRepository 持久化任务（长操作事实源）。
@@ -131,6 +144,12 @@ type PreparationRepository interface {
 	Get(ctx context.Context, id string) (model.RelationPreparation, error)
 	// MarkConsumed 消费预检；过期或已消费返回相应语义错误。
 	MarkConsumed(ctx context.Context, id string) error
+	// InsertRebind 持久化重绑预检（rebind_preparations 表，Prepare/Apply 两段式）。
+	InsertRebind(ctx context.Context, p model.RebindPreparation) error
+	// GetRebind 按 id 读取重绑预检；不存在返回 ErrNotFound。
+	GetRebind(ctx context.Context, id string) (model.RebindPreparation, error)
+	// MarkRebindConsumed 消费重绑预检；过期或已消费返回相应语义错误（ADR-0003 决议 4 拆码）。
+	MarkRebindConsumed(ctx context.Context, id string) error
 }
 
 // HashCacheKey 是可丢弃扫描缓存的键：仅 (root fingerprint, path, size, mtime, filekey)

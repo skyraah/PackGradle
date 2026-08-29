@@ -72,6 +72,19 @@ INSERT INTO conflicts(plan_id, resource_id, conflict_kind, detail) VALUES(?,?,?,
 	})
 }
 
+// CountByRelation 统计关系下仍可推进（draft/resolved）的计划数
+// （重绑预检的 invalidated_plan_count 数据源；expired/已消费状态不算）。
+func (r *PlanRepository) CountByRelation(ctx context.Context, relationID string) (int, error) {
+	var n int
+	err := r.db.QueryRowContext(ctx,
+		"SELECT COUNT(*) FROM sync_plans WHERE relation_id=? AND status IN ('draft','resolved')",
+		relationID).Scan(&n)
+	if err != nil {
+		return 0, fmt.Errorf("sqlite: 统计 Relation %s 计划数: %w", relationID, err)
+	}
+	return n, nil
+}
+
 // Get 按 id 读取计划；plan_json 反序列化为权威数据；不存在返回 ErrNotFound。
 func (r *PlanRepository) Get(ctx context.Context, id string) (model.SyncPlan, error) {
 	var planJSON string

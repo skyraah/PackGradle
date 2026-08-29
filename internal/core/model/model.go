@@ -233,6 +233,38 @@ type RelationPreparation struct {
 	Checks        []PreparationCheck   `json:"checks"`
 }
 
+// BaselineInheritance 是重绑的基线继承语义（契约 03 §2.4）。P1 恒 reinitialize；
+// inherit（等价证明后继承基线）留 Phase 2。
+const (
+	BaselineInheritanceInherit      = "inherit"
+	BaselineInheritanceReinitialize = "reinitialize"
+)
+
+// RebindPreparation 是 PrepareRebind 持久化的重绑预检结果（一次只重绑一侧）；
+// ApplyRebind 只接受其 ID，端点行由 Apply 原位更新（NewProject/NewRuntime 携带
+// 旧端点 ID，作为将被写入的绑定草稿）。
+type RebindPreparation struct {
+	SchemaVersion int                `json:"schema_version"`
+	PreparationID string             `json:"preparation_id"` // prep_ 前缀
+	RelationID    string             `json:"relation_id"`
+	Side          Side               `json:"side"`
+	CreatedAt     string             `json:"created_at"`
+	ExpiresAt     string             `json:"expires_at"`
+	// InputRootPath 是用户输入的原始路径（project: pack.toml 所在目录；runtime: Prism 实例目录）。
+	InputRootPath string   `json:"input_root_path"`
+	NewProject    *Project `json:"new_project,omitempty"` // side=project 时的绑定草稿（含 fingerprint）
+	NewRuntime    *Runtime `json:"new_runtime,omitempty"` // side=runtime 时的绑定草稿（RootPath 为游戏目录）
+	Checks        []PreparationCheck `json:"checks"`
+	// FingerprintChanged 是新旧绑定指纹对比结果（重绑后旧 Plan 的 expected_bindings 失配）。
+	FingerprintChanged bool `json:"fingerprint_changed"`
+	// BaselineInheritance 表达基线继承语义，P1 恒 reinitialize（ApplyRebind 后
+	// baseline_state="none"、diff_state="initialization_required"）。
+	BaselineInheritance string `json:"baseline_inheritance"`
+	// InvalidatedPlanCount 是预检时该关系下仍可推进（draft/resolved）的计划数，
+	// 重绑后它们将因绑定指纹失配投影为 stale。
+	InvalidatedPlanCount int `json:"invalidated_plan_count"`
+}
+
 // OperationKind 是计划中的操作类别（架构文档 §6.5）。
 type OperationKind string
 

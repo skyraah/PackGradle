@@ -99,6 +99,8 @@ export type {
     PrepareRelationDTO,
     RelationPreparationDTO,
     PreparationCheckDTO,
+    PrepareRebindDTO,
+    RebindPreparationDTO,
     PolicyDTO,
     MappingRuleDTO,
     RelationDTO,

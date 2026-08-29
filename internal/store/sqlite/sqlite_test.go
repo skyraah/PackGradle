@@ -143,15 +143,15 @@ func TestOpenAndMigrateFreshDB(t *testing.T) {
 	if err := Migrate(context.Background(), db, filepath.Join(dir, "backup")); err != nil {
 		t.Fatalf("全新库 Migrate 失败: %v", err)
 	}
-	if v := userVersion(t, db); v != 3 {
-		t.Errorf("user_version = %d, 期望 3", v)
+	if v := userVersion(t, db); v != SchemaVersion() {
+		t.Errorf("user_version = %d, 期望 %d", v, SchemaVersion())
 	}
 	var count int
 	if err := db.QueryRow("SELECT COUNT(*) FROM schema_migrations").Scan(&count); err != nil {
 		t.Fatalf("读取 schema_migrations 失败: %v", err)
 	}
-	if count != 3 {
-		t.Errorf("schema_migrations 行数 = %d, 期望 3", count)
+	if count != SchemaVersion() {
+		t.Errorf("schema_migrations 行数 = %d, 期望 %d", count, SchemaVersion())
 	}
 }
 
@@ -177,8 +177,8 @@ func TestMigrateReopenIdempotent(t *testing.T) {
 	if err := Migrate(context.Background(), db2, filepath.Join(dir, "backup")); err != nil {
 		t.Fatalf("重开 Migrate 应幂等: %v", err)
 	}
-	if v := userVersion(t, db2); v != 3 {
-		t.Errorf("重开后 user_version = %d, 期望 3", v)
+	if v := userVersion(t, db2); v != SchemaVersion() {
+		t.Errorf("重开后 user_version = %d, 期望 %d", v, SchemaVersion())
 	}
 }
 
@@ -999,5 +999,123 @@ func TestSyncPlansRequestedExactnessColumn(t *testing.T) {
 	}
 	if got.RequestedExactness != "allow_partial" {
 		t.Errorf("旧行读取投影 = %q, 期望归一 allow_partial", got.RequestedExactness)
+	}
+}
+
+// TestRebindPreparationsColumnContract 验证 v4 迁移表契约（契约 03 §2.4，票 #22）：
+// side / baseline_inheritance 的 CHECK 拒绝非法取值、fingerprint_changed 限定 0/1、
+// relation 外键拒绝悬挂引用；仓库往返按 side 反序列化绑定草稿；消费守卫拆码
+// 与创建预检一致（ADR-0003 决议 4）。
+func TestRebindPreparationsColumnContract(t *testing.T) {
+	db := openTestDB(t)
+	defer db.Close()
+	ctx := context.Background()
+	relationID := fixtureRelation(t, db, "rb")
+	repo := NewPreparationRepository(db)
+
+	prep := model.RebindPreparation{
+		SchemaVersion: model.CurrentSchemaVersion,
+		PreparationID: "prep_rb1",
+		RelationID:    relationID,
+		Side:          model.SideProject,
+		CreatedAt:     "2026-08-30T10:00:00Z",
+		ExpiresAt:     "2999-01-01T00:00:00Z",
+		InputRootPath: "D:/packs/demo-moved",
+		NewProject: &model.Project{
+			SchemaVersion: model.CurrentSchemaVersion, ProjectID: "prj_rb",
+			Adapter: "packwiz", DisplayName: "demo-moved", RootPath: "D:/packs/demo-moved",
+			BindingFingerprint: "sha256:newfp", CreatedAt: "2026-08-22T10:00:00Z",
+		},
+		Checks:               []model.PreparationCheck{{Code: "check.endpoint.readable", Passed: true, Severity: "blocking"}},
+		FingerprintChanged:   true,
+		BaselineInheritance:  model.BaselineInheritanceReinitialize,
+		InvalidatedPlanCount: 2,
+	}
+	if err := repo.InsertRebind(ctx, prep); err != nil {
+		t.Fatalf("InsertRebind 失败: %v", err)
+	}
+	got, err := repo.GetRebind(ctx, "prep_rb1")
+	if err != nil {
+		t.Fatalf("GetRebind 失败: %v", err)
+	}
+	if !reflect.DeepEqual(got, prep) {
+		t.Errorf("重绑预检往返不一致:\n got  %+v\n want %+v", got, prep)
+	}
+
+	// runtime 侧草稿按 side 反序列化为 Runtime，NewProject 保持 nil
+	rtPrep := prep
+	rtPrep.PreparationID = "prep_rb2"
+	rtPrep.Side = model.SideRuntime
+	rtPrep.NewProject = nil
+	rtPrep.NewRuntime = &model.Runtime{
+		SchemaVersion: model.CurrentSchemaVersion, RuntimeID: "run_rb",
+		Adapter: "prism", DisplayName: "demo-moved", RootPath: "D:/instances/demo-moved/minecraft",
+		AdapterIdentity: "demo-moved", BindingFingerprint: "sha256:newrt", CreatedAt: "2026-08-22T10:00:00Z",
+	}
+	if err := repo.InsertRebind(ctx, rtPrep); err != nil {
+		t.Fatalf("InsertRebind(runtime) 失败: %v", err)
+	}
+	gotRt, err := repo.GetRebind(ctx, "prep_rb2")
+	if err != nil {
+		t.Fatalf("GetRebind(runtime) 失败: %v", err)
+	}
+	if !reflect.DeepEqual(gotRt, rtPrep) {
+		t.Errorf("runtime 侧重绑预检往返不一致:\n got  %+v\n want %+v", gotRt, rtPrep)
+	}
+
+	// 无草稿（新端点不可达的失败预检）：new_endpoint_json 为 NULL，两字段保持 nil
+	nonePrep := rtPrep
+	nonePrep.PreparationID = "prep_rb3"
+	nonePrep.NewRuntime = nil
+	if err := repo.InsertRebind(ctx, nonePrep); err != nil {
+		t.Fatalf("InsertRebind(无草稿) 失败: %v", err)
+	}
+	gotNone, err := repo.GetRebind(ctx, "prep_rb3")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gotNone.NewProject != nil || gotNone.NewRuntime != nil {
+		t.Errorf("无草稿预检读取不应产生绑定草稿: %+v", gotNone)
+	}
+
+	// CHECK 拒绝非法取值
+	for _, tc := range []struct{ col, val string }{
+		{"side", "both"},
+		{"baseline_inheritance", "keep"},
+	} {
+		if _, err := db.Exec(`UPDATE rebind_preparations SET `+tc.col+`=? WHERE preparation_id='prep_rb1'`, tc.val); err == nil {
+			t.Errorf("CHECK 应拒绝非法 %s=%s", tc.col, tc.val)
+		}
+	}
+	if _, err := db.Exec(`UPDATE rebind_preparations SET fingerprint_changed=2 WHERE preparation_id='prep_rb1'`); err == nil {
+		t.Error("CHECK 应拒绝 fingerprint_changed=2")
+	}
+
+	// 外键拒绝悬挂引用
+	missing := prep
+	missing.PreparationID = "prep_rb4"
+	missing.RelationID = "rel_missing"
+	if err := repo.InsertRebind(ctx, missing); !errors.Is(err, ErrRelationNotFound) {
+		t.Errorf("悬挂 relation 引用应返回 ErrRelationNotFound, got %v", err)
+	}
+
+	// 消费守卫拆码（与 MarkConsumed 同款语义）
+	if err := repo.MarkRebindConsumed(ctx, "prep_rb1"); err != nil {
+		t.Fatalf("首次 MarkRebindConsumed 失败: %v", err)
+	}
+	if err := repo.MarkRebindConsumed(ctx, "prep_rb1"); !errors.Is(err, ErrPreparationConsumed) {
+		t.Errorf("二次 MarkRebindConsumed 应返回 ErrPreparationConsumed, got %v", err)
+	}
+	expired := prep
+	expired.PreparationID = "prep_rb5"
+	expired.ExpiresAt = "2000-01-01T00:00:00Z"
+	if err := repo.InsertRebind(ctx, expired); err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.MarkRebindConsumed(ctx, "prep_rb5"); !errors.Is(err, ErrPreparationExpired) {
+		t.Errorf("过期 MarkRebindConsumed 应返回 ErrPreparationExpired, got %v", err)
+	}
+	if err := repo.MarkRebindConsumed(ctx, "prep_none"); !errors.Is(err, ErrNotFound) {
+		t.Errorf("不存在应返回 ErrNotFound, got %v", err)
 	}
 }

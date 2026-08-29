@@ -225,6 +225,23 @@ export interface PreparationCheckDTO {
 }
 
 /**
+ * PrepareRebindDTO 是重绑预检输入（契约 03 §2.4；一次只重绑一侧）。
+ */
+export interface PrepareRebindDTO {
+    "relation_id": string;
+
+    /**
+     * project|runtime
+     */
+    "side": string;
+
+    /**
+     * 新端点根路径（project: pack.toml 所在目录；runtime: Prism 实例目录）
+     */
+    "root_path": string;
+}
+
+/**
  * PrepareRelationDTO 是 PrepareRelation 输入。
  */
 export interface PrepareRelationDTO {
@@ -269,6 +286,28 @@ export interface ProjectCandidateDTO {
     "modloader"?: string;
     "registered": boolean;
     "endpoint_id"?: string;
+}
+
+/**
+ * RebindPreparationDTO 是 PrepareRebind 结果（契约 03 §2.4）。new_endpoint 与
+ * old_endpoint 共享同一端点 ID：ApplyRebind 原位更新该端点行的绑定。
+ */
+export interface RebindPreparationDTO {
+    "schema_version": number;
+    "preparation_id": string;
+    "created_at": string;
+    "expires_at": string;
+    "side": string;
+    "checks": PreparationCheckDTO[] | null;
+    "old_endpoint": EndpointDTO;
+    "new_endpoint": EndpointDTO;
+    "fingerprint_changed": boolean;
+
+    /**
+     * inherit|reinitialize
+     */
+    "baseline_inheritance": string;
+    "invalidated_plan_count": number;
 }
 
 /**

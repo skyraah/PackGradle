@@ -11,7 +11,7 @@ import type { TaskDTO, WorkspaceDTO } from '../api'
 import { bootstrapped, bootstrapError, retryBootstrap, tasks, triggerRequery, workspaces } from '../stores/syncCache'
 import { showSnackbar } from '../stores/ui'
 import { errText } from '../utils/errors'
-import { canPrepareSync, prepareSync } from '../utils/plans'
+import { canPrepareSync, canRebind, prepareSync } from '../utils/plans'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
@@ -64,6 +64,7 @@ interface WorkspaceRow {
     task: TaskDTO | null
     canScan: boolean
     canPrepareSync: boolean
+    canRebind: boolean
     scanLabel: string
     healthTone: BadgeTone
     scanTone: BadgeTone
@@ -83,6 +84,7 @@ const rows = computed<WorkspaceRow[]>(() =>
             // T11 承接页（/workspaces/:id/plans/:plan_id）点亮
             canScan: w.features.scan && w.availability?.some(a => a.action === 'scan' && a.available) === true,
             canPrepareSync: canPrepareSync(w),
+            canRebind: canRebind(w),
             scanLabel: w.state.scan_state === 'failed' ? t('workspaces.scanRetryAction') : t('workspaces.scanAction'),
             healthTone: toneOf(healthTones, w.relation.health),
             scanTone: toneOf(scanTones, w.state.scan_state),
@@ -306,6 +308,16 @@ const cols: { key: string; alignRight?: boolean }[] = [
                                             @click="prepareSyncPlan(row)"
                                         >
                                             {{ t('workspaces.planAction') }}
+                                        </Button>
+                                        <!-- 重新绑定入口：availability 驱动（T12 重绑页承接；
+                                             健康态不阻止——路径迁移是合法的主动操作） -->
+                                        <Button
+                                            v-if="row.canRebind"
+                                            size="xs"
+                                            variant="outline"
+                                            @click="router.push('/workspaces/' + row.workspace.relation.relation_id + '/rebind')"
+                                        >
+                                            {{ t('workspaces.rebindAction') }}
                                         </Button>
                                         <Button
                                             v-if="row.canScan"

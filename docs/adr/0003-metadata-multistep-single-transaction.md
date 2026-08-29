@@ -31,3 +31,7 @@ date: 2026-08-28
 - 事件发布时点规则与 04 事件协议兼容：事件本就只做通知，协议不受影响。
 - Phase 2 Apply 跨资源提交（DB + staging + CAS + operation_journal）不适用本 ADR，另行决议。
 - CONTEXT.md 新增术语：预检（Preparation）。
+
+## Amendment
+
+- 2026-08-30（票 #22）：决议 5 的「无新表、无新列、无迁移」是对当时 CreateRelation 流程的现状盘点，不是对后续用例的普遍禁令。T12 重绑预检需要自己的两段式持久化（单侧重绑 + 关系引用 + 影响计数，输入形状与创建预检不同），新增 `rebind_preparations` 表（schema v4）。单事务 doctrine、消费守卫拆码与「事件发布恒在事务提交之后」语义不变，ApplyRebind 复用同一 RunInTx 入口。

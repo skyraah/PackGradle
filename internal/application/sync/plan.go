@@ -171,12 +171,34 @@ func (a *App) planViewWithStatus(ctx context.Context, p model.SyncPlan, rel mode
 	effective := p.Status
 	if (p.Status == model.PlanDraft || p.Status == model.PlanResolved) && expired(p.ExpiresAt, a.deps.Now().UTC()) {
 		effective = model.PlanExpired
-	} else if (p.Status == model.PlanDraft || p.Status == model.PlanResolved) && rel.Revision != p.RelationRevision {
-		effective = model.PlanStale
+	} else if p.Status == model.PlanDraft || p.Status == model.PlanResolved {
+		switch {
+		case rel.Revision != p.RelationRevision:
+			effective = model.PlanStale
+		case a.bindingsMismatch(ctx, p, rel):
+			// 重绑不递增修订号（ADR-0002 决议 2），旧计划失效由绑定指纹校验承担
+			// （契约 03 §2.4：GetPlan 读取时 binding 不匹配 → status=stale）
+			effective = model.PlanStale
+		}
 	}
 	v := PlanView(p)
 	v.Status = string(effective)
 	return v, nil
+}
+
+// bindingsMismatch 判断计划锁定的两端绑定指纹与当前端点登记是否失配。
+// 端点读取失败不作 stale 判定（关系常态失效由 revision 校验覆盖，端点行不可删除）。
+func (a *App) bindingsMismatch(ctx context.Context, p model.SyncPlan, rel model.Relation) bool {
+	proj, err := a.deps.Endpoints.GetProject(ctx, rel.ProjectID)
+	if err != nil {
+		return false
+	}
+	rt, err := a.deps.Endpoints.GetRuntime(ctx, rel.RuntimeID)
+	if err != nil {
+		return false
+	}
+	return p.ExpectedBindings.Project != proj.BindingFingerprint ||
+		p.ExpectedBindings.Runtime != rt.BindingFingerprint
 }
 
 func expired(rfc3339 string, now time.Time) bool {

@@ -38,6 +38,10 @@ type Application interface {
 	// GetMappingPolicy / UpdateMappingPolicy 映射策略读写（契约 03 §2.3；票 #20）。
 	GetMappingPolicy(ctx context.Context, relationID string) (view.PolicyView, error)
 	UpdateMappingPolicy(ctx context.Context, input view.UpdateMappingPolicyInput) (view.PolicyView, error)
+	// PrepareRebind / ApplyRebind 重绑闭环（契约 03 §2.4；票 #22）：
+	// 预检持久化 → Apply 单事务原位更新端点绑定（ADR-0003），恒 reinitialize。
+	PrepareRebind(ctx context.Context, input view.PrepareRebindInput) (view.RebindPreparationView, error)
+	ApplyRebind(ctx context.Context, preparationID string) (view.RelationView, error)
 }
 
 var _ Application = (*App)(nil)

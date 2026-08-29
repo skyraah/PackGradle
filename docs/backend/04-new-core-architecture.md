@@ -31,14 +31,14 @@ internal/
     view/                   # 用例返回投影
     project/                # 项目源端点用例：DiscoverProjects/RegisterProject/GetProjectHealth/ListProjects
     runtime/                # 运行实例端点用例：DiscoverRuntimes/RegisterRuntime/GetRuntimeHealth/ListRuntimes
-    sync/                   # 用例：PrepareRelation/CreateRelation/StartScan/PrepareSync/ResolvePlan/GetPlan/GetWorkspace/GetSnapshotDiagnostics/GetHashCacheStats/GetChanges/GetMappingPolicy/UpdateMappingPolicy...
+    sync/                   # 用例：PrepareRelation/CreateRelation/StartScan/PrepareSync/ResolvePlan/GetPlan/GetWorkspace/GetSnapshotDiagnostics/GetHashCacheStats/GetChanges/GetMappingPolicy/UpdateMappingPolicy/PrepareRebind/ApplyRebind...
   adapters/
     filesystem/             # 流式 sha256、原子写、ResolveWithin 路径安全、卷序列号 binding fingerprint
     packwiz/                # Project 扫描：index.toml 权威 + modrinth/curseforge 身份 + [download] 声明 hash；DiscoverProjects 有限深度发现
     prism/                  # Runtime 扫描：mods/*.jar + mods/.index 元数据 + filename hint 跨侧匹配；Discoverer 实例发现
   store/
     paths.go                # 用户数据目录布局（packgradle.db/objects/staging/logs/exports）
-    sqlite/                 # schema v1→v3 前向迁移（VACUUM INTO 备份门禁；v2 补 tasks.plan_id/commit_id 外键；v3 补 sync_plans.requested_exactness）+ 完整性守卫 + 各仓库
+    sqlite/                 # schema v1→v4 前向迁移（VACUUM INTO 备份门禁；v2 补 tasks.plan_id/commit_id 外键；v3 补 sync_plans.requested_exactness；v4 补 rebind_preparations 重绑预检表）+ 完整性守卫 + 各仓库
     objectstore/            # SHA-256 CAS：流式写 + 复核 + 原子落位
   transport/                # Wails DTO/转换/SyncService/事件桥（packgradle://event）
   bootstrap/                # 唯一装配点（main.go 与 headless 工具共用）

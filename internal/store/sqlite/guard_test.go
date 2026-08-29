@@ -335,8 +335,8 @@ func TestMigrateV1ToV2EnforcesTaskReferences(t *testing.T) {
 	if err := Migrate(ctx, db, filepath.Join(dir, "backup")); err != nil {
 		t.Fatalf("v1→目标版本迁移失败: %v", err)
 	}
-	if v := userVersion(t, db); v != 3 {
-		t.Fatalf("迁移后 user_version = %d, 期望 3", v)
+	if v := userVersion(t, db); v != SchemaVersion() {
+		t.Fatalf("迁移后 user_version = %d, 期望 %d", v, SchemaVersion())
 	}
 
 	// 旧任务与 journal 行原样保留

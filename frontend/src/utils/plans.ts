@@ -22,6 +22,13 @@ export function canRescan(ws: WorkspaceDTO | null | undefined): boolean {
     )
 }
 
+// canRebind 判断工作区列表是否渲染「重新绑定」入口：availability 唯一门控
+// （rebind 无 feature 开关，契约 03 §2.1 推导表：无活跃任务且非恢复占用即可
+// 主动重绑，路径迁移是合法操作，rebind_required 等健康态不阻止）。
+export function canRebind(ws: WorkspaceDTO | null | undefined): boolean {
+    return ws?.availability?.some(a => a.action === 'rebind' && a.available) === true
+}
+
 // prepareSync 用工作区缓存的当前修订与最新双端快照发起 PrepareSync，返回新计划。
 // 抛错时返回 rejected promise，由调用方决定 snackbar 呈现。
 export function prepareSync(ws: WorkspaceDTO): Promise<SyncPlanDTO> {

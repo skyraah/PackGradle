@@ -138,6 +138,19 @@ func (r *RelationRepository) IncrementRevision(ctx context.Context, id string) (
 	return revision, nil
 }
 
+// UpdateHeadBaseline 设置/清除（空串）关系基线引用；关系不存在返回 ErrNotFound。
+func (r *RelationRepository) UpdateHeadBaseline(ctx context.Context, id, baselineID string) error {
+	res, err := r.db.ExecContext(ctx,
+		"UPDATE relations SET head_baseline_id=? WHERE id=?", nullString(baselineID), id)
+	if err != nil {
+		return fmt.Errorf("sqlite: 更新 Relation %s 基线引用: %w", id, err)
+	}
+	if n, err := res.RowsAffected(); err == nil && n == 0 {
+		return fmt.Errorf("sqlite: 更新 Relation %s 基线引用: %w", id, ErrNotFound)
+	}
+	return nil
+}
+
 // PairExists 判断 project/runtime 配对是否已存在关系。
 func (r *RelationRepository) PairExists(ctx context.Context, projectID, runtimeID string) (bool, error) {
 	var exists bool
