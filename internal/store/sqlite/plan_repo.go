@@ -27,6 +27,10 @@ func NewPlanRepository(db *sql.DB) *PlanRepository {
 // Insert 在同一事务写 sync_plans 头表（全量 plan_json）并展开 conflicts 行。
 // 独立使用时自开事务；处于 RunInTx 事务域内时加入外层事务。
 func (r *PlanRepository) Insert(ctx context.Context, p model.SyncPlan) error {
+	// 请求确切度空值按保守默认归一（列 CHECK 要求非空枚举；plan_json 与列保持一致）
+	if p.RequestedExactness == "" {
+		p.RequestedExactness = model.ExactnessAllowPartial
+	}
 	planJSON, err := json.Marshal(p)
 	if err != nil {
 		return fmt.Errorf("sqlite: 序列化计划 %s: %w", p.PlanID, err)
@@ -41,11 +45,11 @@ func (r *PlanRepository) Insert(ctx context.Context, p model.SyncPlan) error {
 		if _, err := tx.ExecContext(ctx, `
 INSERT INTO sync_plans(id, relation_id, kind, resolved_from_plan_id, base_baseline_id,
 	input_project_snapshot_id, input_runtime_snapshot_id, relation_revision,
-	plan_digest, status, expires_at, normalization_version, plan_json)
-VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+	plan_digest, requested_exactness, status, expires_at, normalization_version, plan_json)
+VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
 			p.PlanID, p.RelationID, p.Kind, nullString(p.ResolvedFromPlanID), nullString(p.BaseBaselineID),
 			p.InputProjectSnapshotID, p.InputRuntimeSnapshotID, p.RelationRevision,
-			p.PlanDigest, p.Status, p.ExpiresAt, p.SchemaVersion, string(planJSON)); err != nil {
+			p.PlanDigest, p.RequestedExactness, p.Status, p.ExpiresAt, p.SchemaVersion, string(planJSON)); err != nil {
 			if isForeignKeyViolation(err) {
 				return fmt.Errorf("sqlite: 写入计划 %s: %w", p.PlanID, ErrRelationNotFound)
 			}
@@ -82,6 +86,11 @@ func (r *PlanRepository) Get(ctx context.Context, id string) (model.SyncPlan, er
 	var p model.SyncPlan
 	if err := json.Unmarshal([]byte(planJSON), &p); err != nil {
 		return model.SyncPlan{}, fmt.Errorf("sqlite: 解析计划 %s: %w", id, err)
+	}
+	// v3 迁移前的旧行 plan_json 无 requested_exactness：读取时以列的保守默认归一
+	// （allow_partial），与「既有行以保守默认回填」的迁移语义一致，不回写库。
+	if p.RequestedExactness == "" {
+		p.RequestedExactness = model.ExactnessAllowPartial
 	}
 	return p, nil
 }

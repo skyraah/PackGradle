@@ -114,6 +114,8 @@ export type {
     ChangeDTO,
     ChangesSummaryDTO,
     ChangesPageDTO,
+    SyncPlanDTO,
+    ResolutionDTO,
     RepresentationDTO,
     ConflictDTO,
     DiagnosticDTO,

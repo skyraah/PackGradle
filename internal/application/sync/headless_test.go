@@ -16,6 +16,7 @@ import (
 	"encoding/hex"
 	"os"
 	"path/filepath"
+	"reflect"
 	"testing"
 	"time"
 
@@ -831,5 +832,139 @@ func TestHeadlessDuplicatePairBlocked(t *testing.T) {
 	_, err = app.CreateRelation(ctx, prep.PreparationID)
 	if code := errCode(t, err); code != "err.relation.invalid_endpoint" {
 		t.Fatalf("重复 pair 创建错误码: %s", code)
+	}
+}
+
+// TestHeadlessPlanExactnessContract 验证 requested_exactness 三处一致（契约 03 §2.6，
+// 票 #21）：PrepareSync 固化 → SQLite 持久化 → GetPlan 投影读回；ResolvePlan 继承且
+// 旧 draft 只读不变；关系修订前进后旧计划投影为 stale；非法取值被拒。
+// 确定性断言：相同输入两次 PrepareSync 产出相同 plan digest 与操作序列。
+func TestHeadlessPlanExactnessContract(t *testing.T) {
+	projectRoot, instanceDir, dataRoot := makeFixtures(t)
+	app, db := newStack(t, dataRoot)
+	ctx := context.Background()
+	rel := mustPrepareAndCreate(t, app, projectRoot, instanceDir)
+	scanAndWait(t, app, rel.RelationID)
+
+	ws, err := app.GetWorkspace(ctx, rel.RelationID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	input := view.PrepareSyncInput{
+		RelationID:             rel.RelationID,
+		RelationRevision:       rel.Revision,
+		InputProjectSnapshotID: ws.LatestProjectSnapshot.SnapshotID,
+		InputRuntimeSnapshotID: ws.LatestRuntimeSnapshot.SnapshotID,
+	}
+
+	// 确定性：相同输入两次构建 → 相同 digest 与操作序列（应用层整体断言）
+	draft1, err := app.PrepareSync(ctx, input)
+	if err != nil {
+		t.Fatalf("PrepareSync#1: %v", err)
+	}
+	draft2, err := app.PrepareSync(ctx, input)
+	if err != nil {
+		t.Fatalf("PrepareSync#2: %v", err)
+	}
+	if draft1.PlanDigest != draft2.PlanDigest {
+		t.Fatalf("相同输入 digest 不一致: %s vs %s", draft1.PlanDigest, draft2.PlanDigest)
+	}
+	if !reflect.DeepEqual(draft1.Operations, draft2.Operations) {
+		t.Fatalf("相同输入操作序列不一致:\n%+v\n%+v", draft1.Operations, draft2.Operations)
+	}
+
+	// 空值缺省 allow_partial（保守回填语义）
+	partial, err := app.PrepareSync(ctx, input)
+	if err != nil {
+		t.Fatalf("PrepareSync 空值缺省: %v", err)
+	}
+	if partial.RequestedExactness != "allow_partial" {
+		t.Fatalf("空值应缺省 allow_partial, got %q", partial.RequestedExactness)
+	}
+
+	// exact 固化：应用层投影 + SQLite 列 双通道读回一致
+	draft, err := app.PrepareSync(ctx, view.PrepareSyncInput{
+		RelationID:             rel.RelationID,
+		RelationRevision:       rel.Revision,
+		InputProjectSnapshotID: ws.LatestProjectSnapshot.SnapshotID,
+		InputRuntimeSnapshotID: ws.LatestRuntimeSnapshot.SnapshotID,
+		RequestedExactness:     "exact",
+	})
+	if err != nil {
+		t.Fatalf("PrepareSync(exact): %v", err)
+	}
+	if draft.RequestedExactness != "exact" {
+		t.Fatalf("投影 requested_exactness = %q, 期望 exact", draft.RequestedExactness)
+	}
+	var colExactness string
+	if err := db.QueryRow(`SELECT requested_exactness FROM sync_plans WHERE id=?`, draft.PlanID).Scan(&colExactness); err != nil {
+		t.Fatalf("读 sync_plans 列: %v", err)
+	}
+	if colExactness != "exact" {
+		t.Fatalf("SQLite 列 requested_exactness = %q, 期望 exact", colExactness)
+	}
+	got, err := app.GetPlan(ctx, draft.PlanID)
+	if err != nil || got.RequestedExactness != "exact" {
+		t.Fatalf("GetPlan 读回 = %q (err=%v), 期望 exact", got.RequestedExactness, err)
+	}
+
+	// 非法取值拒绝
+	_, err = app.PrepareSync(ctx, view.PrepareSyncInput{
+		RelationID:             rel.RelationID,
+		RelationRevision:       rel.Revision,
+		InputProjectSnapshotID: ws.LatestProjectSnapshot.SnapshotID,
+		InputRuntimeSnapshotID: ws.LatestRuntimeSnapshot.SnapshotID,
+		RequestedExactness:     "fuzzy",
+	})
+	if code := errCode(t, err); code != "err.sync.invalid_exactness" {
+		t.Fatalf("非法 exactness 错误码: %s", code)
+	}
+
+	// ResolvePlan：冲突全选后产生新不可变计划，exactness 继承、旧 draft 只读不变
+	resolutions := []model.Resolution{
+		{ResourceID: "mod:curseforge:228525", Choice: model.ChoiceInitializeFromProject},
+		{ResourceID: "mod:path:mods/local.pw.toml", Choice: model.ChoiceSkip},
+		{ResourceID: "mod:jar:runtimeonly-1.0.jar", Choice: model.ChoiceInitializeFromRuntime},
+	}
+	resolved, err := app.ResolvePlan(ctx, view.ResolvePlanInput{PlanID: draft.PlanID, Resolutions: resolutions})
+	if err != nil {
+		t.Fatalf("ResolvePlan: %v", err)
+	}
+	if resolved.RequestedExactness != "exact" {
+		t.Fatalf("resolved 应继承 exact, got %q", resolved.RequestedExactness)
+	}
+	if resolved.ResolvedFromPlanID != draft.PlanID {
+		t.Fatalf("resolved_from_plan_id = %q, 期望 %q", resolved.ResolvedFromPlanID, draft.PlanID)
+	}
+	after, err := app.GetPlan(ctx, draft.PlanID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if after.Status != "draft" || after.PlanDigest != draft.PlanDigest || len(after.Resolutions) != 0 {
+		t.Fatalf("旧 draft 被修改: status=%s digest一致=%v resolutions=%d",
+			after.Status, after.PlanDigest == draft.PlanDigest, len(after.Resolutions))
+	}
+
+	// 修订号前进（policy 写路径递增 revision，ADR-0002）→ 旧计划投影 stale，内容仍可读
+	pol, err := app.GetMappingPolicy(ctx, rel.RelationID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := app.UpdateMappingPolicy(ctx, view.UpdateMappingPolicyInput{
+		RelationID:       rel.RelationID,
+		ExpectedRevision: pol.RelationRevision,
+		Rules:            pol.Rules,
+	}); err != nil {
+		t.Fatalf("UpdateMappingPolicy 原样写回: %v", err)
+	}
+	stale, err := app.GetPlan(ctx, draft.PlanID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stale.Status != "stale" {
+		t.Fatalf("修订前进后旧计划应投影 stale, got %s", stale.Status)
+	}
+	if len(stale.Operations) != len(draft.Operations) {
+		t.Fatal("stale 计划内容应继续可读")
 	}
 }

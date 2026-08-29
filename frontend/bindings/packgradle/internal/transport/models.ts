@@ -375,6 +375,12 @@ export interface SyncPlanDTO {
     "relation_revision": number;
     "policy_digest": string;
     "expected_bindings": { [_ in string]?: string } | null;
+
+    /**
+     * RequestedExactness 是请求确切度 exact|allow_partial（契约 03 §2.6；
+     * 与 Plan 模型 / sync_plans 列三处一致，ResolvePlan 继承）。
+     */
+    "requested_exactness": string;
     "plan_digest": string;
     "status": string;
     "expires_at": string;

@@ -306,9 +306,15 @@ func TestMigrateV1ToV2EnforcesTaskReferences(t *testing.T) {
 	relationID := fixtureRelation(t, db, "mv")
 	snapshots := NewSnapshotRepository(db)
 	snapP, snapR := insertSnapPair(t, snapshots, relationID, "mv")
-	plan := fixturePlan(t, "plan_mv", relationID, snapP, snapR)
-	if err := NewPlanRepository(db).Insert(ctx, plan); err != nil {
-		t.Fatalf("插入计划失败: %v", err)
+	// v1 库阶段的计划写入用 v1 列集 raw SQL（PlanRepository 现按 v3 列集写
+	// requested_exactness，v1 schema 无该列）；本测试关注 tasks 的外键迁移。
+	if _, err := db.Exec(`INSERT INTO sync_plans(id, relation_id, kind,
+		input_project_snapshot_id, input_runtime_snapshot_id, relation_revision,
+		plan_digest, status, expires_at, normalization_version, plan_json)
+		VALUES('plan_mv', ?, 'sync', ?, ?, 1, 'sha256:plan_mv', 'draft',
+		'2999-01-01T00:00:00Z', 1, '{}')`,
+		relationID, snapP.SnapshotID, snapR.SnapshotID); err != nil {
+		t.Fatalf("预置 v1 计划行失败: %v", err)
 	}
 	now := time.Now().UTC().Format(time.RFC3339)
 	task := model.Task{
@@ -327,10 +333,10 @@ func TestMigrateV1ToV2EnforcesTaskReferences(t *testing.T) {
 	}
 
 	if err := Migrate(ctx, db, filepath.Join(dir, "backup")); err != nil {
-		t.Fatalf("v1→v2 迁移失败: %v", err)
+		t.Fatalf("v1→目标版本迁移失败: %v", err)
 	}
-	if v := userVersion(t, db); v != 2 {
-		t.Fatalf("迁移后 user_version = %d, 期望 2", v)
+	if v := userVersion(t, db); v != 3 {
+		t.Fatalf("迁移后 user_version = %d, 期望 3", v)
 	}
 
 	// 旧任务与 journal 行原样保留

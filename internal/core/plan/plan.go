@@ -27,6 +27,9 @@ type BuildInput struct {
 	Project            model.ObservedSnapshot
 	Runtime            model.ObservedSnapshot
 	ExpectedBindings   model.ExpectedBindings
+	// RequestedExactness 是请求确切度（exact|allow_partial）；空值缺省 allow_partial
+	// （保守：未声明 exact 的计划按部分完成对待），显式非法值报错。
+	RequestedExactness model.Exactness
 	ExpiresAt          time.Time
 }
 
@@ -71,6 +74,12 @@ const (
 func BuildDraft(in BuildInput) (model.SyncPlan, error) {
 	if in.Base != nil && in.BaseBaselineDigest == "" {
 		return model.SyncPlan{}, errors.New("plan: Base 非空时 BaseBaselineDigest 必填")
+	}
+	if in.RequestedExactness == "" {
+		in.RequestedExactness = model.ExactnessAllowPartial
+	}
+	if in.RequestedExactness != model.ExactnessExact && in.RequestedExactness != model.ExactnessAllowPartial {
+		return model.SyncPlan{}, fmt.Errorf("plan: requested_exactness 非法: %s", in.RequestedExactness)
 	}
 	res, err := diff.ThreeWay(diff.Input{
 		RelationID: in.RelationID,
@@ -148,6 +157,7 @@ func BuildDraft(in BuildInput) (model.SyncPlan, error) {
 		RelationRevision:           in.RelationRevision,
 		PolicyDigest:               in.PolicyDigest,
 		ExpectedBindings:           in.ExpectedBindings,
+		RequestedExactness:         in.RequestedExactness,
 		Status:                     model.PlanDraft,
 		ExpiresAt:                  formatExpiry(in.ExpiresAt),
 		Operations:                 ops,
@@ -258,12 +268,14 @@ func Resolve(draft model.SyncPlan, project, runtime model.ObservedSnapshot, reso
 		RelationRevision:           draft.RelationRevision,
 		PolicyDigest:               draft.PolicyDigest,
 		ExpectedBindings:           draft.ExpectedBindings,
-		Status:                     model.PlanResolved,
-		ExpiresAt:                  draft.ExpiresAt,
-		Operations:                 ops,
-		Conflicts:                  draft.Conflicts, // 保留作证据
-		Resolutions:                sorted,
-		Diagnostics:                draft.Diagnostics,
+		// exactness 从 draft 继承（不可变：resolution 不改变请求确切度）
+		RequestedExactness: draft.RequestedExactness,
+		Status:             model.PlanResolved,
+		ExpiresAt:          draft.ExpiresAt,
+		Operations:         ops,
+		Conflicts:          draft.Conflicts, // 保留作证据
+		Resolutions:        sorted,
+		Diagnostics:        draft.Diagnostics,
 		Summary: model.PlanSummary{
 			ResourceTotal:   draft.Summary.ResourceTotal,
 			AdoptEqualCount: draft.Summary.AdoptEqualCount,

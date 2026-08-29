@@ -274,29 +274,32 @@ type PlanSummaryDTO struct {
 
 // SyncPlanDTO 是计划投影（Status 反映读取时计算的 stale/expired）。
 type SyncPlanDTO struct {
-	SchemaVersion              int                          `json:"schema_version"`
-	PlanID                     string                       `json:"plan_id"`
-	RelationID                 string                       `json:"relation_id"`
-	Kind                       string                       `json:"kind"`
-	ResolvedFromPlanID         string                       `json:"resolved_from_plan_id,omitempty"`
-	BaseBaselineID             string                       `json:"base_baseline_id,omitempty"`
-	BaseBaselineDigest         string                       `json:"base_baseline_digest,omitempty"`
-	InputProjectSnapshotID     string                       `json:"input_project_snapshot_id"`
-	InputRuntimeSnapshotID     string                       `json:"input_runtime_snapshot_id"`
-	InputProjectSnapshotDigest string                       `json:"input_project_snapshot_digest"`
-	InputRuntimeSnapshotDigest string                       `json:"input_runtime_snapshot_digest"`
-	RelationRevision           int                          `json:"relation_revision"`
-	PolicyDigest               string                       `json:"policy_digest"`
-	ExpectedBindings           map[string]string            `json:"expected_bindings"`
-	PlanDigest                 string                       `json:"plan_digest"`
-	Status                     string                       `json:"status"`
-	ExpiresAt                  string                       `json:"expires_at"`
-	Operations                 []OperationDTO               `json:"operations"`
-	Conflicts                  []ConflictDTO                `json:"conflicts"`
-	Resolutions                []ResolutionDTO              `json:"resolutions"`
-	ConfirmationRequirements   []ConfirmationRequirementDTO `json:"confirmation_requirements"`
-	Summary                    PlanSummaryDTO               `json:"summary"`
-	Diagnostics                []DiagnosticDTO              `json:"diagnostics"`
+	SchemaVersion              int               `json:"schema_version"`
+	PlanID                     string            `json:"plan_id"`
+	RelationID                 string            `json:"relation_id"`
+	Kind                       string            `json:"kind"`
+	ResolvedFromPlanID         string            `json:"resolved_from_plan_id,omitempty"`
+	BaseBaselineID             string            `json:"base_baseline_id,omitempty"`
+	BaseBaselineDigest         string            `json:"base_baseline_digest,omitempty"`
+	InputProjectSnapshotID     string            `json:"input_project_snapshot_id"`
+	InputRuntimeSnapshotID     string            `json:"input_runtime_snapshot_id"`
+	InputProjectSnapshotDigest string            `json:"input_project_snapshot_digest"`
+	InputRuntimeSnapshotDigest string            `json:"input_runtime_snapshot_digest"`
+	RelationRevision           int               `json:"relation_revision"`
+	PolicyDigest               string            `json:"policy_digest"`
+	ExpectedBindings           map[string]string `json:"expected_bindings"`
+	// RequestedExactness 是请求确切度 exact|allow_partial（契约 03 §2.6；
+	// 与 Plan 模型 / sync_plans 列三处一致，ResolvePlan 继承）。
+	RequestedExactness       string                       `json:"requested_exactness"`
+	PlanDigest               string                       `json:"plan_digest"`
+	Status                   string                       `json:"status"`
+	ExpiresAt                string                       `json:"expires_at"`
+	Operations               []OperationDTO               `json:"operations"`
+	Conflicts                []ConflictDTO                `json:"conflicts"`
+	Resolutions              []ResolutionDTO              `json:"resolutions"`
+	ConfirmationRequirements []ConfirmationRequirementDTO `json:"confirmation_requirements"`
+	Summary                  PlanSummaryDTO               `json:"summary"`
+	Diagnostics              []DiagnosticDTO              `json:"diagnostics"`
 }
 
 // RegisterEndpointDTO 是端点登记输入（契约 03 §2.5；project: pack.toml 所在目录，

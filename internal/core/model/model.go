@@ -214,9 +214,9 @@ type PreparationCheck struct {
 
 // PrepareRelationInput 是 PrepareRelation 的用户输入。
 type PrepareRelationInput struct {
-	ProjectRoot        string   `json:"project_root"`         // pack.toml 所在目录
-	RuntimeInstanceDir string   `json:"runtime_instance_dir"` // Prism 实例目录（非游戏目录）
-	PolicySet          string   `json:"policy_set"`           // 默认 "default-v1"
+	ProjectRoot        string   `json:"project_root"`          // pack.toml 所在目录
+	RuntimeInstanceDir string   `json:"runtime_instance_dir"`  // Prism 实例目录（非游戏目录）
+	PolicySet          string   `json:"policy_set"`            // 默认 "default-v1"
 	Suggestions        []string `json:"suggestions,omitempty"` // 勾选的建议规则 ID（policy.Suggestions 子集，默认不勾选）
 }
 
@@ -329,6 +329,16 @@ const (
 	PlanStale     PlanStatus = "stale"
 )
 
+// Exactness 是请求确切度（requested_exactness）：PrepareSync 时的用户请求记录，
+// 随计划不可变（ResolvePlan 从 draft 继承）。P1 只记录不消费（无 Apply）；
+// Apply 的完成度判定在 Phase 2 消费该值。
+type Exactness string
+
+const (
+	ExactnessExact        Exactness = "exact"
+	ExactnessAllowPartial Exactness = "allow_partial"
+)
+
 // PlanSummary 是计划的影响摘要。
 type PlanSummary struct {
 	ResourceTotal   int `json:"resource_total"`
@@ -348,28 +358,31 @@ type ExpectedBindings struct {
 // SyncPlan 是无副作用的不可变计划（draft/resolved）。
 // digest 覆盖字段见 normalize.PlanDigest；ID、status、expires_at 不参与 digest。
 type SyncPlan struct {
-	SchemaVersion              int                       `json:"schema_version"`
-	PlanID                     string                    `json:"plan_id"` // plan_ 前缀
-	RelationID                 string                    `json:"relation_id"`
-	Kind                       PlanKind                  `json:"kind"`
-	ResolvedFromPlanID         string                    `json:"resolved_from_plan_id,omitempty"`
-	BaseBaselineID             string                    `json:"base_baseline_id,omitempty"`
-	BaseBaselineDigest         string                    `json:"base_baseline_digest,omitempty"`
-	InputProjectSnapshotID     string                    `json:"input_project_snapshot_id"`
-	InputRuntimeSnapshotID     string                    `json:"input_runtime_snapshot_id"`
-	InputProjectSnapshotDigest string                    `json:"input_project_snapshot_digest"`
-	InputRuntimeSnapshotDigest string                    `json:"input_runtime_snapshot_digest"`
-	RelationRevision           int                       `json:"relation_revision"`
-	PolicyDigest               string                    `json:"policy_digest"`
-	ExpectedBindings           ExpectedBindings          `json:"expected_bindings"`
-	PlanDigest                 string                    `json:"plan_digest"`
-	Status                     PlanStatus                `json:"status"`
-	ExpiresAt                  string                    `json:"expires_at"`
-	Operations                 []PlannedOperation        `json:"operations"`
-	Conflicts                  []Conflict                `json:"conflicts"`
-	Resolutions                []Resolution              `json:"resolutions,omitempty"`
-	ConfirmationRequirements   []ConfirmationRequirement `json:"confirmation_requirements"`
-	Summary                    PlanSummary               `json:"summary"`
+	SchemaVersion              int              `json:"schema_version"`
+	PlanID                     string           `json:"plan_id"` // plan_ 前缀
+	RelationID                 string           `json:"relation_id"`
+	Kind                       PlanKind         `json:"kind"`
+	ResolvedFromPlanID         string           `json:"resolved_from_plan_id,omitempty"`
+	BaseBaselineID             string           `json:"base_baseline_id,omitempty"`
+	BaseBaselineDigest         string           `json:"base_baseline_digest,omitempty"`
+	InputProjectSnapshotID     string           `json:"input_project_snapshot_id"`
+	InputRuntimeSnapshotID     string           `json:"input_runtime_snapshot_id"`
+	InputProjectSnapshotDigest string           `json:"input_project_snapshot_digest"`
+	InputRuntimeSnapshotDigest string           `json:"input_runtime_snapshot_digest"`
+	RelationRevision           int              `json:"relation_revision"`
+	PolicyDigest               string           `json:"policy_digest"`
+	ExpectedBindings           ExpectedBindings `json:"expected_bindings"`
+	// RequestedExactness 是建立计划时的请求确切度（exact|allow_partial）。
+	// 请求记录，不参与 PlanDigest（normalize.PlanDigest 排除清单）。
+	RequestedExactness       Exactness                 `json:"requested_exactness"`
+	PlanDigest               string                    `json:"plan_digest"`
+	Status                   PlanStatus                `json:"status"`
+	ExpiresAt                string                    `json:"expires_at"`
+	Operations               []PlannedOperation        `json:"operations"`
+	Conflicts                []Conflict                `json:"conflicts"`
+	Resolutions              []Resolution              `json:"resolutions,omitempty"`
+	ConfirmationRequirements []ConfirmationRequirement `json:"confirmation_requirements"`
+	Summary                  PlanSummary               `json:"summary"`
 	// Diagnostics 是输入快照携带的扫描/映射诊断（含 diag.mapping.collision 碰撞证据，
 	// 检视报告 P0-5）。证据性数据，不参与 PlanDigest。
 	Diagnostics []Diagnostic `json:"diagnostics"`

@@ -143,15 +143,15 @@ func TestOpenAndMigrateFreshDB(t *testing.T) {
 	if err := Migrate(context.Background(), db, filepath.Join(dir, "backup")); err != nil {
 		t.Fatalf("全新库 Migrate 失败: %v", err)
 	}
-	if v := userVersion(t, db); v != 2 {
-		t.Errorf("user_version = %d, 期望 2", v)
+	if v := userVersion(t, db); v != 3 {
+		t.Errorf("user_version = %d, 期望 3", v)
 	}
 	var count int
 	if err := db.QueryRow("SELECT COUNT(*) FROM schema_migrations").Scan(&count); err != nil {
 		t.Fatalf("读取 schema_migrations 失败: %v", err)
 	}
-	if count != 2 {
-		t.Errorf("schema_migrations 行数 = %d, 期望 2", count)
+	if count != 3 {
+		t.Errorf("schema_migrations 行数 = %d, 期望 3", count)
 	}
 }
 
@@ -177,8 +177,8 @@ func TestMigrateReopenIdempotent(t *testing.T) {
 	if err := Migrate(context.Background(), db2, filepath.Join(dir, "backup")); err != nil {
 		t.Fatalf("重开 Migrate 应幂等: %v", err)
 	}
-	if v := userVersion(t, db2); v != 2 {
-		t.Errorf("重开后 user_version = %d, 期望 2", v)
+	if v := userVersion(t, db2); v != 3 {
+		t.Errorf("重开后 user_version = %d, 期望 3", v)
 	}
 }
 
@@ -532,6 +532,7 @@ func TestPlanRoundTrip(t *testing.T) {
 		RelationRevision:           1,
 		PolicyDigest:               "sha256:policy",
 		ExpectedBindings:           model.ExpectedBindings{Project: "sha256:bp", Runtime: "sha256:br"},
+		RequestedExactness:         "exact",
 		Status:                     model.PlanDraft,
 		ExpiresAt:                  "2026-08-22T13:00:00Z",
 		Operations: []model.PlannedOperation{
@@ -922,5 +923,81 @@ func TestEventAppendSequenceMonotonic(t *testing.T) {
 	}
 	if seq1 != 1 || seq2 != 2 {
 		t.Errorf("stream_sequence = (%d, %d), 期望 (1, 2)", seq1, seq2)
+	}
+}
+
+// TestSyncPlansRequestedExactnessColumn 验证 v3 迁移列契约（契约 03 §2.6，票 #21）：
+// 列存在且默认 allow_partial、CHECK 拒绝非法取值、旧语义下未指定的行按默认回填、
+// 读取投影对空 plan_json 行归一 allow_partial。
+func TestSyncPlansRequestedExactnessColumn(t *testing.T) {
+	db := openTestDB(t)
+	defer db.Close()
+
+	// 列定义：PRAGMA table_info 报默认值 allow_partial、NOT NULL
+	rows, err := db.Query(`PRAGMA table_info(sync_plans)`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	found := false
+	for rows.Next() {
+		var cid, notnull, pk int
+		var name, ctype string
+		var dflt sql.NullString
+		if err := rows.Scan(&cid, &name, &ctype, &notnull, &dflt, &pk); err != nil {
+			t.Fatal(err)
+		}
+		if name == "requested_exactness" {
+			found = true
+			if dflt.String != "'allow_partial'" {
+				t.Errorf("列默认值 = %q, 期望 'allow_partial'", dflt.String)
+			}
+			if notnull != 1 {
+				t.Error("列应为 NOT NULL")
+			}
+		}
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatal(err)
+	}
+	if !found {
+		t.Fatal("sync_plans 缺少 requested_exactness 列")
+	}
+
+	// CHECK 拒绝非法取值
+	ctx := context.Background()
+	relationID := fixtureRelation(t, db, "ex")
+	snapshots := NewSnapshotRepository(db)
+	snapP, snapR := insertSnapPair(t, snapshots, relationID, "ex")
+	plan := fixturePlan(t, "plan_ex", relationID, snapP, snapR)
+	if err := NewPlanRepository(db).Insert(ctx, plan); err != nil {
+		t.Fatalf("插入计划失败: %v", err)
+	}
+	if _, err := db.Exec(`UPDATE sync_plans SET requested_exactness='fuzzy' WHERE id='plan_ex'`); err == nil {
+		t.Error("CHECK 应拒绝非法 requested_exactness")
+	}
+
+	// 未指定值的 raw 行按列默认回填 allow_partial，读取投影归一一致
+	if _, err := db.Exec(`INSERT INTO sync_plans(id, relation_id, kind,
+		input_project_snapshot_id, input_runtime_snapshot_id, relation_revision,
+		plan_digest, status, expires_at, normalization_version, plan_json)
+		VALUES('plan_ex_raw', ?, 'sync', ?, ?, 1, 'sha256:raw', 'draft',
+		'2999-01-01T00:00:00Z', 1, '{}')`,
+		relationID, snapP.SnapshotID, snapR.SnapshotID); err != nil {
+		t.Fatalf("raw 插入失败: %v", err)
+	}
+	var dflt string
+	if err := db.QueryRow(`SELECT requested_exactness FROM sync_plans WHERE id='plan_ex_raw'`).Scan(&dflt); err != nil {
+		t.Fatal(err)
+	}
+	if dflt != "allow_partial" {
+		t.Errorf("raw 行列值 = %q, 期望默认 allow_partial", dflt)
+	}
+	got, err := NewPlanRepository(db).Get(ctx, "plan_ex_raw")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.RequestedExactness != "allow_partial" {
+		t.Errorf("旧行读取投影 = %q, 期望归一 allow_partial", got.RequestedExactness)
 	}
 }

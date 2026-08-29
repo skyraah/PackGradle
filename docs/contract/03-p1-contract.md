@@ -36,6 +36,7 @@
 | Runtime 健康 | `GetRuntimeHealth(ctx, endpointID) (view.EndpointHealthView, error)` | `RuntimeService.GetRuntimeHealth(endpointID string) (EndpointHealthDTO, error)` | **新增** |
 | 快照诊断查询 | `GetSnapshotDiagnostics(ctx, relationID, snapshotID) ([]model.Diagnostic, error)` | `GetSnapshotDiagnostics(relationID, snapshotID string) ([]DiagnosticDTO, error)` | **新增**（T07 执行增补，票 #17：mapping_collision 等诊断在快照中可查；跨 Relation 按 not found 处理） |
 | hash cache 统计 | `GetHashCacheStats(ctx) (view.HashCacheStatsView, error)` | `GetHashCacheStats() (HashCacheStatsDTO, error)` | **新增**（T07 执行增补，票 #17：命中计数/命中率可查询，为 T14 性能基线供数；进程生命周期累计） |
+| 只读计划与冲突解决 | `PrepareSync`/`ResolvePlan`/`GetPlan`（架构 §4.4 已定签名，此前已存在） | 同名 Wails 方法 | **T11 执行增补**（票 #21：`requested_exactness` 三处一致固化 + `/workspaces/:id/plans/:plan_id` 页；DTO 只增 `requested_exactness`，方法数不变） |
 
 服务归属：Project/Runtime 端点用例按架构 §4.2 落在 `internal/application/project`、`internal/application/runtime` 两个新 app 包；`GetChanges`/Mapping/Rebind 留在 `internal/application/sync`。transport 侧对应 `ProjectService`、`RuntimeService` 两个新服务（与 `SyncService` 并列注册）。
 
@@ -285,6 +286,8 @@ type SyncPlanDTO struct {
 
 `ResolvePlan` 从 draft plan 继承 exactness（不可变），与既有 digest 语义一起固化。`normalization_version` 与 `policy_digest` 的固化属 P1-PLAN 执行票（`policy_digest` 已存在于 DTO），不在本规格范围。
 
+T11 执行落地（票 #21）：`model.SyncPlan.RequestedExactness`（json `requested_exactness`）+ `sync_plans` 列（v3 迁移 `ALTER TABLE … ADD COLUMN requested_exactness TEXT NOT NULL DEFAULT 'allow_partial' CHECK(...)`，既有行按保守默认回填）+ `SyncPlanDTO.RequestedExactness` 三处一致，并有契约测试（`sqlite_test.go` 列定义/CHECK/回填、`plan_test.go` 缺省与固化、`headless_test.go` 端到端链路）。取值 exact|allow_partial：空值缺省 `allow_partial`（保守），非法值 → `err.sync.invalid_exactness`（§3 增补）；exactness 是请求记录，不参与 PlanDigest（normalize.PlanDigest 排除清单），`ResolvePlan` 从 draft 继承。`/workspaces/:id/plans/:plan_id` 页（shadcn-vue，UX 原型 §7.5 P1）：只读操作/冲突/风险三页签，draft 计划提供 choose_side 冲突决议（`ResolvePlan` 产生全新不可变计划并导航到新 plan_id，旧计划只读不变），stale/expired 内容继续可读、推进控件隐藏并说明原因，页面无 Apply/History/Restore 入口；prepare_sync 入口在工作区列表行与 changes 页头部，由 availability 机制驱动（T07 推导表 + features.sync_preview）。
+
 ### 2.7 错误形态
 
 沿用现有双路径，无新 Go 类型：
@@ -317,6 +320,7 @@ type SyncPlanDTO struct {
 | `err.relation.prep_consumed` | {0}=preparation_id | 创建预检已被消费（引导刷新，关系可能已建成——双击/双窗口；ADR-0003 决议 4） |
 | `err.changes.snapshot_pair_invalid` | — | 快照对不属同 relation 或非同侧（T09，票 #19；detail 携带存储层原因） |
 | `err.sync.invalid_filter` | {0}=筛选字段, {1}=筛选值 | GetChanges 筛选值不在合法枚举（classification / resource_kind）（T09，票 #19） |
+| `err.sync.invalid_exactness` | {0}=值 | requested_exactness 不在合法枚举 exact|allow_partial（T11，票 #21） |
 | `err.recovery.in_progress` | — | 恢复任务占用（availability reason） |
 | `err.scan.incomplete` | — | scan_state 非 ready（availability reason） |
 | `diag.scan.ignored` | {0}=path | 包内追踪但不在受管范围（index.toml 非 mods/ metafile 条目），从观察剔除（T07，票 #17） |

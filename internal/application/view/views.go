@@ -177,6 +177,7 @@ type SyncPlanView struct {
 	RelationRevision           int                             `json:"relation_revision"`
 	PolicyDigest               string                          `json:"policy_digest"`
 	ExpectedBindings           model.ExpectedBindings          `json:"expected_bindings"`
+	RequestedExactness         string                          `json:"requested_exactness"` // exact|allow_partial（P1 记录不消费，随计划不可变）
 	PlanDigest                 string                          `json:"plan_digest"`
 	Status                     string                          `json:"status"`
 	ExpiresAt                  string                          `json:"expires_at"`

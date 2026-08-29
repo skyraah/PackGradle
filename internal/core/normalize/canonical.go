@@ -222,6 +222,7 @@ func baselineSideObject(id model.ResourceID, rep *model.Representation) (any, er
 // base_baseline_digest、输入快照 digest、policy_digest、expected_bindings、
 // 确定性排序后的 operations、最小化 conflicts（resource_id+kind）、resolutions。
 // 排除：plan_id、relation_id、resolved_from_plan_id、status、expires_at、
+// requested_exactness（请求记录，不是操作内容的函数）、
 // confirmation_requirements 与 summary（均可由上述字段推导）。
 func PlanDigest(p model.SyncPlan) (string, error) {
 	ops := make([]any, 0, len(p.Operations))

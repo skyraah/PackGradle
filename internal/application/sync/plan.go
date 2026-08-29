@@ -18,9 +18,22 @@ import (
 // planTTL 是计划有效期；过期/修订变化均为读取时投影，不写库。
 var planTTL = 15 * time.Minute
 
+// CodeSyncInvalidExactness 是 requested_exactness 不在合法枚举（exact|allow_partial）。
+// 契约 03 §3 增补（T11，票 #21）。
+const CodeSyncInvalidExactness = "err.sync.invalid_exactness"
+
 // PrepareSync 基于已完成的双端快照生成不可变 draft plan。
 // 只接受已持久化的 snapshot ID 与 Relation revision，不隐式启动扫描。
+// RequestedExactness 空值缺省 allow_partial（保守），固化进计划并随 ResolvePlan 继承。
 func (a *App) PrepareSync(ctx context.Context, input view.PrepareSyncInput) (view.SyncPlanView, error) {
+	ex := model.Exactness(input.RequestedExactness)
+	if ex == "" {
+		ex = model.ExactnessAllowPartial
+	}
+	if ex != model.ExactnessExact && ex != model.ExactnessAllowPartial {
+		return view.SyncPlanView{}, errs.New(CodeSyncInvalidExactness, input.RequestedExactness)
+	}
+	input.RequestedExactness = string(ex)
 	rel, err := a.deps.Relations.Get(ctx, input.RelationID)
 	if err != nil {
 		return view.SyncPlanView{}, errs.New(CodeRelationNotFound, input.RelationID)
@@ -81,6 +94,7 @@ func (a *App) PrepareSync(ctx context.Context, input view.PrepareSyncInput) (vie
 		Project:            snapP,
 		Runtime:            snapR,
 		ExpectedBindings:   model.ExpectedBindings{Project: proj.BindingFingerprint, Runtime: rt.BindingFingerprint},
+		RequestedExactness: model.Exactness(input.RequestedExactness),
 		ExpiresAt:          a.deps.Now().UTC().Add(planTTL),
 	})
 	if err != nil {

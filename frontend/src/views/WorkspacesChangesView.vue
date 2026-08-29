@@ -12,6 +12,7 @@ import type { ChangeDTO, ChangesSummaryDTO } from '../api'
 import { bootstrapped, tasks, workspaces } from '../stores/syncCache'
 import { showSnackbar } from '../stores/ui'
 import { errText } from '../utils/errors'
+import { canPrepareSync, prepareSync } from '../utils/plans'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
@@ -112,6 +113,24 @@ onUnmounted(() => clearTimeout(prefixTimer))
 // 路由切换工作区 → 全量重查
 watch(relationID, reload, { immediate: true })
 
+// —— 生成同步计划（T11 计划页承接）：availability 唯一门控，逻辑收敛于 utils/plans ——
+const preparing = ref(false)
+const canPrepareSyncNow = computed(() => canPrepareSync(wsRow.value))
+
+async function prepareSyncPlan(): Promise<void> {
+    const ws = wsRow.value
+    if (!ws || preparing.value) return
+    preparing.value = true
+    try {
+        const plan = await prepareSync(ws)
+        await router.push('/workspaces/' + relationID.value + '/plans/' + plan.plan_id)
+    } catch (e) {
+        showSnackbar(errText(e), 'error')
+    } finally {
+        preparing.value = false
+    }
+}
+
 // 活跃任务收敛（扫描结束）→ 重查一次变更；开始新任务不重查（读时计算，完成后才变）。
 // 触发时 syncCache 已随其自身管线更新，这里只补本页查询快照。
 watch(
@@ -210,6 +229,9 @@ const kindOptions = ['mod', 'text_file', 'binary_file']
                 </p>
             </div>
             <div class="flex shrink-0 gap-2">
+                <Button v-if="canPrepareSyncNow" variant="outline" size="sm" :disabled="preparing" @click="prepareSyncPlan">
+                    {{ t('changes.planAction') }}
+                </Button>
                 <Button variant="outline" size="sm" :disabled="inflight" @click="reload">
                     {{ t('changes.refresh') }}
                 </Button>

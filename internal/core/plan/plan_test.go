@@ -779,3 +779,57 @@ func TestResolveInitializeFromAbsentSideRejected(t *testing.T) {
 		t.Fatalf("应生成单条 write_project: %+v", resolved.Operations)
 	}
 }
+
+// TestBuildDraftExactness 验证 requested_exactness 固化语义（契约 03 §2.6，票 #21）：
+// 空值缺省 allow_partial、exact 固化、非法值报错；exactness 是请求记录不参与
+// PlanDigest（同操作不同请求确切度 → 同 digest）；Resolve 从 draft 继承。
+func TestBuildDraftExactness(t *testing.T) {
+	base := baseline(bothBase("file:a", "h1"), bothBase("file:c", "h1"))
+	proj := snapshot(model.SideProject,
+		fileObs("file:a", "h2", ""),
+		fileObs("file:c", "h1", ""),
+	)
+	rt := snapshot(model.SideRuntime,
+		fileObs("file:a", "h1", ""),
+	)
+
+	in := buildInput(base, proj, rt)
+	in.RequestedExactness = ""
+	partial, err := BuildDraft(in)
+	if err != nil {
+		t.Fatalf("空值 BuildDraft 报错: %v", err)
+	}
+	if partial.RequestedExactness != model.ExactnessAllowPartial {
+		t.Errorf("空值应缺省 allow_partial, got %q", partial.RequestedExactness)
+	}
+
+	inExact := buildInput(base, proj, rt)
+	inExact.RequestedExactness = model.ExactnessExact
+	exact, err := BuildDraft(inExact)
+	if err != nil {
+		t.Fatalf("exact BuildDraft 报错: %v", err)
+	}
+	if exact.RequestedExactness != model.ExactnessExact {
+		t.Errorf("exact 应固化进计划, got %q", exact.RequestedExactness)
+	}
+
+	// exactness 不参与 digest：同操作不同请求确切度 → 相同 PlanDigest
+	if partial.PlanDigest != exact.PlanDigest {
+		t.Errorf("exactness 不应影响 PlanDigest: %s vs %s", partial.PlanDigest, exact.PlanDigest)
+	}
+
+	inBad := buildInput(base, proj, rt)
+	inBad.RequestedExactness = "fuzzy"
+	if _, err := BuildDraft(inBad); err == nil {
+		t.Error("非法 exactness 应报错")
+	}
+
+	// Resolve 继承 draft 的 exactness
+	resolved, err := Resolve(partial, proj, rt, nil)
+	if err != nil {
+		t.Fatalf("Resolve 报错: %v", err)
+	}
+	if resolved.RequestedExactness != model.ExactnessAllowPartial {
+		t.Errorf("Resolve 应继承 draft exactness, got %q", resolved.RequestedExactness)
+	}
+}

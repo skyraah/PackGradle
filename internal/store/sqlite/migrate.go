@@ -51,6 +51,7 @@ var migrations = []migration{
 			}
 			return nil
 		}},
+	{Version: 3, Name: "sync_plans requested_exactness", Stmt: func() string { return schemaV3 }},
 }
 
 // SchemaVersion 返回当前代码支持的目标 schema 版本（= len(migrations)）。

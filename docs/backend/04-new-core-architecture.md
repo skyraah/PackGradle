@@ -38,7 +38,7 @@ internal/
     prism/                  # Runtime 扫描：mods/*.jar + mods/.index 元数据 + filename hint 跨侧匹配；Discoverer 实例发现
   store/
     paths.go                # 用户数据目录布局（packgradle.db/objects/staging/logs/exports）
-    sqlite/                 # schema v1→v2 前向迁移（VACUUM INTO 备份门禁；v2 补 tasks.plan_id/commit_id 外键）+ 完整性守卫 + 各仓库
+    sqlite/                 # schema v1→v3 前向迁移（VACUUM INTO 备份门禁；v2 补 tasks.plan_id/commit_id 外键；v3 补 sync_plans.requested_exactness）+ 完整性守卫 + 各仓库
     objectstore/            # SHA-256 CAS：流式写 + 复核 + 原子落位
   transport/                # Wails DTO/转换/SyncService/事件桥（packgradle://event）
   bootstrap/                # 唯一装配点（main.go 与 headless 工具共用）

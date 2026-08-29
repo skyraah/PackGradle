@@ -112,6 +112,7 @@ func PlanView(p model.SyncPlan) view.SyncPlanView {
 	if diags == nil {
 		diags = []model.Diagnostic{}
 	}
+	// 旧行缺值由 plan_repo.Get 读取时归一（allow_partial），此处只做类型投影
 	return view.SyncPlanView{
 		SchemaVersion: p.SchemaVersion, PlanID: p.PlanID, RelationID: p.RelationID,
 		Kind: string(p.Kind), ResolvedFromPlanID: p.ResolvedFromPlanID,
@@ -122,6 +123,7 @@ func PlanView(p model.SyncPlan) view.SyncPlanView {
 		InputRuntimeSnapshotDigest: p.InputRuntimeSnapshotDigest,
 		RelationRevision:           p.RelationRevision, PolicyDigest: p.PolicyDigest,
 		ExpectedBindings:         p.ExpectedBindings,
+		RequestedExactness:       string(p.RequestedExactness),
 		PlanDigest:               p.PlanDigest,
 		Status:                   string(p.Status),
 		ExpiresAt:                p.ExpiresAt,

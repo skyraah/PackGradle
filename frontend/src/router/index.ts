@@ -94,6 +94,16 @@ const workspacesMappings: RouteRecordRaw = {
     meta: { titleKey: 'nav.workspacesMappings' },
 }
 
+// 新栈工作区详情：计划页（shadcn-vue；PrepareSync/ResolvePlan/GetPlan 只读计划与
+// choose_side 冲突解决，UX 原型 §7.5。无 Apply/History/Restore 入口，票 #21。
+// 入口在工作区列表行操作与变化页头部，不占侧栏导航项）
+const workspacesPlan: RouteRecordRaw = {
+    path: '/workspaces/:id/plans/:plan_id',
+    name: 'workspaces-plan',
+    component: () => import('../views/WorkspacesPlanView.vue'),
+    meta: { titleKey: 'nav.workspacesPlan' },
+}
+
 const settings: RouteRecordRaw = {
     path: '/settings',
     name: 'settings',
@@ -106,7 +116,7 @@ export const navRoutes: RouteRecordRaw[] = [workspaces, dashboard, projects, dev
 
 const router = createRouter({
     history: createWebHashHistory(),
-    routes: [...navRoutes, projectDetail, workspacesNew, workspacesChanges, workspacesMappings, { path: '/:pathMatch(.*)*', redirect: '/' }],
+    routes: [...navRoutes, projectDetail, workspacesNew, workspacesChanges, workspacesMappings, workspacesPlan, { path: '/:pathMatch(.*)*', redirect: '/' }],
     // 返回时恢复滚动位置（keep-alive 视图由组件自身状态保留）
     scrollBehavior(_to, _from, savedPosition) {
         return savedPosition ?? { top: 0 }

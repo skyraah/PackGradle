@@ -11,6 +11,7 @@ import type { TaskDTO, WorkspaceDTO } from '../api'
 import { bootstrapped, bootstrapError, retryBootstrap, tasks, triggerRequery, workspaces } from '../stores/syncCache'
 import { showSnackbar } from '../stores/ui'
 import { errText } from '../utils/errors'
+import { canPrepareSync, prepareSync } from '../utils/plans'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
@@ -62,6 +63,7 @@ interface WorkspaceRow {
     workspace: WorkspaceDTO
     task: TaskDTO | null
     canScan: boolean
+    canPrepareSync: boolean
     scanLabel: string
     healthTone: BadgeTone
     scanTone: BadgeTone
@@ -76,9 +78,11 @@ const rows = computed<WorkspaceRow[]>(() =>
         return {
             workspace: w,
             task,
-            // 能力驱动入口（契约 03 §2.1）：features.scan 且 availability 可用才渲染扫描入口；
-            // prepare_sync/rebind 的承接页随 T09–T12 落地后再由同一 availability 机制点亮
+            // 能力驱动入口（契约 03 §2.1）：features 且 availability 可用才渲染（唯一门控，
+            // 前端不自行推断快照存在性——scan ready 由后端推导表保证）；prepare_sync 由
+            // T11 承接页（/workspaces/:id/plans/:plan_id）点亮
             canScan: w.features.scan && w.availability?.some(a => a.action === 'scan' && a.available) === true,
+            canPrepareSync: canPrepareSync(w),
             scanLabel: w.state.scan_state === 'failed' ? t('workspaces.scanRetryAction') : t('workspaces.scanAction'),
             healthTone: toneOf(healthTones, w.relation.health),
             scanTone: toneOf(scanTones, w.state.scan_state),
@@ -109,13 +113,13 @@ function lastActivity(w: WorkspaceDTO): string {
 
 // —— 行操作（动作成功后立即触发一轮受控重查；后续事件继续经管线刷新）——
 // withPending 统一防重入：同 id 动作进行中禁点，结束后释放
-const pending = ref({ scanning: new Set<string>(), cancelling: new Set<string>() })
+const pending = ref({ scanning: new Set<string>(), cancelling: new Set<string>(), preparing: new Set<string>() })
 
-function isPending(kind: 'scanning' | 'cancelling', id: string): boolean {
+function isPending(kind: 'scanning' | 'cancelling' | 'preparing', id: string): boolean {
     return pending.value[kind].has(id)
 }
 
-async function withPending(kind: 'scanning' | 'cancelling', id: string, action: () => Promise<void>): Promise<void> {
+async function withPending(kind: 'scanning' | 'cancelling' | 'preparing', id: string, action: () => Promise<void>): Promise<void> {
     if (isPending(kind, id)) return
     const next = new Set(pending.value[kind])
     next.add(id)
@@ -127,6 +131,20 @@ async function withPending(kind: 'scanning' | 'cancelling', id: string, action: 
         rest.delete(id)
         pending.value = { ...pending.value, [kind]: rest }
     }
+}
+
+// 生成同步计划（T11 点亮的 prepare_sync 入口，availability 驱动）：
+// 用列表缓存的当前修订与最新双端快照直接发起，成功后进入计划页。
+function prepareSyncPlan(row: WorkspaceRow): void {
+    const ws = row.workspace
+    void withPending('preparing', ws.relation.relation_id, async () => {
+        try {
+            const plan = await prepareSync(ws)
+            await router.push('/workspaces/' + ws.relation.relation_id + '/plans/' + plan.plan_id)
+        } catch (e) {
+            showSnackbar(errText(e), 'error')
+        }
+    })
 }
 
 function startScan(w: WorkspaceRow): void {
@@ -278,6 +296,16 @@ const cols: { key: string; alignRight?: boolean }[] = [
                                             @click="router.push('/workspaces/' + row.workspace.relation.relation_id + '/changes')"
                                         >
                                             {{ t('workspaces.changesAction') }}
+                                        </Button>
+                                        <!-- 同步计划入口：prepare_sync 可用（T11 计划页承接） -->
+                                        <Button
+                                            v-if="row.canPrepareSync"
+                                            size="xs"
+                                            variant="outline"
+                                            :disabled="isPending('preparing', row.workspace.relation.relation_id)"
+                                            @click="prepareSyncPlan(row)"
+                                        >
+                                            {{ t('workspaces.planAction') }}
                                         </Button>
                                         <Button
                                             v-if="row.canScan"

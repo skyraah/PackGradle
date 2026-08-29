@@ -1,0 +1,40 @@
+// 计划用例的页面侧共享逻辑（T11，票 #21）：
+// prepare_sync 入口的三份同形实现（列表行/changes 头部/计划页重新生成）收敛于此。
+// 可用性门控只用后端推导的 availability（契约 03 §2.1「前端不得自行推断」），
+// scan_state=ready 由后端推导表保证，快照摘要随之齐备。
+// P1 固定请求 exact：请求确切度随计划记录（Phase 2 Apply 才消费），P1 用户预期完整应用。
+import { SyncService } from '../api'
+import type { SyncPlanDTO, WorkspaceDTO } from '../api'
+
+// canPrepareSync 判断工作区是否渲染「同步计划」入口：features + availability（唯一门控）。
+export function canPrepareSync(ws: WorkspaceDTO | null | undefined): boolean {
+    return (
+        ws?.features.sync_preview === true &&
+        ws.availability?.some(a => a.action === 'prepare_sync' && a.available) === true
+    )
+}
+
+// canRescan 判断是否可发起重新扫描（stale 计划的「重新扫描并生成新计划」主操作）。
+export function canRescan(ws: WorkspaceDTO | null | undefined): boolean {
+    return (
+        ws?.features.scan === true &&
+        ws.availability?.some(a => a.action === 'scan' && a.available) === true
+    )
+}
+
+// prepareSync 用工作区缓存的当前修订与最新双端快照发起 PrepareSync，返回新计划。
+// 抛错时返回 rejected promise，由调用方决定 snackbar 呈现。
+export function prepareSync(ws: WorkspaceDTO): Promise<SyncPlanDTO> {
+    const project = ws.latest_project_snapshot
+    const runtime = ws.latest_runtime_snapshot
+    if (!project || !runtime) {
+        return Promise.reject(new Error('missing latest snapshots'))
+    }
+    return SyncService.PrepareSync({
+        relation_id: ws.relation.relation_id,
+        relation_revision: ws.relation.revision,
+        input_project_snapshot_id: project.snapshot_id,
+        input_runtime_snapshot_id: runtime.snapshot_id,
+        requested_exactness: 'exact',
+    })
+}
