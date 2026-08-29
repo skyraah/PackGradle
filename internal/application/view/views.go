@@ -281,3 +281,23 @@ type ChangesPage struct {
 	Summary       ChangesSummary `json:"summary"`
 	NextCursor    string         `json:"next_cursor,omitempty"`
 }
+
+// PolicyView 是映射策略读投影（契约 03 §2.3；票 #20）：policy 本体 + 关系级
+// 策略代次。RelationRevision 是乐观锁 expected_revision 的取值来源（ADR-0002
+// 决议 2：policy 修改是唯一递增源）；两类修订号都不进入用户可见文案（决议 3）。
+type PolicyView struct {
+	SchemaVersion    int                 `json:"schema_version"`
+	PolicyID         string              `json:"policy_id"`
+	PolicyRevision   int                 `json:"policy_revision"` // 策略集模板自身版本（ADR-0002 决议 5：与关系代次语义独立、互不驱动）
+	Rules            []model.MappingRule `json:"rules"`
+	RelationRevision int                 `json:"relation_revision"`
+}
+
+// UpdateMappingPolicyInput 是策略写输入（契约 03 §2.3）：Rules 整体替换，
+// 策略集身份（PolicyID/模板 Revision）由当前策略保持不变；ExpectedRevision
+// 必须等于当前关系修订（乐观锁，err.mapping.stale_revision）。
+type UpdateMappingPolicyInput struct {
+	RelationID       string              `json:"relation_id"`
+	ExpectedRevision int                 `json:"expected_revision"`
+	Rules            []model.MappingRule `json:"rules"`
+}

@@ -44,6 +44,7 @@ export type {
     SyncPlanDTO,
     TaskDTO,
     TaskPageDTO,
+    UpdateMappingPolicyDTO,
     WorkspaceDTO,
     WorkspaceFeaturesDTO,
     WorkspacePageDTO,

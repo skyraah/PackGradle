@@ -119,3 +119,47 @@ func TestWorkspaceFeaturesAvailabilityDTO(t *testing.T) {
 		t.Fatalf("序列化失败: %s", b)
 	}
 }
+
+// TestPolicyViewDTO 验证映射策略读写投影（票 #20）：RelationRevision 随读写
+// 视图透出（乐观锁取值来源）、预检投影 policyDTO 不携带该字段、规则 DTO 与
+// model 往返一致。
+func TestPolicyViewDTO(t *testing.T) {
+	v := view.PolicyView{
+		SchemaVersion:  model.CurrentSchemaVersion,
+		PolicyID:       "default-v1",
+		PolicyRevision: 1,
+		Rules: []model.MappingRule{
+			{ID: "mods", ResourceKind: "mod", ProjectPrefix: "mods", RuntimePrefix: "mods",
+				Direction: "bidirectional", Materialization: "copy", MergePolicy: "packwiz", RuntimeLocalPolicy: "exclude"},
+		},
+		RelationRevision: 3,
+	}
+	dto := policyViewDTO(v)
+	if dto.RelationRevision != 3 {
+		t.Errorf("读写投影应携带 relation_revision: %+v", dto)
+	}
+	if len(dto.Rules) != 1 || dto.Rules[0].ID != "mods" || dto.PolicyID != "default-v1" || dto.Revision != 1 {
+		t.Errorf("策略本体投影错误: %+v", dto)
+	}
+	if dto.SchemaVersion != model.CurrentSchemaVersion {
+		t.Errorf("schema_version 错误: %d", dto.SchemaVersion)
+	}
+
+	// 预检投影（policyDTO）不带 relation_revision（omitempty 恒 0）
+	prep := policyDTO(model.MappingPolicy{SchemaVersion: 1, PolicyID: "default-v1", Revision: 1})
+	if prep.RelationRevision != 0 {
+		t.Errorf("预检投影 relation_revision 应为 0: %+v", prep)
+	}
+
+	// 规则 DTO → model 往返
+	rm := mappingRuleModel(MappingRuleDTO{
+		ID: "config", ResourceKind: "text_file", ProjectPrefix: "config", RuntimePrefix: "config",
+		Include: []string{}, Exclude: []string{"*.log"},
+		Direction: "project_to_runtime", Materialization: "copy",
+		MergePolicy: "manual", RuntimeLocalPolicy: "report",
+	})
+	if rm.ID != "config" || rm.Include == nil || len(rm.Exclude) != 1 || rm.Exclude[0] != "*.log" ||
+		rm.Direction != "project_to_runtime" || rm.RuntimeLocalPolicy != "report" {
+		t.Errorf("规则还原错误: %+v", rm)
+	}
+}

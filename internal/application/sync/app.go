@@ -35,6 +35,9 @@ type Application interface {
 	GetHashCacheStats(ctx context.Context) (view.HashCacheStatsView, error)
 	// GetChanges 资源级变更浏览（契约 03 §2.2；票 #19）。
 	GetChanges(ctx context.Context, input view.GetChangesInput) (view.ChangesPage, error)
+	// GetMappingPolicy / UpdateMappingPolicy 映射策略读写（契约 03 §2.3；票 #20）。
+	GetMappingPolicy(ctx context.Context, relationID string) (view.PolicyView, error)
+	UpdateMappingPolicy(ctx context.Context, input view.UpdateMappingPolicyInput) (view.PolicyView, error)
 }
 
 var _ Application = (*App)(nil)

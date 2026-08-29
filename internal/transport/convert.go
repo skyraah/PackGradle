@@ -37,6 +37,31 @@ func policyDTO(p model.MappingPolicy) PolicyDTO {
 	return PolicyDTO{SchemaVersion: p.SchemaVersion, PolicyID: p.PolicyID, Revision: p.Revision, Rules: rules}
 }
 
+// policyViewDTO 投影映射策略读写视图（契约 03 §2.3）：在 policyDTO 之上补
+// RelationRevision（乐观锁 expected_revision 的取值来源；预检投影不走此函数）。
+func policyViewDTO(v view.PolicyView) PolicyDTO {
+	out := policyDTO(model.MappingPolicy{
+		SchemaVersion: v.SchemaVersion,
+		PolicyID:      v.PolicyID,
+		Revision:      v.PolicyRevision,
+		Rules:         v.Rules,
+	})
+	out.RelationRevision = v.RelationRevision
+	return out
+}
+
+// mappingRuleModel 把规则 DTO 还原为 model（UpdateMappingPolicy 写路径）；
+// include/exclude 与读路径对称归一空切片（写库不留 nil）。
+func mappingRuleModel(r MappingRuleDTO) model.MappingRule {
+	return model.MappingRule{
+		ID: r.ID, ResourceKind: r.ResourceKind,
+		ProjectPrefix: r.ProjectPrefix, RuntimePrefix: r.RuntimePrefix,
+		Include: strs(r.Include), Exclude: strs(r.Exclude),
+		Direction: r.Direction, Materialization: r.Materialization,
+		MergePolicy: r.MergePolicy, RuntimeLocalPolicy: r.RuntimeLocalPolicy,
+	}
+}
+
 func mappingRuleDTO(r model.MappingRule) MappingRuleDTO {
 	return MappingRuleDTO{
 		ID: r.ID, ResourceKind: r.ResourceKind,

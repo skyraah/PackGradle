@@ -51,6 +51,10 @@ type PolicyDTO struct {
 	PolicyID      string           `json:"policy_id"`
 	Revision      int              `json:"revision"`
 	Rules         []MappingRuleDTO `json:"rules"`
+	// RelationRevision 是关系级策略代次（ADR-0002 决议 5：与模板版本语义独立、
+	// 互不驱动）。仅 Mapping 读写投影填充（mappings 页乐观锁 expected_revision
+	// 的取值来源），预检投影恒 0；任何修订号不进入用户可见文案（决议 3）。
+	RelationRevision int `json:"relation_revision,omitempty"`
 }
 
 type MappingRuleDTO struct {
@@ -331,6 +335,15 @@ type EndpointHealthDTO struct {
 	PathExists         bool   `json:"path_exists"`
 	FingerprintMatches bool   `json:"fingerprint_matches"`
 	CheckedAt          string `json:"checked_at"`
+}
+
+// UpdateMappingPolicyDTO 是映射策略写输入（契约 03 §2.3；票 #20）：rules 整体
+// 替换，策略集身份保持不变；乐观锁——expected_revision 必须等于当前关系修订
+// （PolicyDTO.relation_revision 的读值），不等返回 err.mapping.stale_revision。
+type UpdateMappingPolicyDTO struct {
+	RelationID       string           `json:"relation_id"`
+	ExpectedRevision int              `json:"expected_revision"`
+	Rules            []MappingRuleDTO `json:"rules"`
 }
 
 // GetChangesDTO 是资源级 Changes 查询输入（契约 03 §2.2；读时计算，快照对缺省

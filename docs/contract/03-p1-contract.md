@@ -24,8 +24,8 @@
 | 工作区详情 | `GetWorkspace`（已有） | `GetWorkspace`（已有） | **扩展**：DTO 增补 features + availability |
 | 工作区列表 | `ListWorkspaces`（已有） | `ListWorkspaces`（已有） | **扩展**：同上（同构 WorkspaceDTO） |
 | 资源级 Changes | `GetChanges(ctx, GetChangesInput) (view.ChangesPage, error)` | `GetChanges(input GetChangesDTO) (ChangesPageDTO, error)` | **新增**（T09 执行落地，票 #19：`internal/application/sync/changes.go` + `/workspaces/:id/changes` 页） |
-| Mapping 读 | `GetMappingPolicy(ctx, relationID) (view.PolicyView, error)` | `GetMappingPolicy(relationID string) (PolicyDTO, error)` | **新增** |
-| Mapping 写 | `UpdateMappingPolicy(ctx, UpdateMappingPolicyInput) (view.PolicyView, error)` | `UpdateMappingPolicy(input UpdateMappingPolicyDTO) (PolicyDTO, error)` | **新增** |
+| Mapping 读 | `GetMappingPolicy(ctx, relationID) (view.PolicyView, error)` | `GetMappingPolicy(relationID string) (PolicyDTO, error)` | **新增**（T10 执行落地，票 #20：`internal/application/sync/mapping.go` + `/workspaces/:id/mappings` 页） |
+| Mapping 写 | `UpdateMappingPolicy(ctx, UpdateMappingPolicyInput) (view.PolicyView, error)` | `UpdateMappingPolicy(input UpdateMappingPolicyDTO) (PolicyDTO, error)` | **新增**（T10 执行落地，票 #20：同上；乐观锁 + 编译校验 + 修订号同事务） |
 | Rebind 预检 | `PrepareRebind(ctx, PrepareRebindInput) (view.RebindPreparationView, error)` | `PrepareRebind(input PrepareRebindDTO) (RebindPreparationDTO, error)` | **新增**（架构 §4.4 已定签名） |
 | Rebind 执行 | `ApplyRebind(ctx, preparationID) (view.RelationView, error)` | `ApplyRebind(preparationID string) (RelationDTO, error)` | **新增**（架构 §4.4 已定签名） |
 | Project 发现 | `DiscoverProjects(ctx, parentDir) ([]view.ProjectCandidateView, error)` | `ProjectService.DiscoverProjects(parentDir string) ([]ProjectCandidateDTO, error)` | **新增** |
@@ -181,6 +181,8 @@ type UpdateMappingPolicyInput struct {
 语义（按 ADR-0002 决议 5 注释）：`PolicyDTO.Revision`（策略集模板版本）与 `RelationDTO.Revision`（关系级策略代次）语义独立、互不驱动；两个数字都不进入用户可见文案或界面。写路径在 P1-POLICY 编译器落地前只做结构校验；编译器已落地（T04，`internal/application/policy`），`UpdateMappingPolicy` 实现时必须先过编译校验（`err.mapping.compile_failed`，§3）。
 
 编译器落地实况（T04）：编译期校验方向、资源类型、prefix、include/exclude（root-relative glob 编译证明）与 root 边界，mod 语义规则恰好一条且前缀必须 mods；违规返回 `*RuleError` → `err.mapping.compile_failed`（args {0}=rule_id，字段与原因进 detail）。规则决议为「最具体前缀优先」，最长前缀并列无法唯一决议时产出 `diag.mapping.collision` 诊断（证据：并列规则 ID + 命中路径），该路径从观察剔除；诊断随快照持久化，并经 `SyncPlan.diagnostics` / `SyncPlanDTO.diagnostics` 透出（证据性数据，不参与 PlanDigest/SnapshotDigest）。
+
+T10 执行落地（票 #20）：`view.PolicyView` = policy 本体（PolicyID/模板 Revision/Rules）+ `RelationRevision`（关系级策略代次），`PolicyDTO` 增补 `relation_revision`（只增不删，omitempty——预检投影恒 0）；`RelationRevision` 是 mappings 页乐观锁 `expected_revision` 的取值来源（ADR-0002 决议 2：policy 修改是唯一递增源；决议 3：两类修订号都不进入用户可见文案，`err.mapping.stale_revision` 的 locale 文案不插值 {0}/{1}）。写路径单 SQLite 事务（RunInTx）内依序：读关系（`err.relation.not_found`）→ 读当前策略（`err.mapping.not_found`，理论上不可达）→ 组装新策略（Rules 整体替换、策略集身份 PolicyID/模板 Revision 保持不变，ADR-0002 决议 5）→ 编译校验先行（失败即回滚，修订号不前进）→ 乐观锁校验（不等 → `err.mapping.stale_revision`）→ `SavePolicy`（UPSERT + 同事务递增 relations.revision，旧 Plan 立即 stale）；返回保存后投影（含新关系修订）。collision 证据经既有 `GetSnapshotDiagnostics`（票 #17）查询，mappings 页按两侧最新快照取诊断区渲染（哪两条规则并列、命中哪个路径；证据反映最近一次扫描的策略状态）。
 
 ### 2.4 Rebind（Prepare/Apply）
 

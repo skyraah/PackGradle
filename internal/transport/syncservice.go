@@ -198,6 +198,33 @@ func (s *SyncService) GetChanges(input GetChangesDTO) (ChangesPageDTO, error) {
 	return changesDTO(v), nil
 }
 
+// GetMappingPolicy 读取关系的当前映射策略（契约 03 §2.3；票 #20）。
+func (s *SyncService) GetMappingPolicy(relationID string) (PolicyDTO, error) {
+	v, err := s.app.GetMappingPolicy(context.Background(), relationID)
+	if err != nil {
+		return PolicyDTO{}, err
+	}
+	return policyViewDTO(v), nil
+}
+
+// UpdateMappingPolicy 保存映射策略修改：编译校验 + 乐观锁 + 修订号同事务递增
+// （契约 03 §2.3；票 #20）。返回保存后的策略投影（含新关系修订）。
+func (s *SyncService) UpdateMappingPolicy(input UpdateMappingPolicyDTO) (PolicyDTO, error) {
+	rules := make([]model.MappingRule, 0, len(input.Rules))
+	for _, r := range input.Rules {
+		rules = append(rules, mappingRuleModel(r))
+	}
+	v, err := s.app.UpdateMappingPolicy(context.Background(), view.UpdateMappingPolicyInput{
+		RelationID:       input.RelationID,
+		ExpectedRevision: input.ExpectedRevision,
+		Rules:            rules,
+	})
+	if err != nil {
+		return PolicyDTO{}, err
+	}
+	return policyViewDTO(v), nil
+}
+
 func pageRequest(cursor string, limit int) ports.PageRequest {
 	return ports.PageRequest{Cursor: cursor, Limit: limit}
 }

@@ -262,6 +262,14 @@ const cols: { key: string; alignRight?: boolean }[] = [
                                 <TableCell class="text-muted-foreground text-xs">{{ row.activity }}</TableCell>
                                 <TableCell>
                                     <div class="flex justify-end gap-2">
+                                        <!-- 受管范围入口：映射策略查看/编辑（policy 随关系恒存在） -->
+                                        <Button
+                                            size="xs"
+                                            variant="outline"
+                                            @click="router.push('/workspaces/' + row.workspace.relation.relation_id + '/mappings')"
+                                        >
+                                            {{ t('workspaces.mappingsAction') }}
+                                        </Button>
                                         <!-- 变更浏览入口：两侧快照齐备（scan ready）才可读时计算 diff -->
                                         <Button
                                             v-if="row.workspace.state.scan_state === 'ready'"

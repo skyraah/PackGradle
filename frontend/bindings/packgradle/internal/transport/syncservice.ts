@@ -46,6 +46,13 @@ export function GetHashCacheStats(): $CancellablePromise<$models.HashCacheStatsD
 }
 
 /**
+ * GetMappingPolicy 读取关系的当前映射策略（契约 03 §2.3；票 #20）。
+ */
+export function GetMappingPolicy(relationID: string): $CancellablePromise<$models.PolicyDTO> {
+    return $Call.ByID(2710272195, relationID);
+}
+
+/**
  * GetPlan 查询计划（stale/expired 为读取时投影）。
  */
 export function GetPlan(planID: string): $CancellablePromise<$models.SyncPlanDTO> {
@@ -122,4 +129,12 @@ export function ResolvePlan(input: $models.ResolvePlanDTO): $CancellablePromise<
  */
 export function StartScan(relationID: string): $CancellablePromise<$models.TaskDTO> {
     return $Call.ByID(507785416, relationID);
+}
+
+/**
+ * UpdateMappingPolicy 保存映射策略修改：编译校验 + 乐观锁 + 修订号同事务递增
+ * （契约 03 §2.3；票 #20）。返回保存后的策略投影（含新关系修订）。
+ */
+export function UpdateMappingPolicy(input: $models.UpdateMappingPolicyDTO): $CancellablePromise<$models.PolicyDTO> {
+    return $Call.ByID(1781301722, input);
 }
