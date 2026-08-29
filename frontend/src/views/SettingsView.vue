@@ -18,6 +18,14 @@ import {
 
 const { t, locale } = useI18n()
 
+// 语言偏好持久化（packgradle.locale）：P1 仅 zh-CN，切换逻辑就位后新语言包即插即用
+try {
+    const saved = localStorage.getItem('packgradle.locale')
+    if (saved) locale.value = saved
+} catch {
+    // localStorage 不可用时保持默认 zh-CN
+}
+
 // —— 主题：跟随系统 / 浅色 / 深色（stores/theme 持久化 + 落 html.dark） ——
 const themeOptions: { value: ThemePref; labelKey: string }[] = [
     { value: 'system', labelKey: 'settings.themeSystem' },
@@ -30,6 +38,11 @@ const languageOptions = [{ value: 'zh-CN', labelKey: 'settings.languageZh' }]
 
 function onLocaleChange(v: unknown) {
     locale.value = String(v)
+    try {
+        localStorage.setItem('packgradle.locale', String(v))
+    } catch {
+        // 持久化失败不阻断本次会话内的切换
+    }
 }
 
 // —— Mock 数据层卡片：仅 dev 构建装载（生产构建 __DEV__ 恒 false，动态导入被裁剪） ——

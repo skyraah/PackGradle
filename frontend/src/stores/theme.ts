@@ -48,7 +48,7 @@ export function setThemePref(p: ThemePref): void {
     } catch {
         // 持久化失败不阻断本次会话内的切换
     }
-    apply()
+    // apply 由 watch(themePref) 统一触发
 }
 
 // toggleTheme 顶栏按钮：在浅色/深色间显式切换（脱离「跟随系统」）

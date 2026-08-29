@@ -117,13 +117,13 @@ const toneIcon: Record<string, Component> = {
 }
 const toneClass: Record<string, string> = {
     info: 'bg-tint-primary text-foreground border-primary/30',
-    success: 'bg-tint-success text-foreground border-primary/30',
+    success: 'bg-tint-success text-foreground border-emerald-500/30',
     warning: 'bg-tint-warning text-foreground border-amber-500/30',
     error: 'bg-tint-error text-foreground border-destructive/30',
 }
 const toneIconClass: Record<string, string> = {
     info: 'text-primary',
-    success: 'text-primary',
+    success: 'text-emerald-500',
     warning: 'text-amber-500',
     error: 'text-destructive',
 }

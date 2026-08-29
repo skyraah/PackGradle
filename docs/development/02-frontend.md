@@ -97,5 +97,5 @@ const plan = await SyncService.GetPlan(planID)
   `__DEV__ ? defineAsyncComponent(...) : null` 门控（mock 卡片与 MOCK 徽标的既有做法）。
 - **任务中心**：`TaskCenterDrawer.vue` 是 shadcn Sheet，数据全部来自 `stores/syncCache`
   （活跃任务投影）；徽标计数 = 活跃任务数，无本地已读状态。
-- **本地存储键**：`packgradle.theme`（主题偏好）、`packgradle.mock`（dev mock 开关，生产恒 false）。
+- **本地存储键**：`packgradle.theme`（主题偏好）、`packgradle.locale`（语言偏好）、`packgradle.mock`（dev mock 开关，生产恒 false）。
 - **构建产物**：`frontend/dist` 会被 `main.go` embed，必须存在于构建前（Wails task 已处理）。

@@ -100,6 +100,7 @@
   "tasks.status.failed": "失败",
   "tasks.status.cancelled": "已取消",
   "tasks.status.recovery_required": "需恢复",
+  "tasks.viewPlan": "查看计划",
   "tasks.viewWorkspace": "查看工作区",
   "err.endpoint.not_found": "未找到端点: {0}",
   "err.endpoint.invalid_path": "路径无法解析或不是有效的端点目录: {0}",

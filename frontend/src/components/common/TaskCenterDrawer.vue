@@ -75,6 +75,11 @@ function timeText(iso: string): string {
     return d.toLocaleTimeString()
 }
 
+// 任务项时间：优先更新时间（任务推进中持续变化），解析失败退回创建时间
+function activityText(task: TaskDTO): string {
+    return timeText(task.updated_at) || timeText(task.created_at)
+}
+
 const cancelling = ref(new Set<string>())
 
 async function cancelTask(task: TaskDTO): Promise<void> {
@@ -127,7 +132,7 @@ async function cancelTask(task: TaskDTO): Promise<void> {
                             <div v-if="workspaceLabel(task)" class="text-muted-foreground mt-0.5 truncate text-xs">
                                 {{ workspaceLabel(task) }}
                             </div>
-                            <div class="text-muted-foreground mt-0.5 text-xs">{{ timeText(task.created_at) }}</div>
+                            <div class="text-muted-foreground mt-0.5 text-xs">{{ activityText(task) }}</div>
                         </div>
                         <Badge :variant="statusTone(task.status).variant" :class="statusTone(task.status).class">
                             {{ statusLabel(task.status) }}
@@ -158,7 +163,7 @@ async function cancelTask(task: TaskDTO): Promise<void> {
                         </div>
                     </template>
 
-                    <!-- 终态：结果消息 + 上下文动作 -->
+                    <!-- 终态：结果消息 + outcome + 上下文动作 -->
                     <template v-else>
                         <div
                             v-if="task.message_key"
@@ -167,7 +172,16 @@ async function cancelTask(task: TaskDTO): Promise<void> {
                         >
                             {{ t(task.message_key, task.message_args ?? []) }}
                         </div>
+                        <div v-if="task.outcome" class="text-faint mt-1 text-xs">{{ task.outcome }}</div>
                         <div v-if="task.relation_id" class="mt-2 flex justify-end gap-2">
+                            <Button
+                                v-if="task.plan_id"
+                                size="xs"
+                                variant="outline"
+                                @click="router.push('/workspaces/' + task.relation_id + '/plans/' + task.plan_id)"
+                            >
+                                {{ t('tasks.viewPlan') }}
+                            </Button>
                             <Button size="xs" variant="outline" @click="router.push('/workspaces/' + task.relation_id + '/changes')">
                                 {{ t('tasks.viewWorkspace') }}
                             </Button>

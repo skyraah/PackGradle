@@ -104,8 +104,8 @@ const router = createRouter({
         workspacesPlan,
         workspacesRebind,
         { path: '/', ...legacyRedirect },
+        // :pathMatch(.*)* 亦可空重复，覆盖裸 /projects
         { path: '/projects/:pathMatch(.*)*', ...legacyRedirect },
-        { path: '/projects', ...legacyRedirect },
         { path: '/instances', ...legacyRedirect },
         { path: '/dev', ...legacyRedirect },
         { path: '/:pathMatch(.*)*', ...legacyRedirect },
