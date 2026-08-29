@@ -84,6 +84,26 @@ type App struct {
 	// 为 T14 性能基线供数）。cachedHash 的每次 Lookup 归入 hit 或 miss。
 	cacheHits   atomic.Int64
 	cacheMisses atomic.Int64
+
+	// lastScanTiming 是最近一次完成的扫描分相耗时（LastScanTiming 查询，
+	// 为 T14 pgheadless -metrics 供数；runScan 写入，互斥保护）。
+	scanTimingMu   sync.Mutex
+	lastScanTiming view.ScanTimingView
+}
+
+// LastScanTiming 返回最近一次完成的扫描分相耗时（进程生命周期内最后一次；
+// 供 headless -metrics 读取，不入 Application 接口/transport 契约）。
+func (a *App) LastScanTiming() view.ScanTimingView {
+	a.scanTimingMu.Lock()
+	defer a.scanTimingMu.Unlock()
+	return a.lastScanTiming
+}
+
+// recordScanTiming 覆盖最近一次扫描的分相耗时。
+func (a *App) recordScanTiming(timing view.ScanTimingView) {
+	a.scanTimingMu.Lock()
+	defer a.scanTimingMu.Unlock()
+	a.lastScanTiming = timing
 }
 
 // New 构造应用；依赖缺失返回错误。

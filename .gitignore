@@ -22,3 +22,5 @@ build/android/build/
 *.syso
 /packgradle.exe
 *.gz
+# P1 性能基线（acceptance:perf）产物：fixture 与用户数据目录不入 git
+build/perf/

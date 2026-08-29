@@ -79,3 +79,16 @@ tasks:
     summary: Runs the full Go test suite with -race (acceptance L0 hard gate; needs mingw-w64 gcc for CGO)
     cmds:
       - go test -race ./...
+
+  # 性能基线（验收规格 §2；票 #24）：3,000 资源确定性 fixture（产物入 build/perf，
+  # 不入 git）→ 冷扫描（全新数据目录）→ 热扫描（同目录紧接二次）→ 门槛评估
+  #（冷 ≤10s / 热 ≤2s / 热命中率 ≥95%，任一超标退出码 1）。
+  acceptance:perf:
+    summary: Generates the 3,000-resource fixture and runs pgheadless cold/warm scans with -metrics (acceptance L0)
+    cmds:
+      - go build -o bin/pgheadless.exe ./cmd/pgheadless
+      - go run ./cmd/pgfixture -out build/perf/fixture
+      - rm -rf build/perf/data
+      - bin/pgheadless.exe -project build/perf/fixture/project -instance build/perf/fixture/instance -data build/perf/data -metrics build/perf/metrics-cold.json
+      - bin/pgheadless.exe -project build/perf/fixture/project -instance build/perf/fixture/instance -data build/perf/data -metrics build/perf/metrics-warm.json
+      - go run ./cmd/pgfixture -eval build/perf/metrics-cold.json,build/perf/metrics-warm.json

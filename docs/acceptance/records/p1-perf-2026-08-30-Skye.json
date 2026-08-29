@@ -1,0 +1,47 @@
+{
+  "schema": "p1-perf-baseline/1",
+  "ticket": "skyraah/PackGradle#24",
+  "spec": "docs/acceptance/p1-acceptance-spec.md §2",
+  "date": "2026-08-30",
+  "machine": {
+    "host": "Skye",
+    "os": "windows",
+    "arch": "amd64",
+    "go_version": "go1.26.5",
+    "cpus": 16
+  },
+  "fixture": {
+    "seed": 20260830,
+    "mods": 300,
+    "managed_files": 2700,
+    "note": "生成器 internal/perffixture + cmd/pgfixture（入 git，单命令重放 go run ./cmd/pgfixture -out build/perf/fixture）；产物 build/perf/ 不入 git"
+  },
+  "procedure": "task acceptance:perf：go build pgheadless → 生成 fixture → rm -rf build/perf/data → 冷扫描（全新数据目录）→ 热扫描（同目录同 fixture 紧接二次）→ pgfixture -eval 门槛评估",
+  "cold": {
+    "schema": "p1-perf-run/1",
+    "captured_at": "2026-08-29T18:33:51Z",
+    "scan_phases_ms": { "project_scan": 50, "runtime_scan": 3031, "normalize": 10, "persist": 38 },
+    "scan_total_ms": 3137,
+    "run_total_ms": 3322,
+    "hash_cache": { "hits": 0, "misses": 2700, "hit_ratio": 0 }
+  },
+  "warm": {
+    "schema": "p1-perf-run/1",
+    "captured_at": "2026-08-29T18:33:51Z",
+    "scan_phases_ms": { "project_scan": 44, "runtime_scan": 410, "normalize": 10, "persist": 38 },
+    "scan_total_ms": 523,
+    "run_total_ms": 712,
+    "hash_cache": { "hits": 2700, "misses": 0, "hit_ratio": 1 }
+  },
+  "thresholds": {
+    "cold_ms_max": 10000,
+    "warm_ms_max": 2000,
+    "warm_hit_ratio_min": 0.95
+  },
+  "verdict": {
+    "cold_pass": true,
+    "warm_pass": true,
+    "warm_hit_ratio_pass": true,
+    "conclusion": "冷 3137ms ≤ 10s、热 523ms ≤ 2s、热命中率 100%（2700 hit / 0 miss）≥ 95%，三项全过，性能基线首测达标"
+  }
+}

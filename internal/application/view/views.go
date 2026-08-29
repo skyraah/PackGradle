@@ -140,6 +140,17 @@ type HashCacheStatsView struct {
 	HitRatio float64 `json:"hit_ratio"` // hits/(hits+misses)，无查询时为 0
 }
 
+// ScanTimingView 是最近一次扫描的分相耗时（T14 性能基线供数口；
+// 只在具体 *syncapp.App 上暴露，不入 transport 契约）。
+type ScanTimingView struct {
+	RelationID    string `json:"relation_id"`
+	ProjectScanMs int64  `json:"project_scan_ms"`
+	RuntimeScanMs int64  `json:"runtime_scan_ms"`
+	NormalizeMs   int64  `json:"normalize_ms"`
+	PersistMs     int64  `json:"persist_ms"`
+	TotalMs       int64  `json:"total_ms"`
+}
+
 // WorkspacePage 是工作区分页。
 type WorkspacePage struct {
 	Items      []WorkspaceView `json:"items"`

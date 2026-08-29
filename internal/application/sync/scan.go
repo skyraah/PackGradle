@@ -108,6 +108,13 @@ func (a *App) runScan(ctx context.Context, t model.Task, rel model.Relation, pro
 	if t, ok = advance(t); !ok {
 		return
 	}
+	scanStart := time.Now()
+	var timing view.ScanTimingView
+	timing.RelationID = rel.RelationID
+	defer func() {
+		timing.TotalMs = time.Since(scanStart).Milliseconds()
+		a.recordScanTiming(timing)
+	}()
 
 	pol, err := a.deps.Mappings.GetPolicy(ctx, rel.RelationID)
 	if err != nil {
@@ -120,10 +127,12 @@ func (a *App) runScan(ctx context.Context, t model.Task, rel model.Relation, pro
 		return
 	}
 
+	t0 := time.Now()
 	reportP, err := a.deps.ProjectScan.Scan(ctx, proj.RootPath, ports.ScanOptions{
 		Policy:   pol,
 		HashFile: a.cachedHash(proj.BindingFingerprint, proj.RootPath),
 	})
+	timing.ProjectScanMs = time.Since(t0).Milliseconds()
 	if err != nil {
 		fail(CodeScanAdapterFailed, err)
 		return
@@ -139,11 +148,13 @@ func (a *App) runScan(ctx context.Context, t model.Task, rel model.Relation, pro
 	if t, ok = advance(t); !ok {
 		return
 	}
+	t0 = time.Now()
 	reportR, err := a.deps.RuntimeScan.Scan(ctx, rt.RootPath, ports.ScanOptions{
 		Policy:   pol,
 		Hint:     buildScanHint(reportP),
 		HashFile: a.cachedHash(rt.BindingFingerprint, rt.RootPath),
 	})
+	timing.RuntimeScanMs = time.Since(t0).Milliseconds()
 	if err != nil {
 		fail(CodeScanAdapterFailed, err)
 		return
@@ -159,6 +170,7 @@ func (a *App) runScan(ctx context.Context, t model.Task, rel model.Relation, pro
 	if t, ok = advance(t); !ok {
 		return
 	}
+	t0 = time.Now()
 	snapP, err := assembleSnapshot(rel.RelationID, model.SideProject, fpProj, polDigest, a.deps.ProjectScan, reportP)
 	if err != nil {
 		fail(CodeScanAdapterFailed, err)
@@ -171,6 +183,7 @@ func (a *App) runScan(ctx context.Context, t model.Task, rel model.Relation, pro
 		return
 	}
 	snapR.SnapshotID = a.deps.IDs("snap_")
+	timing.NormalizeMs = time.Since(t0).Milliseconds()
 
 	t.Phase = "persist"
 	t.MessageKey = "msg.task.scan.persisting"
@@ -178,6 +191,7 @@ func (a *App) runScan(ctx context.Context, t model.Task, rel model.Relation, pro
 	if t, ok = advance(t); !ok {
 		return
 	}
+	t0 = time.Now()
 	if err := a.deps.Snapshots.Insert(ctx, snapP); err != nil {
 		fail(CodeScanAdapterFailed, fmt.Errorf("持久化项目快照: %w", err))
 		return
@@ -186,6 +200,7 @@ func (a *App) runScan(ctx context.Context, t model.Task, rel model.Relation, pro
 		fail(CodeScanAdapterFailed, fmt.Errorf("持久化运行时快照: %w", err))
 		return
 	}
+	timing.PersistMs = time.Since(t0).Milliseconds()
 
 	t.Phase = "done"
 	t.Status = model.TaskStatusSucceeded
