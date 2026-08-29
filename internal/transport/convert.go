@@ -184,6 +184,46 @@ func endpointHealthDTO(v view.EndpointHealthView) EndpointHealthDTO {
 	}
 }
 
+func conflictDTO(c model.Conflict) ConflictDTO {
+	return ConflictDTO{
+		ResourceID: string(c.ResourceID), Kind: string(c.Kind),
+		Base: representationDTO(c.Base), Project: representationDTO(c.Project), Runtime: representationDTO(c.Runtime),
+		Detail: c.Detail,
+	}
+}
+
+func changeDTO(c view.ChangeView) ChangeDTO {
+	conflicts := make([]ConflictDTO, 0, len(c.Conflicts))
+	for _, cf := range c.Conflicts {
+		conflicts = append(conflicts, conflictDTO(cf))
+	}
+	return ChangeDTO{
+		ResourceID: c.ResourceID, ResourceKind: c.ResourceKind,
+		RelativePath: c.RelativePath, Classification: c.Classification,
+		Base: representationDTO(c.Base), Project: representationDTO(c.Project), Runtime: representationDTO(c.Runtime),
+		Conflicts: conflicts, Diagnostics: diagnosticDTOs(c.Diagnostics),
+	}
+}
+
+func changesDTO(v view.ChangesPage) ChangesPageDTO {
+	items := make([]ChangeDTO, 0, len(v.Items))
+	for _, c := range v.Items {
+		items = append(items, changeDTO(c))
+	}
+	return ChangesPageDTO{
+		SchemaVersion: v.SchemaVersion,
+		Items:         items,
+		Summary: ChangesSummaryDTO{
+			Total: v.Summary.Total, NoopCount: v.Summary.NoopCount,
+			ConvergedCount: v.Summary.ConvergedCount, AdoptEqualCount: v.Summary.AdoptEqualCount,
+			InitChoiceCount: v.Summary.InitChoiceCount, CreateCount: v.Summary.CreateCount,
+			ModifyCount: v.Summary.ModifyCount, DeleteCount: v.Summary.DeleteCount,
+			ConflictCount: v.Summary.ConflictCount,
+		},
+		NextCursor: v.NextCursor,
+	}
+}
+
 func planDTO(v view.SyncPlanView) SyncPlanDTO {
 	ops := make([]OperationDTO, 0, len(v.Operations))
 	for _, op := range v.Operations {
@@ -201,11 +241,7 @@ func planDTO(v view.SyncPlanView) SyncPlanDTO {
 	}
 	conflicts := make([]ConflictDTO, 0, len(v.Conflicts))
 	for _, c := range v.Conflicts {
-		conflicts = append(conflicts, ConflictDTO{
-			ResourceID: string(c.ResourceID), Kind: string(c.Kind),
-			Base: representationDTO(c.Base), Project: representationDTO(c.Project), Runtime: representationDTO(c.Runtime),
-			Detail: c.Detail,
-		})
+		conflicts = append(conflicts, conflictDTO(c))
 	}
 	resolutions := make([]ResolutionDTO, 0, len(v.Resolutions))
 	for _, r := range v.Resolutions {

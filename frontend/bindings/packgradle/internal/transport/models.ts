@@ -15,6 +15,46 @@ export interface ActionAvailabilityDTO {
     "reason_args"?: string[] | null;
 }
 
+/**
+ * ChangeDTO 是单资源三态 Diff 行。Base 在无基线时缺省。
+ */
+export interface ChangeDTO {
+    "resource_id": string;
+    "resource_kind": string;
+    "relative_path": string;
+    "classification": string;
+    "base"?: RepresentationDTO | null;
+    "project"?: RepresentationDTO | null;
+    "runtime"?: RepresentationDTO | null;
+    "conflicts": ConflictDTO[] | null;
+    "diagnostics": DiagnosticDTO[] | null;
+}
+
+/**
+ * ChangesPageDTO 是资源级 Diff 分页。
+ */
+export interface ChangesPageDTO {
+    "schema_version": number;
+    "items": ChangeDTO[] | null;
+    "summary": ChangesSummaryDTO;
+    "next_cursor"?: string;
+}
+
+/**
+ * ChangesSummaryDTO 是全量分组计数（不受筛选影响），供筛选条与页脚展示。
+ */
+export interface ChangesSummaryDTO {
+    "total": number;
+    "noop_count": number;
+    "converged_count": number;
+    "adopt_equal_count": number;
+    "init_choice_count": number;
+    "create_count": number;
+    "modify_count": number;
+    "delete_count": number;
+    "conflict_count": number;
+}
+
 export interface ConfirmationRequirementDTO {
     "code": string;
     "severity": string;
@@ -76,6 +116,33 @@ export interface EndpointHealthDTO {
     "path_exists": boolean;
     "fingerprint_matches": boolean;
     "checked_at": string;
+}
+
+/**
+ * GetChangesDTO 是资源级 Changes 查询输入（契约 03 §2.2；读时计算，快照对缺省
+ * 取两侧最新）。分页按 resource_id 字节序，cursor 为上一页最后一条 resource_id。
+ */
+export interface GetChangesDTO {
+    "relation_id": string;
+    "project_snapshot_id"?: string;
+    "runtime_snapshot_id"?: string;
+
+    /**
+     * diff 分类单值筛选
+     */
+    "classification"?: string;
+
+    /**
+     * mod|text_file|binary_file
+     */
+    "resource_kind"?: string;
+
+    /**
+     * root-relative 路径前缀
+     */
+    "path_prefix"?: string;
+    "cursor"?: string;
+    "limit": number;
 }
 
 /**

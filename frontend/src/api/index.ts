@@ -110,4 +110,11 @@ export type {
     TaskDTO,
     TaskPageDTO,
     SnapshotSummaryDTO,
+    GetChangesDTO,
+    ChangeDTO,
+    ChangesSummaryDTO,
+    ChangesPageDTO,
+    RepresentationDTO,
+    ConflictDTO,
+    DiagnosticDTO,
 } from '../../bindings/packgradle/internal/transport/models'

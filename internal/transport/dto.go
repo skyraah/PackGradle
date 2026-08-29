@@ -332,3 +332,50 @@ type EndpointHealthDTO struct {
 	FingerprintMatches bool   `json:"fingerprint_matches"`
 	CheckedAt          string `json:"checked_at"`
 }
+
+// GetChangesDTO 是资源级 Changes 查询输入（契约 03 §2.2；读时计算，快照对缺省
+// 取两侧最新）。分页按 resource_id 字节序，cursor 为上一页最后一条 resource_id。
+type GetChangesDTO struct {
+	RelationID        string `json:"relation_id"`
+	ProjectSnapshotID string `json:"project_snapshot_id,omitempty"`
+	RuntimeSnapshotID string `json:"runtime_snapshot_id,omitempty"`
+	Classification    string `json:"classification,omitempty"` // diff 分类单值筛选
+	ResourceKind      string `json:"resource_kind,omitempty"`  // mod|text_file|binary_file
+	PathPrefix        string `json:"path_prefix,omitempty"`    // root-relative 路径前缀
+	Cursor            string `json:"cursor,omitempty"`
+	Limit             int    `json:"limit"`
+}
+
+// ChangeDTO 是单资源三态 Diff 行。Base 在无基线时缺省。
+type ChangeDTO struct {
+	ResourceID     string             `json:"resource_id"`
+	ResourceKind   string             `json:"resource_kind"`
+	RelativePath   string             `json:"relative_path"`
+	Classification string             `json:"classification"`
+	Base           *RepresentationDTO `json:"base,omitempty"`
+	Project        *RepresentationDTO `json:"project,omitempty"`
+	Runtime        *RepresentationDTO `json:"runtime,omitempty"`
+	Conflicts      []ConflictDTO      `json:"conflicts"`
+	Diagnostics    []DiagnosticDTO    `json:"diagnostics"`
+}
+
+// ChangesSummaryDTO 是全量分组计数（不受筛选影响），供筛选条与页脚展示。
+type ChangesSummaryDTO struct {
+	Total           int `json:"total"`
+	NoopCount       int `json:"noop_count"`
+	ConvergedCount  int `json:"converged_count"`
+	AdoptEqualCount int `json:"adopt_equal_count"`
+	InitChoiceCount int `json:"init_choice_count"`
+	CreateCount     int `json:"create_count"`
+	ModifyCount     int `json:"modify_count"`
+	DeleteCount     int `json:"delete_count"`
+	ConflictCount   int `json:"conflict_count"`
+}
+
+// ChangesPageDTO 是资源级 Diff 分页。
+type ChangesPageDTO struct {
+	SchemaVersion int               `json:"schema_version"`
+	Items         []ChangeDTO       `json:"items"`
+	Summary       ChangesSummaryDTO `json:"summary"`
+	NextCursor    string            `json:"next_cursor,omitempty"`
+}

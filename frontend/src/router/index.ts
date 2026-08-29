@@ -76,6 +76,15 @@ const workspacesNew: RouteRecordRaw = {
     meta: { titleKey: 'nav.workspacesNew' },
 }
 
+// 新栈工作区详情：资源变更页（shadcn-vue；GetChanges 分页 + 筛选，UX 原型 §7.3。
+// 入口在工作区列表行操作，不占侧栏导航项）
+const workspacesChanges: RouteRecordRaw = {
+    path: '/workspaces/:id/changes',
+    name: 'workspaces-changes',
+    component: () => import('../views/WorkspacesChangesView.vue'),
+    meta: { titleKey: 'nav.workspacesChanges' },
+}
+
 const settings: RouteRecordRaw = {
     path: '/settings',
     name: 'settings',
@@ -88,7 +97,7 @@ export const navRoutes: RouteRecordRaw[] = [workspaces, dashboard, projects, dev
 
 const router = createRouter({
     history: createWebHashHistory(),
-    routes: [...navRoutes, projectDetail, workspacesNew, { path: '/:pathMatch(.*)*', redirect: '/' }],
+    routes: [...navRoutes, projectDetail, workspacesNew, workspacesChanges, { path: '/:pathMatch(.*)*', redirect: '/' }],
     // 返回时恢复滚动位置（keep-alive 视图由组件自身状态保留）
     scrollBehavior(_to, _from, savedPosition) {
         return savedPosition ?? { top: 0 }

@@ -179,6 +179,25 @@ func (s *SyncService) GetHashCacheStats() (HashCacheStatsDTO, error) {
 	}, nil
 }
 
+// GetChanges 资源级变更查询（契约 03 §2.2；票 #19：读时计算三方 Diff，
+// summary 全量计数不受筛选影响，items 按 resource_id 字节序分页）。
+func (s *SyncService) GetChanges(input GetChangesDTO) (ChangesPageDTO, error) {
+	v, err := s.app.GetChanges(context.Background(), view.GetChangesInput{
+		RelationID:        input.RelationID,
+		ProjectSnapshotID: input.ProjectSnapshotID,
+		RuntimeSnapshotID: input.RuntimeSnapshotID,
+		Classification:    input.Classification,
+		ResourceKind:      input.ResourceKind,
+		PathPrefix:        input.PathPrefix,
+		Cursor:            input.Cursor,
+		Limit:             input.Limit,
+	})
+	if err != nil {
+		return ChangesPageDTO{}, err
+	}
+	return changesDTO(v), nil
+}
+
 func pageRequest(cursor string, limit int) ports.PageRequest {
 	return ports.PageRequest{Cursor: cursor, Limit: limit}
 }

@@ -100,13 +100,13 @@ type SnapshotSummaryView struct {
 
 // WorkspaceView 是工作区详情。
 type WorkspaceView struct {
-	SchemaVersion         int                     `json:"schema_version"`
-	Relation              RelationView            `json:"relation"`
-	State                 WorkspaceStateView      `json:"state"`
-	Features              WorkspaceFeaturesView   `json:"features"`
+	SchemaVersion         int                      `json:"schema_version"`
+	Relation              RelationView             `json:"relation"`
+	State                 WorkspaceStateView       `json:"state"`
+	Features              WorkspaceFeaturesView    `json:"features"`
 	Availability          []ActionAvailabilityView `json:"availability"`
-	LatestProjectSnapshot *SnapshotSummaryView    `json:"latest_project_snapshot,omitempty"`
-	LatestRuntimeSnapshot *SnapshotSummaryView    `json:"latest_runtime_snapshot,omitempty"`
+	LatestProjectSnapshot *SnapshotSummaryView     `json:"latest_project_snapshot,omitempty"`
+	LatestRuntimeSnapshot *SnapshotSummaryView     `json:"latest_runtime_snapshot,omitempty"`
 }
 
 // WorkspaceFeaturesView 表达当前版本/平台实现的能力（契约 03 §2.1；架构 §10.4）。
@@ -230,4 +230,54 @@ type EndpointHealthView struct {
 	PathExists         bool   `json:"path_exists"`
 	FingerprintMatches bool   `json:"fingerprint_matches"`
 	CheckedAt          string `json:"checked_at"`
+}
+
+// GetChangesInput 是资源级 Diff 查询输入（契约 03 §2.2；读时计算：head baseline +
+// 指定/最新快照对跑三方 Diff，不存储投影）。快照对缺省取两侧最新；显式传入时必须
+// 同属该 relation 且为相对两侧。Classification/ResourceKind/PathPrefix 为可选筛选；
+// 分页按 resource_id 字节序，cursor 为上一页最后一条 resource_id（筛选条件跨页不变）。
+type GetChangesInput struct {
+	RelationID        string `json:"relation_id"`
+	ProjectSnapshotID string `json:"project_snapshot_id,omitempty"`
+	RuntimeSnapshotID string `json:"runtime_snapshot_id,omitempty"`
+	Classification    string `json:"classification,omitempty"` // diff 分类单值筛选
+	ResourceKind      string `json:"resource_kind,omitempty"`  // mod|text_file|binary_file
+	PathPrefix        string `json:"path_prefix,omitempty"`    // root-relative 路径前缀
+	Cursor            string `json:"cursor,omitempty"`
+	Limit             int    `json:"limit"`
+}
+
+// ChangeView 是单资源三态 Diff 行（契约 03 §2.2 ChangeDTO 的应用层投影；
+// 表示/冲突/诊断复用 model 类型，transport 负责转 DTO）。Base 在无基线时缺省。
+type ChangeView struct {
+	ResourceID     string                `json:"resource_id"`
+	ResourceKind   string                `json:"resource_kind"`
+	RelativePath   string                `json:"relative_path"`
+	Classification string                `json:"classification"`
+	Base           *model.Representation `json:"base,omitempty"`
+	Project        *model.Representation `json:"project,omitempty"`
+	Runtime        *model.Representation `json:"runtime,omitempty"`
+	Conflicts      []model.Conflict      `json:"conflicts"`
+	Diagnostics    []model.Diagnostic    `json:"diagnostics"`
+}
+
+// ChangesSummary 是全量分组计数（不受筛选影响），供筛选条与页脚展示。
+type ChangesSummary struct {
+	Total           int `json:"total"`
+	NoopCount       int `json:"noop_count"`
+	ConvergedCount  int `json:"converged_count"`
+	AdoptEqualCount int `json:"adopt_equal_count"`
+	InitChoiceCount int `json:"init_choice_count"`
+	CreateCount     int `json:"create_count"`
+	ModifyCount     int `json:"modify_count"`
+	DeleteCount     int `json:"delete_count"`
+	ConflictCount   int `json:"conflict_count"`
+}
+
+// ChangesPage 是资源级 Diff 分页。
+type ChangesPage struct {
+	SchemaVersion int            `json:"schema_version"`
+	Items         []ChangeView   `json:"items"`
+	Summary       ChangesSummary `json:"summary"`
+	NextCursor    string         `json:"next_cursor,omitempty"`
 }

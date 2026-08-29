@@ -30,6 +30,14 @@ export function CreateRelation(preparationID: string): $CancellablePromise<$mode
 }
 
 /**
+ * GetChanges 资源级变更查询（契约 03 §2.2；票 #19：读时计算三方 Diff，
+ * summary 全量计数不受筛选影响，items 按 resource_id 字节序分页）。
+ */
+export function GetChanges(input: $models.GetChangesDTO): $CancellablePromise<$models.ChangesPageDTO> {
+    return $Call.ByID(492725454, input);
+}
+
+/**
  * GetHashCacheStats 返回 hash cache 命中统计（进程生命周期累计；
  * 热扫描命中证明与 T14 性能基线供数口）。
  */

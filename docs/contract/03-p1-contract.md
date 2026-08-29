@@ -23,7 +23,7 @@
 | --- | --- | --- | --- |
 | 工作区详情 | `GetWorkspace`（已有） | `GetWorkspace`（已有） | **扩展**：DTO 增补 features + availability |
 | 工作区列表 | `ListWorkspaces`（已有） | `ListWorkspaces`（已有） | **扩展**：同上（同构 WorkspaceDTO） |
-| 资源级 Changes | `GetChanges(ctx, GetChangesInput) (view.ChangesPage, error)` | `GetChanges(input GetChangesDTO) (ChangesPageDTO, error)` | **新增** |
+| 资源级 Changes | `GetChanges(ctx, GetChangesInput) (view.ChangesPage, error)` | `GetChanges(input GetChangesDTO) (ChangesPageDTO, error)` | **新增**（T09 执行落地，票 #19：`internal/application/sync/changes.go` + `/workspaces/:id/changes` 页） |
 | Mapping 读 | `GetMappingPolicy(ctx, relationID) (view.PolicyView, error)` | `GetMappingPolicy(relationID string) (PolicyDTO, error)` | **新增** |
 | Mapping 写 | `UpdateMappingPolicy(ctx, UpdateMappingPolicyInput) (view.PolicyView, error)` | `UpdateMappingPolicy(input UpdateMappingPolicyDTO) (PolicyDTO, error)` | **新增** |
 | Rebind 预检 | `PrepareRebind(ctx, PrepareRebindInput) (view.RebindPreparationView, error)` | `PrepareRebind(input PrepareRebindDTO) (RebindPreparationDTO, error)` | **新增**（架构 §4.4 已定签名） |
@@ -162,6 +162,8 @@ type ChangesPageDTO struct {
 | `conflict_modify` / `conflict_delete_modify` | 冲突 | conflict_count |
 
 实现注记：`ResourceDiff`（diff 包）只携带 presence 与语义摘要，三态 `RepresentationDTO` 需在实现时从快照资源表联取；排序固定按 `resource_id` 字节序；空结果 `items=[]`。
+
+T09 执行落地（票 #19）：读时计算不写库；显式快照 ID 经 `GetForRelation` 校验（跨关系/跨侧 → `err.changes.snapshot_pair_invalid`），缺省取两侧最新、该侧无快照 → `err.sync.snapshot_not_found`（args {0}=side）；`Base` 表示取基线 project 表示、缺失回退 runtime 表示（与 diff 冲突证据同序）；行内诊断取两侧快照中按 `resource_id` 命中的持久化诊断；分页 cursor 为上一页最后一条 `resource_id`，筛选条件由调用方跨页保持，summary 恒为全量计数；非法 classification/resource_kind 筛选值 → `err.sync.invalid_filter`。
 
 ### 2.3 Mapping 读写
 
@@ -311,7 +313,8 @@ type SyncPlanDTO struct {
 | `err.relation.rebind_invalid_side` | {0}=side | side 非 project/runtime |
 | `err.relation.prep_expired` | {0}=preparation_id | 创建预检已过期（引导重新预检；ADR-0003 决议 4） |
 | `err.relation.prep_consumed` | {0}=preparation_id | 创建预检已被消费（引导刷新，关系可能已建成——双击/双窗口；ADR-0003 决议 4） |
-| `err.changes.snapshot_pair_invalid` | — | 快照对不属同 relation 或非同侧 |
+| `err.changes.snapshot_pair_invalid` | — | 快照对不属同 relation 或非同侧（T09，票 #19；detail 携带存储层原因） |
+| `err.sync.invalid_filter` | {0}=筛选字段, {1}=筛选值 | GetChanges 筛选值不在合法枚举（classification / resource_kind）（T09，票 #19） |
 | `err.recovery.in_progress` | — | 恢复任务占用（availability reason） |
 | `err.scan.incomplete` | — | scan_state 非 ready（availability reason） |
 | `diag.scan.ignored` | {0}=path | 包内追踪但不在受管范围（index.toml 非 mods/ metafile 条目），从观察剔除（T07，票 #17） |

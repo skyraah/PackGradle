@@ -33,6 +33,8 @@ type Application interface {
 	GetSnapshotDiagnostics(ctx context.Context, relationID, snapshotID string) ([]model.Diagnostic, error)
 	// GetHashCacheStats 查询 hash cache 命中统计（票 #17：命中计数/命中率可查询）。
 	GetHashCacheStats(ctx context.Context) (view.HashCacheStatsView, error)
+	// GetChanges 资源级变更浏览（契约 03 §2.2；票 #19）。
+	GetChanges(ctx context.Context, input view.GetChangesInput) (view.ChangesPage, error)
 }
 
 var _ Application = (*App)(nil)

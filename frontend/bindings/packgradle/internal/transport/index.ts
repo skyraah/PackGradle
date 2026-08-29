@@ -12,12 +12,16 @@ export {
 
 export type {
     ActionAvailabilityDTO,
+    ChangeDTO,
+    ChangesPageDTO,
+    ChangesSummaryDTO,
     ConfirmationRequirementDTO,
     ConflictDTO,
     ContentRefDTO,
     DiagnosticDTO,
     EndpointDTO,
     EndpointHealthDTO,
+    GetChangesDTO,
     HashCacheStatsDTO,
     MappingRuleDTO,
     OperationDTO,

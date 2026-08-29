@@ -262,6 +262,15 @@ const cols: { key: string; alignRight?: boolean }[] = [
                                 <TableCell class="text-muted-foreground text-xs">{{ row.activity }}</TableCell>
                                 <TableCell>
                                     <div class="flex justify-end gap-2">
+                                        <!-- 变更浏览入口：两侧快照齐备（scan ready）才可读时计算 diff -->
+                                        <Button
+                                            v-if="row.workspace.state.scan_state === 'ready'"
+                                            size="xs"
+                                            variant="outline"
+                                            @click="router.push('/workspaces/' + row.workspace.relation.relation_id + '/changes')"
+                                        >
+                                            {{ t('workspaces.changesAction') }}
+                                        </Button>
                                         <Button
                                             v-if="row.canScan"
                                             size="xs"
