@@ -274,6 +274,41 @@ func TestEndpointRepositoryRoundTrip(t *testing.T) {
 	if _, err := repo.GetRuntime(ctx, "run_none"); !errors.Is(err, ErrNotFound) {
 		t.Errorf("GetRuntime 不存在应返回 ErrNotFound, got %v", err)
 	}
+
+	// List：多行按 display_name 升序、空库返回 [] 而非 nil
+	mkProj := func(id, name string) model.Project {
+		return model.Project{
+			SchemaVersion: model.CurrentSchemaVersion, ProjectID: id,
+			Adapter: "packwiz", DisplayName: name, RootPath: "D:/packs/" + id,
+			BindingFingerprint: "sha256:fp-" + id, CreatedAt: now,
+		}
+	}
+	second := mkProj("prj_b", "aaa-first")
+	if err := repo.CreateProject(ctx, second); err != nil {
+		t.Fatalf("CreateProject(prj_b) 失败: %v", err)
+	}
+	projs, err := repo.ListProjects(ctx)
+	if err != nil || projs == nil {
+		t.Fatalf("ListProjects: err=%v nil=%v", err, projs == nil)
+	}
+	if len(projs) != 2 || projs[0].ProjectID != "prj_b" || projs[1].ProjectID != "prj_a" {
+		t.Errorf("ListProjects 排序/内容: %+v", projs)
+	}
+	rt2 := model.Runtime{
+		SchemaVersion: model.CurrentSchemaVersion, RuntimeID: "run_b",
+		Adapter: "prism", DisplayName: "Another", RootPath: "D:/inst/b/minecraft",
+		AdapterIdentity: "inst-b", BindingFingerprint: "sha256:fp-run-b", CreatedAt: now,
+	}
+	if err := repo.CreateRuntime(ctx, rt2); err != nil {
+		t.Fatalf("CreateRuntime(run_b) 失败: %v", err)
+	}
+	rts, err := repo.ListRuntimes(ctx)
+	if err != nil || rts == nil {
+		t.Fatalf("ListRuntimes: err=%v nil=%v", err, rts == nil)
+	}
+	if len(rts) != 2 || rts[0].RuntimeID != "run_b" || rts[1].RuntimeID != "run_a" {
+		t.Errorf("ListRuntimes 排序/内容: %+v", rts)
+	}
 }
 
 func TestRelationRepository(t *testing.T) {

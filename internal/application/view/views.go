@@ -156,3 +156,41 @@ type TaskPage struct {
 	Items      []TaskView `json:"items"`
 	NextCursor string     `json:"next_cursor,omitempty"`
 }
+
+// RegisterEndpointInput 是端点登记输入（契约 03 §2.5；project: pack.toml 所在目录，runtime: Prism 实例目录）。
+type RegisterEndpointInput struct {
+	RootPath string `json:"root_path"`
+}
+
+// ProjectCandidateView 是项目源发现候选（registered 按 binding fingerprint 幂等判定）。
+type ProjectCandidateView struct {
+	DisplayName  string `json:"display_name"`
+	RootPath     string `json:"root_path"`
+	PackTomlPath string `json:"pack_toml_path"`
+	Minecraft    string `json:"minecraft,omitempty"`
+	Modloader    string `json:"modloader,omitempty"`
+	Registered   bool   `json:"registered"`
+	EndpointID   string `json:"endpoint_id,omitempty"`
+}
+
+// RuntimeCandidateView 是运行实例发现候选（registered 按 adapter identity 幂等判定）。
+type RuntimeCandidateView struct {
+	InstanceID  string `json:"instance_id"`
+	InstanceDir string `json:"instance_dir"`
+	DisplayName string `json:"display_name"`
+	GameDir     string `json:"game_dir"`
+	Minecraft   string `json:"minecraft,omitempty"`
+	Modloader   string `json:"modloader,omitempty"`
+	Registered  bool   `json:"registered"`
+	EndpointID  string `json:"endpoint_id,omitempty"`
+}
+
+// EndpointHealthView 是端点健康检查结果（只读，不改状态）。
+// status: ok|missing|identity_mismatch；identity_mismatch 提示用户重绑。
+type EndpointHealthView struct {
+	EndpointID         string `json:"endpoint_id"`
+	Status             string `json:"status"`
+	PathExists         bool   `json:"path_exists"`
+	FingerprintMatches bool   `json:"fingerprint_matches"`
+	CheckedAt          string `json:"checked_at"`
+}

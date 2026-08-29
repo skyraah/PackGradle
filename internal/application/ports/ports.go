@@ -57,10 +57,14 @@ type EndpointRepository interface {
 	GetProject(ctx context.Context, id string) (model.Project, error)
 	// FindProjectByRoot 按 binding fingerprint 查找已登记项目（幂等重登记）。
 	FindProjectByRoot(ctx context.Context, fingerprint string) (model.Project, bool, error)
+	// ListProjects 返回全部已登记项目（display_name 升序）。
+	ListProjects(ctx context.Context) ([]model.Project, error)
 	CreateRuntime(ctx context.Context, r model.Runtime) error
 	GetRuntime(ctx context.Context, id string) (model.Runtime, error)
 	// FindRuntimeByIdentity 按 adapter identity（如 Prism 实例目录名）查找。
 	FindRuntimeByIdentity(ctx context.Context, adapter, adapterIdentity string) (model.Runtime, bool, error)
+	// ListRuntimes 返回全部已登记运行实例（display_name 升序）。
+	ListRuntimes(ctx context.Context) ([]model.Runtime, error)
 }
 
 // RelationRepository 管理 Relation 聚合根。
@@ -215,3 +219,42 @@ type RuntimeScanner interface {
 type EventPublisher interface {
 	Publish(ctx context.Context, env model.EventEnvelope) error
 }
+
+// ---- 端点发现 ----
+
+// ProjectCandidate 是项目源发现候选（adapter 层产出；登记状态由 application 判定）。
+type ProjectCandidate struct {
+	DisplayName  string // pack.toml 的 name，缺失回退目录名
+	RootPath     string // pack.toml 所在目录（绝对路径，未规范化）
+	PackTomlPath string // pack.toml 完整路径
+	Minecraft    string // pack.toml [versions].minecraft，缺失为空
+	Modloader    string // [versions] 中的加载器键名（fabric/forge/quilt/neoforge），缺失为空
+}
+
+// RuntimeCandidate 是运行实例发现候选（adapter 层产出；登记状态由 application 判定）。
+type RuntimeCandidate struct {
+	InstanceID  string // 实例目录名（Prism 实例的事实 ID）
+	InstanceDir string // 实例目录完整路径（登记输入 root_path 的取值来源）
+	DisplayName string // instance.cfg 的 name，缺失回退目录名
+	GameDir     string // <实例>/minecraft
+	Minecraft   string // mmc-pack.json net.minecraft 组件版本，缺失为空
+	Modloader   string // mmc-pack.json 加载器组件短名（fabric/forge/quilt/neoforge），缺失为空
+}
+
+// ProjectDiscovery 发现磁盘上的 Packwiz 项目源（/sources 页发现入口）。
+type ProjectDiscovery interface {
+	// DiscoverProjects 在 parentDir 内有限深度查找含 pack.toml 的项目根目录。
+	DiscoverProjects(ctx context.Context, parentDir string) ([]ProjectCandidate, error)
+}
+
+// RuntimeDiscovery 定位 Prism 实例目录并枚举运行实例候选（/runtimes 页发现入口）。
+type RuntimeDiscovery interface {
+	// DiscoverRuntimes 从 Prism 实例目录扫描实例（实例根目录不可定位返回错误）。
+	DiscoverRuntimes(ctx context.Context) ([]RuntimeCandidate, error)
+}
+
+// InstancesDirError 是 RuntimeDiscovery 定位实例根目录失败的结构化错误：
+// DataDir 为尝试定位的 Prism 数据目录（application 映射 err.endpoint.instances_dir_not_found 的 args {0}）。
+type InstancesDirError struct{ DataDir string }
+
+func (e *InstancesDirError) Error() string { return "ports: Prism 实例根目录不可定位: " + e.DataDir }

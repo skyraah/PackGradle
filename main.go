@@ -63,7 +63,8 @@ func main() {
 	defer newStack.Close()
 
 	// 创建 Wails 应用。'Bind' 中注册的 Go 服务方法可供前端直接调用。
-	// 新旧并存：legacy 三服务保持既有行为（已冻结）；SyncService 为 P1 只读核心出口。
+	// 新旧并存：legacy 三服务保持既有行为（已冻结）；SyncService 为 P1 只读核心出口，
+	// ProjectService/RuntimeService 为端点管理出口（/sources、/runtimes 页）。
 	app := application.New(application.Options{
 		Name:        "PackGradle",
 		Description: "packwiz 与 Prism Launcher 整合包开发环境工具",
@@ -72,6 +73,8 @@ func main() {
 			application.NewService(service.NewPackwizService(config)),
 			application.NewService(service.NewPrismService(config)),
 			application.NewService(newStack.Service),
+			application.NewService(newStack.ProjectService),
+			application.NewService(newStack.RuntimeService),
 		},
 		MarshalError: marshalError,
 		Assets: application.AssetOptions{

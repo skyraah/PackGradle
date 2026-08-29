@@ -11,6 +11,8 @@ import (
 	"packgradle/internal/adapters/filesystem"
 	"packgradle/internal/adapters/packwiz"
 	"packgradle/internal/adapters/prism"
+	projectapp "packgradle/internal/application/project"
+	runtimeapp "packgradle/internal/application/runtime"
 	syncapp "packgradle/internal/application/sync"
 	"packgradle/internal/core/ids"
 	"packgradle/internal/store"
@@ -25,6 +27,9 @@ type Stack struct {
 	DB      *sql.DB
 	App     syncapp.Application
 	Service *transport.SyncService
+	// ProjectService / RuntimeService 是端点管理用例出口（/sources、/runtimes 页）。
+	ProjectService *transport.ProjectService
+	RuntimeService *transport.RuntimeService
 }
 
 // Build 在指定用户数据根目录装配新栈。
@@ -80,11 +85,39 @@ func Build(root string) (*Stack, error) {
 		db.Close()
 		return nil, fmt.Errorf("bootstrap: 启动任务恢复失败: %w", err)
 	}
+
+	// 端点管理用例（/sources、/runtimes 页）：与 sync 共用同一批仓库与适配器
+	projectSvc, err := projectapp.New(projectapp.Deps{
+		Endpoints:     sqlite.NewEndpointRepository(db),
+		Paths:         filesystem.PathNormalizer{},
+		Fingerprinter: fingerprinter,
+		Discovery:     packwiz.New(),
+		IDs:           ids.New,
+		Now:           defaultNow,
+	})
+	if err != nil {
+		db.Close()
+		return nil, fmt.Errorf("bootstrap: 装配项目源端点用例: %w", err)
+	}
+	runtimeSvc, err := runtimeapp.New(runtimeapp.Deps{
+		Endpoints:     sqlite.NewEndpointRepository(db),
+		Paths:         filesystem.PathNormalizer{},
+		Fingerprinter: fingerprinter,
+		Discovery:     prism.NewDiscoverer(),
+		IDs:           ids.New,
+		Now:           defaultNow,
+	})
+	if err != nil {
+		db.Close()
+		return nil, fmt.Errorf("bootstrap: 装配运行实例端点用例: %w", err)
+	}
 	return &Stack{
-		Layout:  layout,
-		DB:      db,
-		App:     app,
-		Service: transport.NewSyncService(app),
+		Layout:         layout,
+		DB:             db,
+		App:            app,
+		Service:        transport.NewSyncService(app),
+		ProjectService: transport.NewProjectService(projectSvc),
+		RuntimeService: transport.NewRuntimeService(runtimeSvc),
 	}, nil
 }
 

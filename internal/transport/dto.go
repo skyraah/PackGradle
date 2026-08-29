@@ -231,8 +231,7 @@ type PlanSummaryDTO struct {
 }
 
 // SyncPlanDTO 是计划投影（Status 反映读取时计算的 stale/expired）。
-type SyncPlanDTO struct {
-	SchemaVersion              int                          `json:"schema_version"`
+type SyncPlanDTO struct {	SchemaVersion              int                          `json:"schema_version"`
 	PlanID                     string                       `json:"plan_id"`
 	RelationID                 string                       `json:"relation_id"`
 	Kind                       string                       `json:"kind"`
@@ -255,4 +254,42 @@ type SyncPlanDTO struct {
 	ConfirmationRequirements   []ConfirmationRequirementDTO `json:"confirmation_requirements"`
 	Summary                    PlanSummaryDTO               `json:"summary"`
 	Diagnostics                []DiagnosticDTO              `json:"diagnostics"`
+}
+
+// RegisterEndpointDTO 是端点登记输入（契约 03 §2.5；project: pack.toml 所在目录，
+// runtime: Prism 实例目录）。
+type RegisterEndpointDTO struct {
+	RootPath string `json:"root_path"`
+}
+
+// ProjectCandidateDTO 是项目源发现候选（registered 按 binding fingerprint 幂等判定）。
+type ProjectCandidateDTO struct {
+	DisplayName  string `json:"display_name"`
+	RootPath     string `json:"root_path"`
+	PackTomlPath string `json:"pack_toml_path"`
+	Minecraft    string `json:"minecraft,omitempty"`
+	Modloader    string `json:"modloader,omitempty"`
+	Registered   bool   `json:"registered"`
+	EndpointID   string `json:"endpoint_id,omitempty"`
+}
+
+// RuntimeCandidateDTO 是运行实例发现候选（registered 按 adapter identity 幂等判定）。
+type RuntimeCandidateDTO struct {
+	InstanceID  string `json:"instance_id"`
+	InstanceDir string `json:"instance_dir"`
+	DisplayName string `json:"display_name"`
+	GameDir     string `json:"game_dir"`
+	Minecraft   string `json:"minecraft,omitempty"`
+	Modloader   string `json:"modloader,omitempty"`
+	Registered  bool   `json:"registered"`
+	EndpointID  string `json:"endpoint_id,omitempty"`
+}
+
+// EndpointHealthDTO 是端点健康检查结果（只读；status: ok|missing|identity_mismatch）。
+type EndpointHealthDTO struct {
+	EndpointID         string `json:"endpoint_id"`
+	Status             string `json:"status"`
+	PathExists         bool   `json:"path_exists"`
+	FingerprintMatches bool   `json:"fingerprint_matches"`
+	CheckedAt          string `json:"checked_at"`
 }

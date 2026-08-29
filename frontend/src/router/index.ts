@@ -44,6 +44,21 @@ const instances: RouteRecordRaw = {
     meta: { titleKey: 'nav.prism', icon: 'mdi-link-variant' },
 }
 
+// 新栈端点管理页（shadcn-vue；新导航 IA 见 docs/frontend/05-workspace-ux-prototype.md §4.1）
+const sources: RouteRecordRaw = {
+    path: '/sources',
+    name: 'sources',
+    component: () => import('../views/SourcesView.vue'),
+    meta: { titleKey: 'nav.sources', icon: 'mdi-package-variant' },
+}
+
+const runtimes: RouteRecordRaw = {
+    path: '/runtimes',
+    name: 'runtimes',
+    component: () => import('../views/RuntimesView.vue'),
+    meta: { titleKey: 'nav.runtimes', icon: 'mdi-gamepad-variant-outline' },
+}
+
 const settings: RouteRecordRaw = {
     path: '/settings',
     name: 'settings',
@@ -52,7 +67,7 @@ const settings: RouteRecordRaw = {
 }
 
 // 侧栏导航项（不含详情页等二级路由）
-export const navRoutes: RouteRecordRaw[] = [dashboard, projects, dev, instances, settings]
+export const navRoutes: RouteRecordRaw[] = [dashboard, projects, dev, instances, sources, runtimes, settings]
 
 const router = createRouter({
     history: createWebHashHistory(),

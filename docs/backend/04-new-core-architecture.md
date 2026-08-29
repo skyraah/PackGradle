@@ -10,7 +10,8 @@
 
 `internal/service`（EnvService / PackwizService / PrismService）已冻结为 legacy，
 仍注册在 Wails 中维持现有前端行为；新能力一律落在下列模块树。
-新栈 Wails 出口为 `transport.SyncService`（与 legacy 并存注册，见 main.go）。
+新栈 Wails 出口为 `transport.SyncService` + 端点管理的 `transport.ProjectService` /
+`transport.RuntimeService`（与 legacy 并存注册，见 main.go）。
 
 ## 模块树
 
@@ -23,15 +24,18 @@ internal/
     diff/                   # 三方 Diff 真值表（§6.3）与初始化分类
     plan/                   # 确定性 plan builder（draft/resolved、方向过滤、确认要求）
   application/
-    ports/                  # 消费方接口（仓库/扫描器/哈希/指纹/事件）+ 仓库哨兵错误
+    ports/                  # 消费方接口（仓库/扫描器/哈希/指纹/事件/端点发现）+ 仓库哨兵错误
+    endpoint/               # Project/Runtime 共享的端点错误码与只读健康评估
     task/                   # 任务生命周期（持久化 Task + task_updated/relation_invalidated 事件）
     policy/                 # MappingPolicy 模板（default-v1 仅 mods；config 等为建议模板）
     view/                   # 用例返回投影
+    project/                # 项目源端点用例：DiscoverProjects/RegisterProject/GetProjectHealth/ListProjects
+    runtime/                # 运行实例端点用例：DiscoverRuntimes/RegisterRuntime/GetRuntimeHealth/ListRuntimes
     sync/                   # 用例：PrepareRelation/CreateRelation/StartScan/PrepareSync/ResolvePlan/GetPlan/GetWorkspace...
   adapters/
     filesystem/             # 流式 sha256、原子写、ResolveWithin 路径安全、卷序列号 binding fingerprint
-    packwiz/                # Project 扫描：index.toml 权威 + modrinth/curseforge 身份 + [download] 声明 hash
-    prism/                  # Runtime 扫描：mods/*.jar + mods/.index 元数据 + filename hint 跨侧匹配
+    packwiz/                # Project 扫描：index.toml 权威 + modrinth/curseforge 身份 + [download] 声明 hash；DiscoverProjects 有限深度发现
+    prism/                  # Runtime 扫描：mods/*.jar + mods/.index 元数据 + filename hint 跨侧匹配；Discoverer 实例发现
   store/
     paths.go                # 用户数据目录布局（packgradle.db/objects/staging/logs/exports）
     sqlite/                 # schema v1→v2 前向迁移（VACUUM INTO 备份门禁；v2 补 tasks.plan_id/commit_id 外键）+ 完整性守卫 + 各仓库
@@ -47,7 +51,7 @@ cmd/pgheadless/             # headless 验证入口：Prepare→Create→Scan→
 - **Plan digest**：含 relation_revision、kind、resolved 标记、base baseline digest、输入快照 digest、policy digest、expected_bindings、确定性排序后的操作与最小化冲突/resolutions；排除所有 ID、status、expires_at。
 - **mod 语义摘要**：高置信度（modrinth/curseforge）= identity + version + side + hash（声明值优先，否则实测 sha256）；低置信度（jar/path）= 小写文件名 + hash。显示名与 [download] url 永不进入 digest。
 - **跨侧 mod 匹配**：唯一通道是 application 在扫描时把项目侧 pw.toml 的 `filename`（小写）→ ResourceID 作为 hint 传给 Prism scanner；core/diff 绝不做路径→身份推断，低置信度身份不参与跨侧等价判定。
-- **错误协议**：沿用 `internal/errs.AppError`；新错误码命名空间 `err.relation.*`、`err.scan.*`、`err.plan.*`、`err.sync.*`、`err.mapping.*`（前端 locale 于 Step 7 补齐）。
+- **错误协议**：沿用 `internal/errs.AppError`；新错误码命名空间 `err.relation.*`、`err.scan.*`、`err.plan.*`、`err.sync.*`、`err.mapping.*`、`err.endpoint.*`（端点登记/发现/健康，已带 zh-CN locale 键）。
 - **任务事件**：统一 topic `packgradle://event`，payload 为 `EventEnvelope`（event_type ∈ task_updated / relation_invalidated / watch_failed）。事件不是事实源；漏包后经 ListTasks/GetWorkspace 查询恢复。
 
 ## P1 明确不做

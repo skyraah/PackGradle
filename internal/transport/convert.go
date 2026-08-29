@@ -123,6 +123,29 @@ func representationDTO(r *model.Representation) *RepresentationDTO {
 	}
 }
 
+func projectCandidateDTO(v view.ProjectCandidateView) ProjectCandidateDTO {
+	return ProjectCandidateDTO{
+		DisplayName: v.DisplayName, RootPath: v.RootPath, PackTomlPath: v.PackTomlPath,
+		Minecraft: v.Minecraft, Modloader: v.Modloader,
+		Registered: v.Registered, EndpointID: v.EndpointID,
+	}
+}
+
+func runtimeCandidateDTO(v view.RuntimeCandidateView) RuntimeCandidateDTO {
+	return RuntimeCandidateDTO{
+		InstanceID: v.InstanceID, InstanceDir: v.InstanceDir, DisplayName: v.DisplayName, GameDir: v.GameDir,
+		Minecraft: v.Minecraft, Modloader: v.Modloader,
+		Registered: v.Registered, EndpointID: v.EndpointID,
+	}
+}
+
+func endpointHealthDTO(v view.EndpointHealthView) EndpointHealthDTO {
+	return EndpointHealthDTO{
+		EndpointID: v.EndpointID, Status: v.Status,
+		PathExists: v.PathExists, FingerprintMatches: v.FingerprintMatches, CheckedAt: v.CheckedAt,
+	}
+}
+
 func planDTO(v view.SyncPlanView) SyncPlanDTO {
 	ops := make([]OperationDTO, 0, len(v.Operations))
 	for _, op := range v.Operations {

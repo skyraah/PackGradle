@@ -71,6 +71,27 @@ FROM projects WHERE binding_fingerprint=?`, fingerprint).
 	return p, true, nil
 }
 
+// ListProjects 返回全部已登记项目（display_name 升序；/sources 页列表）。
+func (r *EndpointRepository) ListProjects(ctx context.Context) ([]model.Project, error) {
+	rows, err := r.db.QueryContext(ctx, `
+SELECT id, adapter, display_name, root_path, binding_fingerprint, created_at
+FROM projects ORDER BY display_name COLLATE NOCASE, id`)
+	if err != nil {
+		return nil, fmt.Errorf("sqlite: 列出 Project: %w", err)
+	}
+	defer rows.Close()
+	out := []model.Project{}
+	for rows.Next() {
+		var p model.Project
+		if err := rows.Scan(&p.ProjectID, &p.Adapter, &p.DisplayName, &p.RootPath, &p.BindingFingerprint, &p.CreatedAt); err != nil {
+			return nil, fmt.Errorf("sqlite: 列出 Project: %w", err)
+		}
+		p.SchemaVersion = model.CurrentSchemaVersion
+		out = append(out, p)
+	}
+	return out, rows.Err()
+}
+
 // CreateRuntime 登记运行时端点；重复登记返回 ErrDuplicate。
 func (r *EndpointRepository) CreateRuntime(ctx context.Context, rt model.Runtime) error {
 	_, err := r.db.ExecContext(ctx, `
@@ -118,4 +139,25 @@ FROM runtimes WHERE adapter=? AND adapter_identity=?`, adapter, adapterIdentity)
 	}
 	rt.SchemaVersion = model.CurrentSchemaVersion
 	return rt, true, nil
+}
+
+// ListRuntimes 返回全部已登记运行实例（display_name 升序；/runtimes 页列表）。
+func (r *EndpointRepository) ListRuntimes(ctx context.Context) ([]model.Runtime, error) {
+	rows, err := r.db.QueryContext(ctx, `
+SELECT id, adapter, display_name, root_path, adapter_identity, binding_fingerprint, created_at
+FROM runtimes ORDER BY display_name COLLATE NOCASE, id`)
+	if err != nil {
+		return nil, fmt.Errorf("sqlite: 列出 Runtime: %w", err)
+	}
+	defer rows.Close()
+	out := []model.Runtime{}
+	for rows.Next() {
+		var rt model.Runtime
+		if err := rows.Scan(&rt.RuntimeID, &rt.Adapter, &rt.DisplayName, &rt.RootPath, &rt.AdapterIdentity, &rt.BindingFingerprint, &rt.CreatedAt); err != nil {
+			return nil, fmt.Errorf("sqlite: 列出 Runtime: %w", err)
+		}
+		rt.SchemaVersion = model.CurrentSchemaVersion
+		out = append(out, rt)
+	}
+	return out, rows.Err()
 }

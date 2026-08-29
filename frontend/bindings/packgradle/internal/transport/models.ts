@@ -23,6 +23,19 @@ export interface ContentRefDTO {
 }
 
 /**
+ * DiagnosticDTO 是扫描/映射诊断投影（含 diag.mapping.collision 碰撞证据；
+ * code 的文案由前端 locale 提供）。
+ */
+export interface DiagnosticDTO {
+    "severity": string;
+    "code": string;
+    "args": string[] | null;
+    "detail"?: string;
+    "resource_id"?: string;
+    "relative_path"?: string;
+}
+
+/**
  * EndpointDTO 是端点投影。
  */
 export interface EndpointDTO {
@@ -32,6 +45,17 @@ export interface EndpointDTO {
     "root_path": string;
     "adapter_identity"?: string;
     "binding_fingerprint": string;
+}
+
+/**
+ * EndpointHealthDTO 是端点健康检查结果（只读；status: ok|missing|identity_mismatch）。
+ */
+export interface EndpointHealthDTO {
+    "endpoint_id": string;
+    "status": string;
+    "path_exists": boolean;
+    "fingerprint_matches": boolean;
+    "checked_at": string;
 }
 
 export interface MappingRuleDTO {
@@ -125,6 +149,27 @@ export interface ProblemDTO {
 }
 
 /**
+ * ProjectCandidateDTO 是项目源发现候选（registered 按 binding fingerprint 幂等判定）。
+ */
+export interface ProjectCandidateDTO {
+    "display_name": string;
+    "root_path": string;
+    "pack_toml_path": string;
+    "minecraft"?: string;
+    "modloader"?: string;
+    "registered": boolean;
+    "endpoint_id"?: string;
+}
+
+/**
+ * RegisterEndpointDTO 是端点登记输入（契约 03 §2.5；project: pack.toml 所在目录，
+ * runtime: Prism 实例目录）。
+ */
+export interface RegisterEndpointDTO {
+    "root_path": string;
+}
+
+/**
  * RelationDTO 是关系投影。
  */
 export interface RelationDTO {
@@ -178,6 +223,20 @@ export interface ResolvePlanDTO {
 }
 
 /**
+ * RuntimeCandidateDTO 是运行实例发现候选（registered 按 adapter identity 幂等判定）。
+ */
+export interface RuntimeCandidateDTO {
+    "instance_id": string;
+    "instance_dir": string;
+    "display_name": string;
+    "game_dir": string;
+    "minecraft"?: string;
+    "modloader"?: string;
+    "registered": boolean;
+    "endpoint_id"?: string;
+}
+
+/**
  * SnapshotSummaryDTO 是快照摘要。
  */
 export interface SnapshotSummaryDTO {
@@ -214,6 +273,7 @@ export interface SyncPlanDTO {
     "resolutions": ResolutionDTO[] | null;
     "confirmation_requirements": ConfirmationRequirementDTO[] | null;
     "summary": PlanSummaryDTO;
+    "diagnostics": DiagnosticDTO[] | null;
 }
 
 /**
