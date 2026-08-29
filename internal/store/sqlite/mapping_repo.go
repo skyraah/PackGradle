@@ -16,7 +16,7 @@ import (
 // SavePolicy 在同一事务内 UPSERT mappings 并递增 relations.revision，
 // 使旧 Plan 立即 stale（§8.3：映射修订与关系修订必须同事务联动）。
 type MappingRepository struct {
-	db *sql.DB
+	db DBTX
 }
 
 var _ ports.MappingRepository = (*MappingRepository)(nil)
@@ -68,8 +68,9 @@ VALUES(?,?,?,?,?)`,
 	return nil
 }
 
-// SavePolicy 单事务保存策略修改（UPSERT）并递增 relations.revision，
+// SavePolicy 保存策略修改（UPSERT）并递增 relations.revision，
 // 使旧 Plan 立即 stale（§8.3）。初始写入请走 CreatePolicy（不递增）。
+// 独立使用时自开事务保证原子；处于 RunInTx 事务域内时加入外层事务。
 // 关系不存在时 UPDATE 影响 0 行，整个事务回滚并返回 ErrNotFound。
 func (r *MappingRepository) SavePolicy(ctx context.Context, relationID string, p model.MappingPolicy) error {
 	policyJSON, err := json.Marshal(p)
@@ -77,38 +78,30 @@ func (r *MappingRepository) SavePolicy(ctx context.Context, relationID string, p
 		return fmt.Errorf("sqlite: 序列化关系 %s 映射策略: %w", relationID, err)
 	}
 
-	tx, err := r.db.BeginTx(ctx, nil)
-	if err != nil {
-		return fmt.Errorf("sqlite: 保存关系 %s 映射策略开启事务: %w", relationID, err)
-	}
-	defer tx.Rollback()
-
-	if _, err := tx.ExecContext(ctx, `
+	return beginOrJoin(ctx, r.db, "保存关系 "+relationID+" 映射策略", func(q DBTX) error {
+		if _, err := q.ExecContext(ctx, `
 INSERT INTO mappings(relation_id, policy_id, revision, policy_json, updated_at)
 VALUES(?,?,?,?,?)
 ON CONFLICT(relation_id) DO UPDATE SET
 	policy_id=excluded.policy_id, revision=excluded.revision,
 	policy_json=excluded.policy_json, updated_at=excluded.updated_at`,
-		relationID, p.PolicyID, p.Revision, string(policyJSON),
-		time.Now().UTC().Format(time.RFC3339)); err != nil {
-		if isForeignKeyViolation(err) {
-			// mappings.relation_id 引用 relations(id)：FK 失败即关系不存在。
-			return fmt.Errorf("sqlite: 保存关系 %s 映射策略: %w", relationID, ErrNotFound)
+			relationID, p.PolicyID, p.Revision, string(policyJSON),
+			time.Now().UTC().Format(time.RFC3339)); err != nil {
+			if isForeignKeyViolation(err) {
+				// mappings.relation_id 引用 relations(id)：FK 失败即关系不存在。
+				return fmt.Errorf("sqlite: 保存关系 %s 映射策略: %w", relationID, ErrNotFound)
+			}
+			return fmt.Errorf("sqlite: 保存关系 %s 映射策略: %w", relationID, err)
 		}
-		return fmt.Errorf("sqlite: 保存关系 %s 映射策略: %w", relationID, err)
-	}
 
-	res, err := tx.ExecContext(ctx,
-		"UPDATE relations SET revision=revision+1 WHERE id=?", relationID)
-	if err != nil {
-		return fmt.Errorf("sqlite: 保存关系 %s 映射策略联动修订: %w", relationID, err)
-	}
-	if n, err := res.RowsAffected(); err == nil && n == 0 {
-		return fmt.Errorf("sqlite: 保存关系 %s 映射策略联动修订: %w", relationID, ErrNotFound)
-	}
-
-	if err := tx.Commit(); err != nil {
-		return fmt.Errorf("sqlite: 保存关系 %s 映射策略提交: %w", relationID, err)
-	}
-	return nil
+		res, err := q.ExecContext(ctx,
+			"UPDATE relations SET revision=revision+1 WHERE id=?", relationID)
+		if err != nil {
+			return fmt.Errorf("sqlite: 保存关系 %s 映射策略联动修订: %w", relationID, err)
+		}
+		if n, err := res.RowsAffected(); err == nil && n == 0 {
+			return fmt.Errorf("sqlite: 保存关系 %s 映射策略联动修订: %w", relationID, ErrNotFound)
+		}
+		return nil
+	})
 }

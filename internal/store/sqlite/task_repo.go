@@ -14,7 +14,7 @@ import (
 // TaskRepository 是 ports.TaskRepository 的 SQLite 实现（tasks 表）。
 // Sequence 是任务内持久化单调递增序号，Update 以其为乐观锁。
 type TaskRepository struct {
-	db *sql.DB
+	db DBTX
 }
 
 var _ ports.TaskRepository = (*TaskRepository)(nil)

@@ -67,6 +67,7 @@ func Build(root string) (*Stack, error) {
 		Preparations:  sqlite.NewPreparationRepository(db),
 		HashCache:     sqlite.NewHashCacheRepository(db),
 		Events:        sqlite.NewEventRepository(db),
+		Tx:            sqlite.NewUnitOfWork(db),
 		Publisher:     transport.NewEventBridge(),
 		ProjectScan:   packwiz.New(),
 		RuntimeScan:   prism.New(),

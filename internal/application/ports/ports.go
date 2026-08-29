@@ -15,9 +15,10 @@ import (
 var (
 	ErrNotFound           = errors.New("ports: 记录不存在")
 	ErrDuplicate          = errors.New("ports: 唯一约束冲突")
-	ErrSequenceConflict   = errors.New("ports: 序号冲突（乐观锁拒绝）")
-	ErrPreparationExpired = errors.New("ports: 预检已过期或已消费")
-	ErrRelationNotFound   = errors.New("ports: 关系不存在")
+	ErrSequenceConflict     = errors.New("ports: 序号冲突（乐观锁拒绝）")
+	ErrPreparationExpired   = errors.New("ports: 预检已过期")
+	ErrPreparationConsumed  = errors.New("ports: 预检已被消费")
+	ErrRelationNotFound     = errors.New("ports: 关系不存在")
 	// 完整性守卫哨兵（检视报告 P0-3）：repository 写入边界拒绝污染审计链的对象引用。
 	ErrCrossRelation  = errors.New("ports: 引用对象属于另一 Relation")
 	ErrSideMismatch   = errors.New("ports: 快照 side 与引用语义不符")
@@ -158,6 +159,28 @@ type HashCacheRepository interface {
 // TaskEventRepository 持久化事件并原子分配 stream_sequence。
 type TaskEventRepository interface {
 	Append(ctx context.Context, env model.EventEnvelope) (int64, error) // 返回分配的 stream_sequence
+}
+
+// Repos 是单个事务域内可用的仓库集合（UnitOfWork.RunInTx 闭包参数），
+// 字段与 AppDeps 的同名仓库一一对应，但全部绑定同一事务。
+type Repos struct {
+	Endpoints    EndpointRepository
+	Relations    RelationRepository
+	Snapshots    SnapshotRepository
+	Baselines    BaselineRepository
+	Plans        PlanRepository
+	Tasks        TaskRepository
+	Mappings     MappingRepository
+	Preparations PreparationRepository
+	HashCache    HashCacheRepository
+	Events       TaskEventRepository
+}
+
+// UnitOfWork 是跨仓库的单事务边界（ADR-0003：多步元数据写入 doctrine）。
+// 闭包内的全部写入随事务提交或回滚；事件发布一律在事务提交成功之后由
+// 调用方执行（发布失败不影响提交，事件不是事实源）。
+type UnitOfWork interface {
+	RunInTx(ctx context.Context, fn func(repos Repos) error) error
 }
 
 // ---- 适配器 ----

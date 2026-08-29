@@ -307,6 +307,8 @@ type SyncPlanDTO struct {
 | `err.relation.rebind_prep_not_found` | {0}=preparation_id | 重绑预检不存在 |
 | `err.relation.rebind_prep_expired` | {0}=preparation_id | 重绑预检过期 |
 | `err.relation.rebind_invalid_side` | {0}=side | side 非 project/runtime |
+| `err.relation.prep_expired` | {0}=preparation_id | 创建预检已过期（引导重新预检；ADR-0003 决议 4） |
+| `err.relation.prep_consumed` | {0}=preparation_id | 创建预检已被消费（引导刷新，关系可能已建成——双击/双窗口；ADR-0003 决议 4） |
 | `err.changes.snapshot_pair_invalid` | — | 快照对不属同 relation 或非同侧 |
 | `err.recovery.in_progress` | — | 恢复任务占用（availability reason） |
 | `err.scan.incomplete` | — | scan_state 非 ready（availability reason） |

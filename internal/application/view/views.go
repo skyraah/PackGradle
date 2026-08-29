@@ -39,6 +39,10 @@ type EndpointView struct {
 	RootPath           string `json:"root_path"`
 	AdapterIdentity    string `json:"adapter_identity,omitempty"`
 	BindingFingerprint string `json:"binding_fingerprint"`
+	// InstanceDir 是运行实例的实例目录（登记输入 root_path 的取值来源）：
+	// 由游戏目录 root_path 的父目录派生（登记不变量 gameDir=<实例>/minecraft）。
+	// 仅 runtime 侧填充；project 侧为空。
+	InstanceDir string `json:"instance_dir,omitempty"`
 }
 
 // RelationView 是关系投影。

@@ -211,23 +211,23 @@ func verifyTaskIntegrity(ctx context.Context, q guardQuerier, t model.Task) erro
 
 // taskReferenceSentinel 把任务写入的外键违例翻译为可区分的哨兵错误：
 // FK 只能说明"有引用坏了"，这里按 relation → plan → commit 的顺序定位坏引用。
-func taskReferenceSentinel(ctx context.Context, db *sql.DB, t model.Task) error {
-	if t.RelationID != "" && !rowExists(ctx, db, "SELECT EXISTS(SELECT 1 FROM relations WHERE id=?)", t.RelationID) {
+func taskReferenceSentinel(ctx context.Context, q DBTX, t model.Task) error {
+	if t.RelationID != "" && !rowExists(ctx, q, "SELECT EXISTS(SELECT 1 FROM relations WHERE id=?)", t.RelationID) {
 		return ErrRelationNotFound
 	}
-	if t.PlanID != "" && !rowExists(ctx, db, "SELECT EXISTS(SELECT 1 FROM sync_plans WHERE id=?)", t.PlanID) {
+	if t.PlanID != "" && !rowExists(ctx, q, "SELECT EXISTS(SELECT 1 FROM sync_plans WHERE id=?)", t.PlanID) {
 		return ErrPlanNotFound
 	}
-	if t.CommitID != "" && !rowExists(ctx, db, "SELECT EXISTS(SELECT 1 FROM sync_commits WHERE id=?)", t.CommitID) {
+	if t.CommitID != "" && !rowExists(ctx, q, "SELECT EXISTS(SELECT 1 FROM sync_commits WHERE id=?)", t.CommitID) {
 		return ErrNotFound
 	}
 	return ErrRelationNotFound
 }
 
 // rowExists 执行 EXISTS 查询；查询出错按 false 处理（外层已有原始错误）。
-func rowExists(ctx context.Context, db *sql.DB, query string, args ...any) bool {
+func rowExists(ctx context.Context, q DBTX, query string, args ...any) bool {
 	var exists bool
-	if err := db.QueryRowContext(ctx, query, args...).Scan(&exists); err != nil {
+	if err := q.QueryRowContext(ctx, query, args...).Scan(&exists); err != nil {
 		return false
 	}
 	return exists

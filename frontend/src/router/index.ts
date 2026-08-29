@@ -59,6 +59,15 @@ const runtimes: RouteRecordRaw = {
     meta: { titleKey: 'nav.runtimes', icon: 'mdi-gamepad-variant-outline' },
 }
 
+// 新栈创建页（shadcn-vue；Prepare → Apply 建工作区，UX 原型 §7.2。
+// T08 建 /workspaces 列表页后由其「新建工作区」入口承接，导航项届时调整）
+const workspacesNew: RouteRecordRaw = {
+    path: '/workspaces/new',
+    name: 'workspaces-new',
+    component: () => import('../views/WorkspacesNewView.vue'),
+    meta: { titleKey: 'nav.workspacesNew', icon: 'mdi-plus-box-outline' },
+}
+
 const settings: RouteRecordRaw = {
     path: '/settings',
     name: 'settings',
@@ -67,7 +76,7 @@ const settings: RouteRecordRaw = {
 }
 
 // 侧栏导航项（不含详情页等二级路由）
-export const navRoutes: RouteRecordRaw[] = [dashboard, projects, dev, instances, sources, runtimes, settings]
+export const navRoutes: RouteRecordRaw[] = [dashboard, projects, dev, instances, sources, runtimes, workspacesNew, settings]
 
 const router = createRouter({
     history: createWebHashHistory(),

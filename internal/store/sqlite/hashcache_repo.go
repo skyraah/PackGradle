@@ -12,7 +12,7 @@ import (
 // HashCacheRepository 是 ports.HashCacheRepository 的 SQLite 实现（hash_cache 表）。
 // 缓存只是性能优化、可随时丢弃（DeleteAll），不是事实来源（§5.1）。
 type HashCacheRepository struct {
-	db *sql.DB
+	db DBTX
 }
 
 var _ ports.HashCacheRepository = (*HashCacheRepository)(nil)
@@ -39,37 +39,30 @@ WHERE root_fingerprint=? AND relative_path=? AND size_bytes=? AND mtime_unix_nan
 }
 
 // Save 批量 UPSERT 缓存条目（同键覆盖旧 digest 与 created_at），单事务写入。
+// 独立使用时自开事务；处于 RunInTx 事务域内时加入外层事务。
 func (r *HashCacheRepository) Save(ctx context.Context, entries []ports.HashCacheEntry) error {
-	tx, err := r.db.BeginTx(ctx, nil)
-	if err != nil {
-		return fmt.Errorf("sqlite: 写入 hash 缓存开启事务: %w", err)
-	}
-	defer tx.Rollback()
-
-	stmt, err := tx.PrepareContext(ctx, `
+	return beginOrJoin(ctx, r.db, "写入 hash 缓存", func(tx DBTX) error {
+		stmt, err := tx.PrepareContext(ctx, `
 INSERT INTO hash_cache(root_fingerprint, relative_path, size_bytes, mtime_unix_nano, file_key,
 	algorithm, digest, created_at)
 VALUES(?,?,?,?,?,'sha256',?,?)
 ON CONFLICT(root_fingerprint, relative_path, size_bytes, mtime_unix_nano, file_key) DO UPDATE SET
 	algorithm=excluded.algorithm, digest=excluded.digest, created_at=excluded.created_at`)
-	if err != nil {
-		return fmt.Errorf("sqlite: 写入 hash 缓存: %w", err)
-	}
-	defer stmt.Close()
-
-	now := time.Now().UTC().Format(time.RFC3339)
-	for _, e := range entries {
-		if _, err := stmt.ExecContext(ctx,
-			e.Key.RootFingerprint, e.Key.RelativePath, e.Key.SizeBytes,
-			e.Key.MtimeUnixNano, e.Key.FileKey, e.Digest, now); err != nil {
-			return fmt.Errorf("sqlite: 写入 hash 缓存 %s: %w", e.Key.RelativePath, err)
+		if err != nil {
+			return fmt.Errorf("sqlite: 写入 hash 缓存: %w", err)
 		}
-	}
+		defer stmt.Close()
 
-	if err := tx.Commit(); err != nil {
-		return fmt.Errorf("sqlite: 写入 hash 缓存提交: %w", err)
-	}
-	return nil
+		now := time.Now().UTC().Format(time.RFC3339)
+		for _, e := range entries {
+			if _, err := stmt.ExecContext(ctx,
+				e.Key.RootFingerprint, e.Key.RelativePath, e.Key.SizeBytes,
+				e.Key.MtimeUnixNano, e.Key.FileKey, e.Digest, now); err != nil {
+				return fmt.Errorf("sqlite: 写入 hash 缓存 %s: %w", e.Key.RelativePath, err)
+			}
+		}
+		return nil
+	})
 }
 
 // DeleteAll 清空全部缓存（验收：删缓存后可从端点重建）。

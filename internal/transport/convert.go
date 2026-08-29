@@ -25,21 +25,26 @@ func endpointDTO(e view.EndpointView) EndpointDTO {
 	return EndpointDTO{
 		ID: e.ID, Adapter: e.Adapter, DisplayName: e.DisplayName, RootPath: e.RootPath,
 		AdapterIdentity: e.AdapterIdentity, BindingFingerprint: e.BindingFingerprint,
+		InstanceDir: e.InstanceDir,
 	}
 }
 
 func policyDTO(p model.MappingPolicy) PolicyDTO {
 	rules := make([]MappingRuleDTO, 0, len(p.Rules))
 	for _, r := range p.Rules {
-		rules = append(rules, MappingRuleDTO{
-			ID: r.ID, ResourceKind: r.ResourceKind,
-			ProjectPrefix: r.ProjectPrefix, RuntimePrefix: r.RuntimePrefix,
-			Include: strs(r.Include), Exclude: strs(r.Exclude),
-			Direction: r.Direction, Materialization: r.Materialization,
-			MergePolicy: r.MergePolicy, RuntimeLocalPolicy: r.RuntimeLocalPolicy,
-		})
+		rules = append(rules, mappingRuleDTO(r))
 	}
 	return PolicyDTO{SchemaVersion: p.SchemaVersion, PolicyID: p.PolicyID, Revision: p.Revision, Rules: rules}
+}
+
+func mappingRuleDTO(r model.MappingRule) MappingRuleDTO {
+	return MappingRuleDTO{
+		ID: r.ID, ResourceKind: r.ResourceKind,
+		ProjectPrefix: r.ProjectPrefix, RuntimePrefix: r.RuntimePrefix,
+		Include: strs(r.Include), Exclude: strs(r.Exclude),
+		Direction: r.Direction, Materialization: r.Materialization,
+		MergePolicy: r.MergePolicy, RuntimeLocalPolicy: r.RuntimeLocalPolicy,
+	}
 }
 
 func preparationDTO(v view.RelationPreparationView) RelationPreparationDTO {

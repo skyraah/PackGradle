@@ -45,6 +45,12 @@ export interface EndpointDTO {
     "root_path": string;
     "adapter_identity"?: string;
     "binding_fingerprint": string;
+
+    /**
+     * InstanceDir 仅 runtime 侧填充：实例目录（PrepareRelation 输入 root_path
+     * 的取值来源），由游戏目录父目录派生；project 侧为空。
+     */
+    "instance_dir"?: string;
 }
 
 /**
@@ -126,6 +132,11 @@ export interface PrepareRelationDTO {
     "project_root": string;
     "runtime_instance_dir": string;
     "policy_set": string;
+
+    /**
+     * 勾选的建议规则 ID（默认不勾选，确认前不写受管）
+     */
+    "suggestions"?: string[] | null;
 }
 
 /**

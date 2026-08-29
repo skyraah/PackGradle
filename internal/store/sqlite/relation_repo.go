@@ -11,7 +11,7 @@ import (
 
 // RelationRepository 是 ports.RelationRepository 的 SQLite 实现（relations 表，聚合根）。
 type RelationRepository struct {
-	db *sql.DB
+	db DBTX
 }
 
 var _ ports.RelationRepository = (*RelationRepository)(nil)

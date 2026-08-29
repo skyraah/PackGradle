@@ -51,6 +51,14 @@ export function GetWorkspace(relationID: string): $CancellablePromise<$models.Wo
 }
 
 /**
+ * ListPolicySuggestions 返回建议（默认不激活）的受管范围候选规则，
+ * 供 /workspaces/new 页勾选后并入初始 policy（/workspaces/new 建议流）。
+ */
+export function ListPolicySuggestions(): $CancellablePromise<$models.MappingRuleDTO[] | null> {
+    return $Call.ByID(870394590);
+}
+
+/**
  * ListTasks 查询任务列表。
  */
 export function ListTasks(relationID: string, active: boolean, cursor: string, limit: number): $CancellablePromise<$models.TaskPageDTO> {

@@ -14,7 +14,7 @@ import (
 // PreparationRepository 是 ports.PreparationRepository 的 SQLite 实现
 // （preparations 表，Prepare/Apply 两段式创建 Relation 的中间状态）。
 type PreparationRepository struct {
-	db *sql.DB
+	db DBTX
 }
 
 var _ ports.PreparationRepository = (*PreparationRepository)(nil)
@@ -111,7 +111,9 @@ FROM preparations WHERE preparation_id=?`, id).
 }
 
 // MarkConsumed 消费预检：仅当未消费（consumed_at IS NULL）且未过期（expires_at > now）
-// 时成功。影响行数为 0 时区分：记录不存在 → ErrNotFound；已消费或已过期 → ErrPreparationExpired。
+// 时成功。影响行数为 0 时区分三种情况：记录不存在 → ErrNotFound；已消费 →
+// ErrPreparationConsumed（引导刷新，关系可能已建成）；已过期 → ErrPreparationExpired
+// （引导重新预检；ADR-0003 决议 4 拆码，已消费优先于已过期——消费必发生在过期前）。
 // 时间统一为 UTC RFC3339 字符串比较（与写入格式一致）。
 func (r *PreparationRepository) MarkConsumed(ctx context.Context, id string) error {
 	now := time.Now().UTC().Format(time.RFC3339)
@@ -125,6 +127,15 @@ WHERE preparation_id=? AND consumed_at IS NULL AND expires_at>?`, now, id, now)
 		return nil
 	}
 
+	var consumed bool
+	if err := r.db.QueryRowContext(ctx,
+		"SELECT EXISTS(SELECT 1 FROM preparations WHERE preparation_id=? AND consumed_at IS NOT NULL)", id).
+		Scan(&consumed); err != nil {
+		return fmt.Errorf("sqlite: 消费预检 %s: %w", id, err)
+	}
+	if consumed {
+		return fmt.Errorf("sqlite: 消费预检 %s: %w", id, ErrPreparationConsumed)
+	}
 	var exists bool
 	if err := r.db.QueryRowContext(ctx,
 		"SELECT EXISTS(SELECT 1 FROM preparations WHERE preparation_id=?)", id).Scan(&exists); err != nil {

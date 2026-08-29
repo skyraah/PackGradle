@@ -44,6 +44,8 @@ type AppDeps struct {
 	Preparations  ports.PreparationRepository
 	HashCache     ports.HashCacheRepository
 	Events        ports.TaskEventRepository
+	// Tx 是多步元数据写入的单事务边界（ADR-0003）；CreateRelation 走 RunInTx。
+	Tx            ports.UnitOfWork
 	Publisher     ports.EventPublisher // 事件出口（transport 桥），可为 nil
 	ProjectScan   ports.ProjectScanner
 	RuntimeScan   ports.RuntimeScanner
@@ -81,6 +83,7 @@ func New(deps AppDeps) (*App, error) {
 		{"Preparations", deps.Preparations != nil},
 		{"HashCache", deps.HashCache != nil},
 		{"Events", deps.Events != nil},
+		{"Tx", deps.Tx != nil},
 		{"ProjectScan", deps.ProjectScan != nil},
 		{"RuntimeScan", deps.RuntimeScan != nil},
 		{"Hasher", deps.Hasher != nil},

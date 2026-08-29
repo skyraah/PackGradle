@@ -42,15 +42,39 @@ func DefaultV1() model.MappingPolicy {
 	}
 }
 
+// MergeSuggestions 把用户勾选的建议规则并入模板 policy（/workspaces/new 页
+// 选择受管范围）。ids 必须是 Suggestions() 返回的规则 ID；未知 ID 返回错误
+// （调用方映射 err.mapping.unknown_policy）。合并结果必须再过 policy.Validate
+// 编译校验后才可写入预检或 Relation。
+func MergeSuggestions(pol model.MappingPolicy, ids []string) (model.MappingPolicy, error) {
+	if len(ids) == 0 {
+		return pol, nil
+	}
+	byID := make(map[string]model.MappingRule, len(suggestionRules))
+	for _, r := range suggestionRules {
+		byID[r.ID] = r
+	}
+	for _, id := range ids {
+		r, ok := byID[id]
+		if !ok {
+			return model.MappingPolicy{}, fmt.Errorf("policy: 未知建议规则 %q", id)
+		}
+		pol.Rules = append(pol.Rules, r)
+	}
+	return pol, nil
+}
+
 // Suggestions 返回建议（默认不激活）的文件前缀模板片段，
 // 供 /workspaces/new 页面勾选后并入 Relation 的 policy。
 func Suggestions() []model.MappingRule {
-	return []model.MappingRule{
-		fileRule("config", "config", model.ResourceTextFile),
-		fileRule("kubejs", "kubejs", model.ResourceTextFile),
-		fileRule("scripts", "scripts", model.ResourceTextFile),
-		fileRule("defaultconfigs", "defaultconfigs", model.ResourceTextFile),
-	}
+	return suggestionRules
+}
+
+var suggestionRules = []model.MappingRule{
+	fileRule("config", "config", model.ResourceTextFile),
+	fileRule("kubejs", "kubejs", model.ResourceTextFile),
+	fileRule("scripts", "scripts", model.ResourceTextFile),
+	fileRule("defaultconfigs", "defaultconfigs", model.ResourceTextFile),
 }
 
 func fileRule(id, prefix string, kind model.ResourceKind) model.MappingRule {

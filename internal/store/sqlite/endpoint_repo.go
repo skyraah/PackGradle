@@ -11,7 +11,7 @@ import (
 
 // EndpointRepository 是 ports.EndpointRepository 的 SQLite 实现（projects / runtimes 表）。
 type EndpointRepository struct {
-	db *sql.DB
+	db DBTX
 }
 
 // 编译期接口断言。

@@ -214,9 +214,10 @@ type PreparationCheck struct {
 
 // PrepareRelationInput 是 PrepareRelation 的用户输入。
 type PrepareRelationInput struct {
-	ProjectRoot        string `json:"project_root"`         // pack.toml 所在目录
-	RuntimeInstanceDir string `json:"runtime_instance_dir"` // Prism 实例目录（非游戏目录）
-	PolicySet          string `json:"policy_set"`           // 默认 "default-v1"
+	ProjectRoot        string   `json:"project_root"`         // pack.toml 所在目录
+	RuntimeInstanceDir string   `json:"runtime_instance_dir"` // Prism 实例目录（非游戏目录）
+	PolicySet          string   `json:"policy_set"`           // 默认 "default-v1"
+	Suggestions        []string `json:"suggestions,omitempty"` // 勾选的建议规则 ID（policy.Suggestions 子集，默认不勾选）
 }
 
 // RelationPreparation 是 Prepare 阶段持久化的预检结果；CreateRelation 只接受其 ID。

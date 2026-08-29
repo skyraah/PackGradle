@@ -22,8 +22,11 @@ const (
 	CodeRelationInvalidEndpoint = "err.relation.invalid_endpoint"
 	CodeRelationRebindRequired  = "err.relation.rebind_required"
 	CodeRelationPrepNotFound    = "err.relation.preparation_not_found"
-	CodeRelationPrepExpired     = "err.relation.preparation_expired"
-	CodeMappingUnknownPolicy    = "err.mapping.unknown_policy"
+	// CodeRelationPrepExpired / CodeRelationPrepConsumed 拆码（ADR-0003 决议 4）：
+	// 过期 → 引导重新预检；已消费 → 引导刷新，关系可能已建成（双击/双窗口场景）。
+	CodeRelationPrepExpired  = "err.relation.prep_expired"
+	CodeRelationPrepConsumed = "err.relation.prep_consumed"
+	CodeMappingUnknownPolicy = "err.mapping.unknown_policy"
 	// CodeMappingCompileFailed 是策略编译失败码（契约 03 §3：args {0}=rule_id；
 	// 字段与违规原因进 detail）。
 	CodeMappingCompileFailed    = "err.mapping.compile_failed"
@@ -52,6 +55,12 @@ func (a *App) PrepareRelation(ctx context.Context, input model.PrepareRelationIn
 	pol, err := policy.Template(policySet)
 	if err != nil {
 		return view.RelationPreparationView{}, errs.New(CodeMappingUnknownPolicy, policySet)
+	}
+	// 建议范围（/workspaces/new 页勾选，默认不激活）：未确认前只存在于预检草稿，
+	// 不写入受管范围；Apply（CreateRelation）时才随初始 policy 落库。
+	pol, err = policy.MergeSuggestions(pol, input.Suggestions)
+	if err != nil {
+		return view.RelationPreparationView{}, errs.New(CodeMappingUnknownPolicy, strings.Join(input.Suggestions, ","))
 	}
 	// 编译期校验（检视报告 P0-5）：模板在写入预检前必须通过 policy 编译器
 	if cerr := policy.Validate(pol); cerr != nil {
@@ -189,95 +198,116 @@ func (a *App) PrepareRelation(ctx context.Context, input model.PrepareRelationIn
 	return preparationView(prep), nil
 }
 
-// CreateRelation 消费预检：登记端点（幂等复用）、创建 Relation 与初始 policy。
+// CreateRelation 消费预检并创建 Relation。五步写入（消费预检、登记 Project、
+// 登记 Runtime、创建 Relation、保存初始 Mapping）收进单个 SQLite 事务
+// （ADR-0003 决议 1/2，UnitOfWork 闭包）：中途失败整体回滚、零残留，
+// 同一 preparationID 可安全重试直至过期。事件发布恒在事务提交之后（决议 3）。
 func (a *App) CreateRelation(ctx context.Context, preparationID string) (view.RelationView, error) {
 	prep, err := a.deps.Preparations.Get(ctx, preparationID)
 	if err != nil {
 		return view.RelationView{}, errs.New(CodeRelationPrepNotFound, preparationID)
 	}
 	now := a.deps.Now().UTC().Format(time.RFC3339)
-	if expiresAt, perr := time.Parse(time.RFC3339, prep.ExpiresAt); perr != nil || now > prep.ExpiresAt || !expiresAt.After(a.deps.Now().UTC()) {
-		return view.RelationView{}, errs.New(CodeRelationPrepExpired, preparationID)
-	}
-	for _, c := range prep.Checks {
-		if c.Severity == "blocking" && !c.Passed {
-			args := make([]any, len(c.Args))
-			for i, a := range c.Args {
-				args[i] = a
-			}
-			return view.RelationView{}, errs.NewDetail(CodeRelationInvalidEndpoint, "预检未通过: "+c.Code, args...)
-		}
-	}
-	if err := a.deps.Preparations.MarkConsumed(ctx, preparationID); err != nil {
-		return view.RelationView{}, errs.New(CodeRelationPrepExpired, preparationID)
-	}
 
-	project := *prep.Project
-	if existing, found, err := a.deps.Endpoints.FindProjectByRoot(ctx, project.BindingFingerprint); err != nil {
-		return view.RelationView{}, err
-	} else if found {
-		project = existing
-	} else if err := a.deps.Endpoints.CreateProject(ctx, project); err != nil {
-		if errors.Is(err, ports.ErrDuplicate) {
-			if existing, found, _ := a.deps.Endpoints.FindProjectByRoot(ctx, project.BindingFingerprint); found {
-				project = existing
+	var result view.RelationView
+	err = a.deps.Tx.RunInTx(ctx, func(repos ports.Repos) error {
+		// 消费预检是事务内第一步：过期/已消费的存储层守卫在此（拆码由
+		// MarkConsumed 的哨兵区分），后续任何失败都回滚本次消费。
+		if err := repos.Preparations.MarkConsumed(ctx, preparationID); err != nil {
+			switch {
+			case errors.Is(err, ports.ErrPreparationExpired):
+				return errs.New(CodeRelationPrepExpired, preparationID)
+			case errors.Is(err, ports.ErrPreparationConsumed):
+				return errs.New(CodeRelationPrepConsumed, preparationID)
+			default:
+				return err
 			}
-		} else {
-			return view.RelationView{}, err
 		}
-	}
-
-	runtime := *prep.Runtime
-	if existing, found, err := a.deps.Endpoints.FindRuntimeByIdentity(ctx, runtime.Adapter, runtime.AdapterIdentity); err != nil {
-		return view.RelationView{}, err
-	} else if found {
-		// 同名实例目录（UNIQUE(adapter, adapter_identity) 命中）必须指向同一路径，
-		// 否则会把新 Relation 静默绑到另一个启动器安装的同名实例上（违反 §5.2 端点身份原则）
-		if !strings.EqualFold(filepath.Clean(existing.RootPath), filepath.Clean(runtime.RootPath)) {
-			return view.RelationView{}, errs.NewDetail(CodeRelationInvalidEndpoint,
-				"同名实例目录已登记为不同路径: "+existing.RootPath, runtime.AdapterIdentity, runtime.RootPath)
-		}
-		runtime = existing
-	} else if err := a.deps.Endpoints.CreateRuntime(ctx, runtime); err != nil {
-		if errors.Is(err, ports.ErrDuplicate) {
-			if existing, found, _ := a.deps.Endpoints.FindRuntimeByIdentity(ctx, runtime.Adapter, runtime.AdapterIdentity); found {
-				if !strings.EqualFold(filepath.Clean(existing.RootPath), filepath.Clean(runtime.RootPath)) {
-					return view.RelationView{}, errs.NewDetail(CodeRelationInvalidEndpoint,
-						"同名实例目录已登记为不同路径: "+existing.RootPath, runtime.AdapterIdentity, runtime.RootPath)
+		// 预检结果冻结于 prep；blocking 未通过 → 回滚消费（预检保持可重试）。
+		for _, c := range prep.Checks {
+			if c.Severity == "blocking" && !c.Passed {
+				args := make([]any, len(c.Args))
+				for i, a := range c.Args {
+					args[i] = a
 				}
-				runtime = existing
+				return errs.NewDetail(CodeRelationInvalidEndpoint, "预检未通过: "+c.Code, args...)
 			}
-		} else {
-			return view.RelationView{}, err
 		}
-	}
 
-	dup, err := a.deps.Relations.PairExists(ctx, project.ProjectID, runtime.RuntimeID)
+		project := *prep.Project
+		if existing, found, err := repos.Endpoints.FindProjectByRoot(ctx, project.BindingFingerprint); err != nil {
+			return err
+		} else if found {
+			project = existing
+		} else if err := repos.Endpoints.CreateProject(ctx, project); err != nil {
+			if errors.Is(err, ports.ErrDuplicate) {
+				if existing, found, _ := repos.Endpoints.FindProjectByRoot(ctx, project.BindingFingerprint); found {
+					project = existing
+				}
+			} else {
+				return err
+			}
+		}
+
+		runtime := *prep.Runtime
+		if existing, found, err := repos.Endpoints.FindRuntimeByIdentity(ctx, runtime.Adapter, runtime.AdapterIdentity); err != nil {
+			return err
+		} else if found {
+			// 同名实例目录（UNIQUE(adapter, adapter_identity) 命中）必须指向同一路径，
+			// 否则会把新 Relation 静默绑到另一个启动器安装的同名实例上（违反 §5.2 端点身份原则）
+			if !strings.EqualFold(filepath.Clean(existing.RootPath), filepath.Clean(runtime.RootPath)) {
+				return errs.NewDetail(CodeRelationInvalidEndpoint,
+					"同名实例目录已登记为不同路径: "+existing.RootPath, runtime.AdapterIdentity, runtime.RootPath)
+			}
+			runtime = existing
+		} else if err := repos.Endpoints.CreateRuntime(ctx, runtime); err != nil {
+			if errors.Is(err, ports.ErrDuplicate) {
+				if existing, found, _ := repos.Endpoints.FindRuntimeByIdentity(ctx, runtime.Adapter, runtime.AdapterIdentity); found {
+					if !strings.EqualFold(filepath.Clean(existing.RootPath), filepath.Clean(runtime.RootPath)) {
+						return errs.NewDetail(CodeRelationInvalidEndpoint,
+							"同名实例目录已登记为不同路径: "+existing.RootPath, runtime.AdapterIdentity, runtime.RootPath)
+					}
+					runtime = existing
+				}
+			} else {
+				return err
+			}
+		}
+
+		dup, err := repos.Relations.PairExists(ctx, project.ProjectID, runtime.RuntimeID)
+		if err != nil {
+			return err
+		}
+		if dup {
+			return errs.New(CodeRelationDuplicatePair, project.RootPath, runtime.AdapterIdentity)
+		}
+
+		rel := model.Relation{
+			SchemaVersion: model.CurrentSchemaVersion,
+			RelationID:    a.deps.IDs("rel_"),
+			ProjectID:     project.ProjectID,
+			RuntimeID:     runtime.RuntimeID,
+			PolicySet:     prep.Policy.PolicyID,
+			Revision:      1,
+			Health:        model.HealthHealthy,
+			CreatedAt:     now,
+		}
+		if err := repos.Relations.Create(ctx, rel); err != nil {
+			return err
+		}
+		// 初始 policy 事务内直写（不递增 revision，ADR-0002：创建即第 1 代且已带 policy）
+		if err := repos.Mappings.CreatePolicy(ctx, rel.RelationID, prep.Policy); err != nil {
+			return err
+		}
+		result = relationView(rel, project, runtime)
+		return nil
+	})
 	if err != nil {
 		return view.RelationView{}, err
 	}
-	if dup {
-		return view.RelationView{}, errs.New(CodeRelationDuplicatePair, project.RootPath, runtime.AdapterIdentity)
-	}
-
-	rel := model.Relation{
-		SchemaVersion: model.CurrentSchemaVersion,
-		RelationID:    a.deps.IDs("rel_"),
-		ProjectID:     project.ProjectID,
-		RuntimeID:     runtime.RuntimeID,
-		PolicySet:     prep.Policy.PolicyID,
-		Revision:      1,
-		Health:        model.HealthHealthy,
-		CreatedAt:     now,
-	}
-	if err := a.deps.Relations.Create(ctx, rel); err != nil {
-		return view.RelationView{}, err
-	}
-	// 初始 policy 直写（不递增 revision，ADR-0002：创建即第 1 代且已带 policy）
-	if err := a.deps.Mappings.CreatePolicy(ctx, rel.RelationID, prep.Policy); err != nil {
-		return view.RelationView{}, err
-	}
-	return relationView(rel, project, runtime), nil
+	// 事务已提交（事件发布恒在提交之后；创建流当前无事件，规则在此落锚——
+	// 后续在本流程加事件必须保持在 RunInTx 返回成功之后）。
+	return result, nil
 }
 
 func pathExists(p string) bool {

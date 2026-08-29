@@ -836,9 +836,9 @@ func TestPreparationLifecycle(t *testing.T) {
 	if err := repo.MarkConsumed(ctx, "prep_1"); err != nil {
 		t.Fatalf("首次 MarkConsumed 失败: %v", err)
 	}
-	// 二次消费 → ErrPreparationExpired
-	if err := repo.MarkConsumed(ctx, "prep_1"); !errors.Is(err, ErrPreparationExpired) {
-		t.Errorf("二次 MarkConsumed 应返回 ErrPreparationExpired, got %v", err)
+	// 二次消费 → ErrPreparationConsumed（拆码后已消费 ≠ 已过期，ADR-0003 决议 4）
+	if err := repo.MarkConsumed(ctx, "prep_1"); !errors.Is(err, ErrPreparationConsumed) {
+		t.Errorf("二次 MarkConsumed 应返回 ErrPreparationConsumed, got %v", err)
 	}
 
 	// 过期拒绝

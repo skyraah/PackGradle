@@ -155,6 +155,7 @@ func newStack(t *testing.T, dataRoot string) (*syncapp.App, *sql.DB) {
 		Preparations:  sqlite.NewPreparationRepository(db),
 		HashCache:     sqlite.NewHashCacheRepository(db),
 		Events:        sqlite.NewEventRepository(db),
+		Tx:            sqlite.NewUnitOfWork(db),
 		ProjectScan:   packwiz.New(),
 		RuntimeScan:   prism.New(),
 		Hasher:        filesystem.NewHasher(),
@@ -634,6 +635,177 @@ func TestHeadlessZombieTaskRecovery(t *testing.T) {
 
 	// 恢复后可重新扫描
 	scanAndWait(t, app, rel.RelationID)
+}
+
+// TestHeadlessCreateRelationSingleTransaction 验证 ADR-0003 单事务 doctrine：
+// CreateRelation 中途失败 → 已执行的写入（含预检消费）全部回滚、零残留；
+// 排除冲突后同一 preparationID 重试成功。失败注入 = 预检草稿的运行时身份
+// 与已登记端点同名异路径（身份检查发生在事务中段，前面步骤已写入）。
+func TestHeadlessCreateRelationSingleTransaction(t *testing.T) {
+	projectRoot, instanceDir, dataRoot := makeFixtures(t)
+	app, db := newStack(t, dataRoot)
+	ctx := context.Background()
+
+	prep, err := app.PrepareRelation(ctx, model.PrepareRelationInput{ProjectRoot: projectRoot, RuntimeInstanceDir: instanceDir})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// 注入冲突：同名实例身份已登记为不同路径（事务内身份检查在中段触发）
+	gameDir := filepath.Join(instanceDir, "minecraft")
+	now := time.Now().UTC().Format(time.RFC3339)
+	if _, err := db.Exec(`INSERT INTO runtimes(id, adapter, display_name, root_path, adapter_identity,
+		binding_fingerprint, created_at) VALUES('run_conflict','prism','Conflict','D:/elsewhere','collapse','sha256:x',?)`, now); err != nil {
+		t.Fatal(err)
+	}
+	baseline := map[string]int{
+		"projects": tableCount(t, db, "projects"), "relations": tableCount(t, db, "relations"),
+		"mappings": tableCount(t, db, "mappings"),
+	}
+
+	_, err = app.CreateRelation(ctx, prep.PreparationID)
+	if code := errCode(t, err); code != "err.relation.invalid_endpoint" {
+		t.Fatalf("同名异路径应拒绝: %s", code)
+	}
+
+	// 零残留：消费回滚 + 五处写入全部不存在（失败前后计数不变）
+	assertNoResidue(t, db, prep.PreparationID, baseline)
+
+	// 排除冲突后同一 preparationID 重试成功
+	if _, err := db.Exec(`UPDATE runtimes SET root_path=? WHERE id='run_conflict'`, gameDir); err != nil {
+		t.Fatal(err)
+	}
+	rel, err := app.CreateRelation(ctx, prep.PreparationID)
+	if err != nil {
+		t.Fatalf("失败回滚后同预检应可重试: %v", err)
+	}
+	if rel.Revision != 1 {
+		t.Fatalf("出生 revision 应精确为 1, got %d", rel.Revision)
+	}
+}
+
+// tableCount 读取表行数（零残留断言用）。
+func tableCount(t *testing.T, db *sql.DB, table string) int {
+	t.Helper()
+	var n int
+	if err := db.QueryRow("SELECT COUNT(*) FROM " + table).Scan(&n); err != nil {
+		t.Fatal(err)
+	}
+	return n
+}
+
+// assertNoResidue 断言 CreateRelation 失败后零残留：预检未消费、
+// projects/relations/mappings 行数与失败前基线一致。
+func assertNoResidue(t *testing.T, db *sql.DB, preparationID string, baseline map[string]int) {
+	t.Helper()
+	var consumedAt sql.NullString
+	if err := db.QueryRow("SELECT consumed_at FROM preparations WHERE preparation_id=?", preparationID).Scan(&consumedAt); err != nil {
+		t.Fatal(err)
+	}
+	if consumedAt.Valid {
+		t.Fatalf("失败后预检消费应回滚, consumed_at = %s", consumedAt.String)
+	}
+	for _, table := range []string{"projects", "relations", "mappings"} {
+		if got := tableCount(t, db, table); got != baseline[table] {
+			t.Fatalf("失败后 %s 应零残留: 基线 %d 行, 现有 %d 行", table, baseline[table], got)
+		}
+	}
+}
+
+// TestHeadlessPrepExpiredVsConsumed 验证拆码（ADR-0003 决议 4）：
+// 已被消费 → prep_consumed（引导刷新）；已过期 → prep_expired（引导重新预检，
+// 失败回滚后同一预检保持未消费）。
+func TestHeadlessPrepExpiredVsConsumed(t *testing.T) {
+	projectRoot, instanceDir, dataRoot := makeFixtures(t)
+	app, db := newStack(t, dataRoot)
+	ctx := context.Background()
+
+	prep1, err := app.PrepareRelation(ctx, model.PrepareRelationInput{ProjectRoot: projectRoot, RuntimeInstanceDir: instanceDir})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := app.CreateRelation(ctx, prep1.PreparationID); err != nil {
+		t.Fatal(err)
+	}
+	// 双击场景：同一预检二次创建 → prep_consumed
+	_, err = app.CreateRelation(ctx, prep1.PreparationID)
+	if code := errCode(t, err); code != "err.relation.prep_consumed" {
+		t.Fatalf("已消费错误码: %s", code)
+	}
+
+	// 过期场景：篡改有效期后创建 → prep_expired，且消费不落库
+	prep2, err := app.PrepareRelation(ctx, model.PrepareRelationInput{ProjectRoot: projectRoot, RuntimeInstanceDir: instanceDir})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`UPDATE preparations SET expires_at='2000-01-01T00:00:00Z' WHERE preparation_id=?`, prep2.PreparationID); err != nil {
+		t.Fatal(err)
+	}
+	baseline := map[string]int{
+		"projects": tableCount(t, db, "projects"), "relations": tableCount(t, db, "relations"),
+		"mappings": tableCount(t, db, "mappings"),
+	}
+	_, err = app.CreateRelation(ctx, prep2.PreparationID)
+	if code := errCode(t, err); code != "err.relation.prep_expired" {
+		t.Fatalf("已过期错误码: %s", code)
+	}
+	assertNoResidue(t, db, prep2.PreparationID, baseline)
+}
+
+// TestHeadlessSuggestionsFlow 验证 default-v1 建议流：勾选的建议规则并入
+// 预检草稿的 policy，确认（CreateRelation）前不写入受管范围；确认后随初始
+// policy 落库且 revision 精确为 1（ADR-0002）。
+func TestHeadlessSuggestionsFlow(t *testing.T) {
+	projectRoot, instanceDir, dataRoot := makeFixtures(t)
+	app, db := newStack(t, dataRoot)
+	ctx := context.Background()
+
+	prep, err := app.PrepareRelation(ctx, model.PrepareRelationInput{
+		ProjectRoot:        projectRoot,
+		RuntimeInstanceDir: instanceDir,
+		Suggestions:        []string{"config", "kubejs"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := len(prep.Policy.Rules); got != 3 {
+		t.Fatalf("预检 policy 应含 mods + 2 条建议, got %d 条", got)
+	}
+	// 确认前不写入受管范围：mappings 表无行
+	var n int
+	if err := db.QueryRow("SELECT COUNT(*) FROM mappings").Scan(&n); err != nil {
+		t.Fatal(err)
+	}
+	if n != 0 {
+		t.Fatalf("确认前受管范围不应落库, mappings 有 %d 行", n)
+	}
+
+	rel := mustCreate(t, app, prep.PreparationID)
+	pol, err := sqlite.NewMappingRepository(db).GetPolicy(ctx, rel.RelationID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(pol.Rules) != 3 || pol.Revision != 1 {
+		t.Fatalf("确认后初始 policy 应为 3 规则 revision=1: %+v", pol)
+	}
+
+	// 未知建议规则 → err.mapping.unknown_policy
+	_, err = app.PrepareRelation(ctx, model.PrepareRelationInput{
+		ProjectRoot: projectRoot, RuntimeInstanceDir: instanceDir, Suggestions: []string{"nope"},
+	})
+	if code := errCode(t, err); code != "err.mapping.unknown_policy" {
+		t.Fatalf("未知建议错误码: %s", code)
+	}
+}
+
+// mustCreate 消费预检创建 Relation（严格失败）。
+func mustCreate(t *testing.T, app syncapp.Application, preparationID string) view.RelationView {
+	t.Helper()
+	rel, err := app.CreateRelation(context.Background(), preparationID)
+	if err != nil {
+		t.Fatalf("CreateRelation: %v", err)
+	}
+	return rel
 }
 
 func TestHeadlessDuplicatePairBlocked(t *testing.T) {

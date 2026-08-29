@@ -217,5 +217,8 @@ func runtimeView(rt model.Runtime) view.EndpointView {
 		RootPath:           rt.RootPath,
 		AdapterIdentity:    rt.AdapterIdentity,
 		BindingFingerprint: rt.BindingFingerprint,
+		// 实例目录 = 游戏目录父目录（登记不变量 gameDir=<实例>/minecraft）；
+		// /workspaces/new 页以它作为 PrepareRelation 的 runtime_instance_dir 输入。
+		InstanceDir: filepath.Dir(rt.RootPath),
 	}
 }

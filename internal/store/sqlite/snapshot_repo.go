@@ -17,7 +17,7 @@ import (
 // resource_representations；读取时以 semantic_json 反序列化为准，头表中的
 // 冗余列（kind/identity/path/format 等）只用于 SQL 查询与诊断。
 type SnapshotRepository struct {
-	db *sql.DB
+	db DBTX
 }
 
 var _ ports.SnapshotRepository = (*SnapshotRepository)(nil)
@@ -28,6 +28,7 @@ func NewSnapshotRepository(db *sql.DB) *SnapshotRepository {
 }
 
 // Insert 在同一事务写 observed_snapshots 头表与全部 resource_representations 行。
+// 独立使用时自开事务；处于 RunInTx 事务域内时加入外层事务。
 // relation 不存在时由外键约束报错，转换为 ErrRelationNotFound。
 func (r *SnapshotRepository) Insert(ctx context.Context, s model.ObservedSnapshot) error {
 	diagnosticsJSON, err := json.Marshal(s.Diagnostics)
@@ -35,60 +36,52 @@ func (r *SnapshotRepository) Insert(ctx context.Context, s model.ObservedSnapsho
 		return fmt.Errorf("sqlite: 序列化快照 %s 诊断: %w", s.SnapshotID, err)
 	}
 
-	tx, err := r.db.BeginTx(ctx, nil)
-	if err != nil {
-		return fmt.Errorf("sqlite: 写入快照 %s 开启事务: %w", s.SnapshotID, err)
-	}
-	defer tx.Rollback()
-
-	if _, err := tx.ExecContext(ctx, `
+	return beginOrJoin(ctx, r.db, "写入快照 "+s.SnapshotID, func(tx DBTX) error {
+		if _, err := tx.ExecContext(ctx, `
 INSERT INTO observed_snapshots(id, relation_id, side, binding_fingerprint, scanner_name, scanner_version,
 	captured_at, snapshot_digest, normalization_version, policy_digest, resource_count, diagnostics_json)
 VALUES(?,?,?,?,?,?,?,?,?,?,?,?)`,
-		s.SnapshotID, s.RelationID, s.Side, s.BindingFingerprint,
-		s.Scanner.Name, s.Scanner.Version, s.CapturedAt, s.SnapshotDigest,
-		s.NormalizationVersion, s.PolicyDigest, len(s.Resources), string(diagnosticsJSON)); err != nil {
-		if isForeignKeyViolation(err) {
-			return fmt.Errorf("sqlite: 写入快照 %s: %w", s.SnapshotID, ErrRelationNotFound)
+			s.SnapshotID, s.RelationID, s.Side, s.BindingFingerprint,
+			s.Scanner.Name, s.Scanner.Version, s.CapturedAt, s.SnapshotDigest,
+			s.NormalizationVersion, s.PolicyDigest, len(s.Resources), string(diagnosticsJSON)); err != nil {
+			if isForeignKeyViolation(err) {
+				return fmt.Errorf("sqlite: 写入快照 %s: %w", s.SnapshotID, ErrRelationNotFound)
+			}
+			return fmt.Errorf("sqlite: 写入快照 %s: %w", s.SnapshotID, err)
 		}
-		return fmt.Errorf("sqlite: 写入快照 %s: %w", s.SnapshotID, err)
-	}
 
-	insertRes, err := tx.PrepareContext(ctx, `
+		insertRes, err := tx.PrepareContext(ctx, `
 INSERT INTO resource_representations(snapshot_id, resource_id, resource_kind,
 	identity_provider, identity_key, identity_confidence, policy_id,
 	relative_path, format, content_algorithm, content_digest, size, semantic_json)
 VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)`)
-	if err != nil {
-		return fmt.Errorf("sqlite: 写入快照 %s 资源: %w", s.SnapshotID, err)
-	}
-	defer insertRes.Close()
-
-	for id, res := range s.Resources {
-		semantic, err := json.Marshal(res)
 		if err != nil {
-			return fmt.Errorf("sqlite: 序列化快照 %s 资源 %s: %w", s.SnapshotID, id, err)
+			return fmt.Errorf("sqlite: 写入快照 %s 资源: %w", s.SnapshotID, err)
 		}
-		var contentAlgorithm, contentDigest any
-		var size any
-		if res.Representation.Content != nil {
-			contentAlgorithm = res.Representation.Content.Algorithm
-			contentDigest = res.Representation.Content.Digest
-			size = res.Representation.Content.Size
-		}
-		if _, err := insertRes.ExecContext(ctx,
-			s.SnapshotID, string(id), string(res.Kind),
-			res.Identity.Provider, res.Identity.Key, res.Identity.Confidence,
-			res.PolicyID, res.Representation.RelativePath, res.Representation.Format,
-			contentAlgorithm, contentDigest, size, string(semantic)); err != nil {
-			return fmt.Errorf("sqlite: 写入快照 %s 资源 %s: %w", s.SnapshotID, id, err)
-		}
-	}
+		defer insertRes.Close()
 
-	if err := tx.Commit(); err != nil {
-		return fmt.Errorf("sqlite: 写入快照 %s 提交: %w", s.SnapshotID, err)
-	}
-	return nil
+		for id, res := range s.Resources {
+			semantic, err := json.Marshal(res)
+			if err != nil {
+				return fmt.Errorf("sqlite: 序列化快照 %s 资源 %s: %w", s.SnapshotID, id, err)
+			}
+			var contentAlgorithm, contentDigest any
+			var size any
+			if res.Representation.Content != nil {
+				contentAlgorithm = res.Representation.Content.Algorithm
+				contentDigest = res.Representation.Content.Digest
+				size = res.Representation.Content.Size
+			}
+			if _, err := insertRes.ExecContext(ctx,
+				s.SnapshotID, string(id), string(res.Kind),
+				res.Identity.Provider, res.Identity.Key, res.Identity.Confidence,
+				res.PolicyID, res.Representation.RelativePath, res.Representation.Format,
+				contentAlgorithm, contentDigest, size, string(semantic)); err != nil {
+				return fmt.Errorf("sqlite: 写入快照 %s 资源 %s: %w", s.SnapshotID, id, err)
+			}
+		}
+			return nil
+		})
 }
 
 // Get 按 id 读取完整快照（含 resources map 与诊断）；不存在返回 ErrNotFound。

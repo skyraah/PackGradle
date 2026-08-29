@@ -4,6 +4,7 @@ import (
 	"context"
 
 	"packgradle/internal/application/ports"
+	"packgradle/internal/application/policy"
 	syncapp "packgradle/internal/application/sync"
 	"packgradle/internal/application/view"
 	"packgradle/internal/core/model"
@@ -27,11 +28,23 @@ func (s *SyncService) PrepareRelation(input PrepareRelationDTO) (RelationPrepara
 		ProjectRoot:        input.ProjectRoot,
 		RuntimeInstanceDir: input.RuntimeInstanceDir,
 		PolicySet:          input.PolicySet,
+		Suggestions:        input.Suggestions,
 	})
 	if err != nil {
 		return RelationPreparationDTO{}, err
 	}
 	return preparationDTO(v), nil
+}
+
+// ListPolicySuggestions 返回建议（默认不激活）的受管范围候选规则，
+// 供 /workspaces/new 页勾选后并入初始 policy（/workspaces/new 建议流）。
+func (s *SyncService) ListPolicySuggestions() ([]MappingRuleDTO, error) {
+	rules := policy.Suggestions()
+	out := make([]MappingRuleDTO, 0, len(rules))
+	for _, r := range rules {
+		out = append(out, mappingRuleDTO(r))
+	}
+	return out, nil
 }
 
 // CreateRelation 消费预检并创建 Relation。

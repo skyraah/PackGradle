@@ -15,8 +15,10 @@ var (
 	ErrDuplicate = ports.ErrDuplicate
 	// ErrSequenceConflict 任务 Sequence 乐观锁冲突（旧快照试图覆盖新状态）。
 	ErrSequenceConflict = ports.ErrSequenceConflict
-	// ErrPreparationExpired 预检已被消费或已过期。
+	// ErrPreparationExpired 预检已过期（引导重新预检）。
 	ErrPreparationExpired = ports.ErrPreparationExpired
+	// ErrPreparationConsumed 预检已被消费（引导刷新；ADR-0003 决议 4 拆码）。
+	ErrPreparationConsumed = ports.ErrPreparationConsumed
 	// ErrRelationNotFound 被引用的 Relation 不存在（FK 语义转换）。
 	ErrRelationNotFound = ports.ErrRelationNotFound
 	// ErrCrossRelation 被引用对象属于另一 Relation（完整性守卫拒绝）。

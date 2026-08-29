@@ -11,6 +11,7 @@ import * as MockPackwizService from '../mocks/packwizservice'
 import * as MockPrismService from '../mocks/prismservice'
 import * as RealProjectService from '../../bindings/packgradle/internal/transport/projectservice'
 import * as RealRuntimeService from '../../bindings/packgradle/internal/transport/runtimeservice'
+import * as RealSyncService from '../../bindings/packgradle/internal/transport/syncservice'
 
 const MOCK_KEY = 'packgradle.mock'
 
@@ -83,10 +84,22 @@ export const RuntimeService: typeof RealRuntimeService = proxyService(
     {},
 ) as typeof RealRuntimeService
 
+export const SyncService: typeof RealSyncService = proxyService(
+    'SyncService',
+    RealSyncService,
+    {},
+) as typeof RealSyncService
+
 // 端点管理页的类型出口（真实绑定模型）
 export type {
     EndpointDTO,
     ProjectCandidateDTO,
     RuntimeCandidateDTO,
     EndpointHealthDTO,
+    PrepareRelationDTO,
+    RelationPreparationDTO,
+    PreparationCheckDTO,
+    PolicyDTO,
+    MappingRuleDTO,
+    RelationDTO,
 } from '../../bindings/packgradle/internal/transport/models'

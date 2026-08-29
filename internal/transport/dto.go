@@ -5,9 +5,10 @@ package transport
 
 // PrepareRelationDTO 是 PrepareRelation 输入。
 type PrepareRelationDTO struct {
-	ProjectRoot        string `json:"project_root"`
-	RuntimeInstanceDir string `json:"runtime_instance_dir"`
-	PolicySet          string `json:"policy_set"`
+	ProjectRoot        string   `json:"project_root"`
+	RuntimeInstanceDir string   `json:"runtime_instance_dir"`
+	PolicySet          string   `json:"policy_set"`
+	Suggestions        []string `json:"suggestions,omitempty"` // 勾选的建议规则 ID（默认不勾选，确认前不写受管）
 }
 
 // EndpointDTO 是端点投影。
@@ -18,6 +19,9 @@ type EndpointDTO struct {
 	RootPath           string `json:"root_path"`
 	AdapterIdentity    string `json:"adapter_identity,omitempty"`
 	BindingFingerprint string `json:"binding_fingerprint"`
+	// InstanceDir 仅 runtime 侧填充：实例目录（PrepareRelation 输入 root_path
+	// 的取值来源），由游戏目录父目录派生；project 侧为空。
+	InstanceDir string `json:"instance_dir,omitempty"`
 }
 
 // PreparationCheckDTO 是预检单项。
