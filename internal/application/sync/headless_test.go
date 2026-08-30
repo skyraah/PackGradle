@@ -29,6 +29,7 @@ import (
 	"packgradle/internal/core/model"
 	"packgradle/internal/errs"
 	"packgradle/internal/store"
+	"packgradle/internal/store/objectstore"
 	"packgradle/internal/store/sqlite"
 )
 
@@ -134,15 +135,20 @@ func makeFixtures(t *testing.T) (projectRoot, instanceDir, dataRoot string) {
 // newStack 用真实组件装配应用（headless：不启动 Wails，事件桥为 nil）。
 func newStack(t *testing.T, dataRoot string) (*syncapp.App, *sql.DB) {
 	t.Helper()
-	if _, err := store.EnsureLayout(dataRoot); err != nil {
+	layout, err := store.EnsureLayout(dataRoot)
+	if err != nil {
 		t.Fatal(err)
 	}
-	db, err := sqlite.Open(filepath.Join(dataRoot, "packgradle.db"))
+	db, err := sqlite.Open(layout.DBPath)
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { db.Close() })
 	if err := sqlite.Migrate(context.Background(), db, dataRoot); err != nil {
+		t.Fatal(err)
+	}
+	cas, err := objectstore.Open(layout.ObjectsDir, db)
+	if err != nil {
 		t.Fatal(err)
 	}
 	app, err := syncapp.New(syncapp.AppDeps{
@@ -159,6 +165,8 @@ func newStack(t *testing.T, dataRoot string) (*syncapp.App, *sql.DB) {
 		ApplyRuns:     sqlite.NewApplyRunRepository(db),
 		Journal:       sqlite.NewOperationJournalRepository(db),
 		Commits:       sqlite.NewCommitRepository(db),
+		CAS:           cas,
+		StagingRoot:   layout.StagingDir,
 		Tx:            sqlite.NewUnitOfWork(db),
 		ProjectScan:   packwiz.New(),
 		RuntimeScan:   prism.New(),

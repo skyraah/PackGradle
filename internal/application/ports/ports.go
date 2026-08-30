@@ -92,6 +92,9 @@ type RelationRepository interface {
 	// UpdateHeadBaseline 设置/清除关系基线引用（空串清除）。重绑 Apply 用它重置基线
 	// （契约 03 §2.4：P1 恒 reinitialize，不继承）；Phase 2 Apply 产生基线时复用写入。
 	UpdateHeadBaseline(ctx context.Context, id, baselineID string) error
+	// UpdateHeadCommit 设置关系头提交引用（Phase 2 Apply committed 收口写，
+	// redesign §6.6 步骤 5：与新 Baseline/Commit/object refs 同一事务）。空串清除。
+	UpdateHeadCommit(ctx context.Context, id, commitID string) error
 }
 
 // SnapshotRepository 持久化不可变观察快照。
@@ -206,6 +209,9 @@ type ApplyRunRepository interface {
 	// AdvanceState 沿六阶段状态机推进运行阶段；非法迁移返回 ErrInvalidTransition，
 	// 运行不存在返回 ErrNotFound。
 	AdvanceState(ctx context.Context, taskID, state, updatedAt string) error
+	// SetRecoveryRefs 落运行级恢复对象引用（ADR-0004 §1/§3：CAS/staging 引用集合，
+	// 引擎在 staged 前收集；JSON 形状由引擎定义，仓储原样保存）。
+	SetRecoveryRefs(ctx context.Context, taskID string, refs json.RawMessage, updatedAt string) error
 	// MarkStagingCleared 将 staging_cleared 记为事实（提交事务成功后清理，ADR-0004 §5）。
 	MarkStagingCleared(ctx context.Context, taskID, updatedAt string) error
 	// MarkAcknowledged 记录人工确认时间（恢复收口唯一出口，契约 05 §6）；
@@ -234,6 +240,10 @@ type OperationJournalRepository interface {
 	// LastEvent 回答「最后一个已持久化意图是什么」（任务内 seq 最大的一条；
 	// 无历史返回 ok=false）。
 	LastEvent(ctx context.Context, taskID string) (model.JournalEvent, bool, error)
+	// MarkResult 记录单操作的终局结果摘要（result_json 列；失败带说明码，成功
+	// 留空）。只写当前行，不改状态、不追加历史——状态推进仍走 AdvanceStatus。
+	// 操作不存在返回 ErrNotFound。
+	MarkResult(ctx context.Context, taskID, operationID string, result json.RawMessage) error
 }
 
 // CommitRepository 持久化 SyncCommit 提交图（sync_commits + commit_changes 收口，
@@ -247,6 +257,18 @@ type CommitRepository interface {
 	GetForRelation(ctx context.Context, commitID, relationID string) (model.SyncCommit, error)
 	// ListByRelation 按 Relation 分页列出提交头（不含 changes；id 升序，cursor 为最后一条 id）。
 	ListByRelation(ctx context.Context, relationID string, page PageRequest) ([]model.SyncCommit, string, error)
+	// InsertObjectRefs 写 object_refs 引用行（owner = 提交，purpose 引擎定义）。
+	// ADR-0004 §6：引用只指向已落盘就绪（state='ready'）的 CAS 对象——悬挂引用被
+	// 外键拒绝。 redesign §6.6 步骤 5：与新 Baseline/Commit 同一事务写入。
+	InsertObjectRefs(ctx context.Context, ownerType, ownerID string, refs []ObjectRefRow) error
+}
+
+// ObjectRefRow 是 object_refs 的一行（CAS 对象引用；形状照 §8.3 冻结 DDL）。
+type ObjectRefRow struct {
+	Algorithm string
+	Digest    string
+	Purpose   string
+	Size      int64
 }
 
 // PlanConfirmationRepository 持久化计划确认令牌（plan_confirmations 收口，

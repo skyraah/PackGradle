@@ -200,6 +200,15 @@ func (r *ApplyRunRepository) AdvanceState(ctx context.Context, taskID, state, up
 	})
 }
 
+// SetRecoveryRefs 落运行级恢复对象引用（ADR-0004 §1/§3：引擎 staged 前收集的
+// CAS/staging 引用集合，JSON 形状引擎定义、仓储原样保存；nil 归一为 "[]"）。
+// 运行不存在返回 ErrNotFound。
+func (r *ApplyRunRepository) SetRecoveryRefs(ctx context.Context, taskID string, refs json.RawMessage, updatedAt string) error {
+	return updateApplyRun(ctx, r.db, taskID, "落恢复引用",
+		"UPDATE apply_runs SET recovery_refs_json=?, updated_at=? WHERE task_id=?",
+		rawJSONLiteral(refs, "[]"), updatedAt, taskID)
+}
+
 // MarkStagingCleared 将 staging_cleared 记录为事实（ADR-0004 §5：staging 仅在
 // 提交事务成功后清理）。
 func (r *ApplyRunRepository) MarkStagingCleared(ctx context.Context, taskID, updatedAt string) error {

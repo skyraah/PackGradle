@@ -271,3 +271,19 @@ func (r *OperationJournalRepository) LastEvent(ctx context.Context, taskID strin
 	}
 	return ev, true, nil
 }
+
+// MarkResult 记录单操作的终局结果摘要（result_json 列；失败带说明码，成功留空）。
+// 只写当前行：不改状态、不追加历史（ADR-0004 §2——状态推进只走 AdvanceStatus，
+// 本方法补齐 T06 投影 ResultCode 的数据源）。操作不存在返回 ErrNotFound。
+func (r *OperationJournalRepository) MarkResult(ctx context.Context, taskID, operationID string, result json.RawMessage) error {
+	res, err := r.db.ExecContext(ctx,
+		"UPDATE operation_journal SET result_json=? WHERE task_id=? AND operation_id=?",
+		nullableRaw(result), taskID, operationID)
+	if err != nil {
+		return fmt.Errorf("sqlite: 记录操作 %s/%s 结果: %w", taskID, operationID, err)
+	}
+	if n, err := res.RowsAffected(); err == nil && n == 0 {
+		return fmt.Errorf("sqlite: 记录操作 %s/%s 结果: %w", taskID, operationID, ErrNotFound)
+	}
+	return nil
+}

@@ -47,8 +47,10 @@ func Build(root string) (*Stack, error) {
 		db.Close()
 		return nil, fmt.Errorf("bootstrap: 数据库迁移失败（已中止，不启动写操作）: %w", err)
 	}
-	// CAS 在 P1 无写入方，但提前打开以验证对象库布局可用
-	if _, err := objectstore.Open(layout.ObjectsDir, db); err != nil {
+	// CAS 在 P1 无写入方，但提前打开以验证对象库布局可用；
+	// Phase 2 Apply 引擎复用同一 CAS 做 before-content 保全（票 #37）。
+	cas, err := objectstore.Open(layout.ObjectsDir, db)
+	if err != nil {
 		db.Close()
 		return nil, fmt.Errorf("bootstrap: 初始化 CAS 对象库: %w", err)
 	}
@@ -70,6 +72,8 @@ func Build(root string) (*Stack, error) {
 		ApplyRuns:     sqlite.NewApplyRunRepository(db),
 		Journal:       sqlite.NewOperationJournalRepository(db),
 		Commits:       sqlite.NewCommitRepository(db),
+		CAS:           cas,
+		StagingRoot:   layout.StagingDir,
 		Tx:            sqlite.NewUnitOfWork(db),
 		Publisher:     transport.NewEventBridge(),
 		ProjectScan:   packwiz.New(),

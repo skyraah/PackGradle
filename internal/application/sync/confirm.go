@@ -173,6 +173,9 @@ func (a *App) ConfirmPlan(ctx context.Context, input view.ConfirmPlanInput) (vie
 		if err := a.pub.PublishTask(ctx, created); err != nil {
 			log.Printf("confirm: 发布 task_updated 失败（任务 %s 已创建）: %v", created.TaskID, err)
 		}
+		// Apply 引擎接管（票 #37）：任务已 queued 落库，引擎协程负责推到终态；
+		// ctx 经 WithoutCancel 派生，不随本次调用请求结束而中断。
+		a.startApply(created)
 		return TaskView(created), nil
 	}
 	return TaskView(reused), nil
