@@ -30,12 +30,13 @@ func assertAvailability(t *testing.T, avail []view.ActionAvailabilityView, actio
 	t.Fatalf("availability 缺少动作 %s: %+v", action, avail)
 }
 
-// assertNoApplyActions 能力=false 的动作不注册（apply_sync/prepare_restore/apply_restore）。
-func assertNoApplyActions(t *testing.T, avail []view.ActionAvailabilityView) {
+// assertNoRestoreActions 未实现能力不注册（契约 05 §1：apply_sync 已随 P2 点亮；
+// prepare_restore/apply_restore 维持 Phase 3，不出现在 availability）。
+func assertNoRestoreActions(t *testing.T, avail []view.ActionAvailabilityView) {
 	t.Helper()
 	for _, a := range avail {
 		switch a.Action {
-		case "apply_sync", "prepare_restore", "apply_restore":
+		case "prepare_restore", "apply_restore":
 			t.Fatalf("未实现能力不应出现在 availability: %s", a.Action)
 		}
 	}
@@ -51,24 +52,29 @@ func TestHeadlessWorkspaceFeaturesAndAvailability(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// features P1 固定值
+	// features 固定值（P2：契约 05 §1 三值变更生效，restore 全家维持 false）
 	f := w.Features
 	if !f.Scan || !f.SyncPreview || !f.ConflictInspection || f.ConflictResolution != "choose_side" {
 		t.Fatalf("features 固定值不符: %+v", f)
 	}
-	if f.SyncApply || f.HistoryView || f.RestorePreview || f.RestoreApply {
-		t.Fatalf("未实现能力应为 false: %+v", f)
+	if !f.SyncApply || !f.HistoryView {
+		t.Fatalf("P2 应点亮 sync_apply/history_view: %+v", f)
 	}
-	if len(f.MaterializationModes) != 0 {
-		t.Fatalf("materialization_modes 应为空数组: %v", f.MaterializationModes)
+	if f.RestorePreview || f.RestoreApply {
+		t.Fatalf("restore 全家应维持 false: %+v", f)
 	}
-	// availability：未扫描 → scan/rebind 可用；prepare_sync 因 scan_state 非 ready 不可用
-	assertNoApplyActions(t, w.Availability)
+	if len(f.MaterializationModes) != 1 || f.MaterializationModes[0] != "copy" {
+		t.Fatalf(`materialization_modes 应为 ["copy"]: %v`, f.MaterializationModes)
+	}
+	// availability：未扫描 → scan/rebind 可用；prepare_sync/apply_sync 因
+	// scan_state 非 ready 不可用（apply_sync 计划面在 ready 之后才判定）
+	assertNoRestoreActions(t, w.Availability)
 	assertAvailability(t, w.Availability, "scan", true, "")
 	assertAvailability(t, w.Availability, "prepare_sync", false, "err.scan.incomplete")
+	assertAvailability(t, w.Availability, "apply_sync", false, "err.scan.incomplete")
 	assertAvailability(t, w.Availability, "rebind", true, "")
 
-	// 扫描中 → scan/rebind/prepare_sync 均因活跃任务不可用
+	// 扫描中 → scan/rebind/prepare_sync/apply_sync 均因活跃任务不可用
 	tv, err := app.StartScan(ctx, rel.RelationID)
 	if err != nil {
 		t.Fatal(err)
@@ -79,6 +85,7 @@ func TestHeadlessWorkspaceFeaturesAndAvailability(t *testing.T) {
 	}
 	assertAvailability(t, wRunning.Availability, "scan", false, "err.scan.already_running")
 	assertAvailability(t, wRunning.Availability, "rebind", false, "err.scan.already_running")
+	assertAvailability(t, wRunning.Availability, "apply_sync", false, "err.scan.already_running")
 
 	waitTask(t, app, tv.TaskID)
 
@@ -92,6 +99,8 @@ func TestHeadlessWorkspaceFeaturesAndAvailability(t *testing.T) {
 	}
 	assertAvailability(t, wReady.Availability, "prepare_sync", true, "")
 	assertAvailability(t, wReady.Availability, "scan", true, "")
+	// 已就绪但尚无 resolved 计划 → apply_sync 因计划面不可用（none_ready，票 #36 新码）
+	assertAvailability(t, wReady.Availability, "apply_sync", false, "err.plan.none_ready")
 
 	// 列表与详情同构：内嵌 features/availability
 	page, err := app.ListWorkspaces(ctx, ports.PageRequest{Limit: 10})
@@ -101,7 +110,7 @@ func TestHeadlessWorkspaceFeaturesAndAvailability(t *testing.T) {
 	if len(page.Items) != 1 {
 		t.Fatalf("工作区列表应 1 项，得到 %d", len(page.Items))
 	}
-	if page.Items[0].Features.Scan != true || len(page.Items[0].Availability) != 3 {
+	if page.Items[0].Features.Scan != true || len(page.Items[0].Availability) != 4 {
 		t.Fatalf("列表项未内嵌 features/availability: %+v", page.Items[0])
 	}
 }

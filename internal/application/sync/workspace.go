@@ -147,12 +147,20 @@ func (a *App) GetWorkspace(ctx context.Context, relationID string) (view.Workspa
 		}
 	}
 
+	// apply_sync（契约 05 §1）：在既有三动作之上注册，计划面按可应用计划推导
+	face, err := a.planReadinessForRelation(ctx, rel, proj, rt)
+	if err != nil {
+		return view.WorkspaceView{}, err
+	}
+	availability := append(deriveAvailability(string(rel.Health), state.ScanState, hasActiveTask),
+		deriveApplySyncAvailability(string(rel.Health), state.ScanState, hasActiveTask, face))
+
 	w := view.WorkspaceView{
 		SchemaVersion: model.CurrentSchemaVersion,
 		Relation:      relationView(rel, proj, rt),
 		State:         state,
-		Features:      p1Features(),
-		Availability:  deriveAvailability(string(rel.Health), state.ScanState, hasActiveTask),
+		Features:      workspaceFeatures(),
+		Availability:  availability,
 	}
 	if okP {
 		w.LatestProjectSnapshot = snapshotSummary(snapP)

@@ -117,6 +117,9 @@ type PlanRepository interface {
 	// CountByRelation 统计关系下仍可推进（draft/resolved）的计划数——重绑预检的
 	// invalidated_plan_count 数据源（这些计划将因绑定指纹失配投影为 stale）。
 	CountByRelation(ctx context.Context, relationID string) (int, error)
+	// ListByRelation 返回该 Relation 的全部计划（id 升序 = 创建序，ULID 单调）。
+	// apply_sync availability 计划面推导（存在可应用计划，契约 05 §1）的数据源。
+	ListByRelation(ctx context.Context, relationID string) ([]model.SyncPlan, error)
 }
 
 // TaskRepository 持久化任务（长操作事实源）。
@@ -196,6 +199,10 @@ type ApplyRunRepository interface {
 	Get(ctx context.Context, taskID string) (model.ApplyRun, error)
 	// LatestByRelation 返回该 Relation 当前/最近一次运行（created_at 最新）。
 	LatestByRelation(ctx context.Context, relationID string) (model.ApplyRun, bool, error)
+	// LatestByPlan 返回该计划当前/最近一次运行（created_at 最新，task_id 决胜）；
+	// 无运行返回 ok=false。ConfirmPlan 幂等重入三分支按「本计划的运行」判定
+	// （契约 05 §3.1 D4：活跃重入 / committed 拆码 / recovery 拆码）。
+	LatestByPlan(ctx context.Context, planID string) (model.ApplyRun, bool, error)
 	// AdvanceState 沿六阶段状态机推进运行阶段；非法迁移返回 ErrInvalidTransition，
 	// 运行不存在返回 ErrNotFound。
 	AdvanceState(ctx context.Context, taskID, state, updatedAt string) error

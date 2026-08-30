@@ -107,3 +107,34 @@ func (r *PlanRepository) Get(ctx context.Context, id string) (model.SyncPlan, er
 	}
 	return p, nil
 }
+
+// ListByRelation 返回该 Relation 的全部计划（id 升序 = 创建序，ULID 单调）。
+// plan_json 反序列化为权威数据（与 Get 同款归一）；apply_sync availability
+// 计划面推导的数据源（契约 05 §1；票 #36）。
+func (r *PlanRepository) ListByRelation(ctx context.Context, relationID string) ([]model.SyncPlan, error) {
+	rows, err := r.db.QueryContext(ctx,
+		"SELECT plan_json FROM sync_plans WHERE relation_id=? ORDER BY id ASC", relationID)
+	if err != nil {
+		return nil, fmt.Errorf("sqlite: 列出 Relation %s 计划: %w", relationID, err)
+	}
+	defer rows.Close()
+	var items []model.SyncPlan
+	for rows.Next() {
+		var planJSON string
+		if err := rows.Scan(&planJSON); err != nil {
+			return nil, fmt.Errorf("sqlite: 列出 Relation %s 计划: %w", relationID, err)
+		}
+		var p model.SyncPlan
+		if err := json.Unmarshal([]byte(planJSON), &p); err != nil {
+			return nil, fmt.Errorf("sqlite: 解析 Relation %s 计划: %w", relationID, err)
+		}
+		if p.RequestedExactness == "" {
+			p.RequestedExactness = model.ExactnessAllowPartial
+		}
+		items = append(items, p)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("sqlite: 列出 Relation %s 计划: %w", relationID, err)
+	}
+	return items, nil
+}

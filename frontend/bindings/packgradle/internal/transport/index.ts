@@ -15,6 +15,7 @@ export type {
     ChangeDTO,
     ChangesPageDTO,
     ChangesSummaryDTO,
+    ConfirmPlanDTO,
     ConfirmationRequirementDTO,
     ConflictDTO,
     ContentRefDTO,
