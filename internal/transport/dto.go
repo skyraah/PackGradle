@@ -426,3 +426,73 @@ type ChangesPageDTO struct {
 type ConfirmPlanDTO struct {
 	PlanID string `json:"plan_id"`
 }
+
+// ---- Apply 运行与历史读 DTO（契约 05 §3 定稿，票 #39；schema_version/slice 归一沿契约 03 §0 硬约束）----
+
+// ApplyRunDTO 是一次 Apply 的运行头投影（ADR-0004 §1 六阶段；契约 05 §3.2）。
+type ApplyRunDTO struct {
+	SchemaVersion  int    `json:"schema_version"`
+	TaskID         string `json:"task_id"` // 即 run_id（apply_runs 主键）
+	RelationID     string `json:"relation_id"`
+	PlanID         string `json:"plan_id"`
+	PlanDigest     string `json:"plan_digest"`
+	State          string `json:"state"` // prepared|staged|applying|verifying|committed|recovery_required
+	OperationCount int    `json:"operation_count"`
+	StagingCleared bool   `json:"staging_cleared"`
+	AcknowledgedAt string `json:"acknowledged_at,omitempty"` // 人工确认时间（recovery_required 收口后）
+	CommitID       string `json:"commit_id,omitempty"`       // committed 后回填
+	CreatedAt      string `json:"created_at"`
+	UpdatedAt      string `json:"updated_at"`
+}
+
+// ApplyOperationDTO 是单操作行投影。硬约束 4：不含 temp_relative_path / ownership_proof_json。
+type ApplyOperationDTO struct {
+	OperationID  string `json:"operation_id"`
+	Ordinal      int    `json:"ordinal"`
+	Status       string `json:"status"` // pending|running|applied|verified|failed|compensated（ADR-0004 §2 单调路径）
+	ResourceID   string `json:"resource_id,omitempty"`
+	RelativePath string `json:"relative_path,omitempty"` // root-relative，非临时路径
+	ChangeKind   string `json:"change_kind,omitempty"`   // 与计划操作一致（create/modify/delete）
+	ResultCode   string `json:"result_code,omitempty"`   // 终局摘要码（成功为空；失败/补偿带说明码）
+}
+
+// ApplyOperationPageDTO 是逐操作清单分页（ordinal 升序；cursor=上一页末条 operation_id）。
+type ApplyOperationPageDTO struct {
+	SchemaVersion int                 `json:"schema_version"`
+	Items         []ApplyOperationDTO `json:"items"`
+	NextCursor    string              `json:"next_cursor,omitempty"`
+}
+
+// CommitSummaryDTO 是历史列表行。
+type CommitSummaryDTO struct {
+	CommitID           string `json:"commit_id"`
+	Kind               string `json:"kind"`         // initialize|sync|restore
+	Completeness       string `json:"completeness"` // exact|partial
+	RemainingChangeCnt int    `json:"remaining_change_count"`
+	CreatedAt          string `json:"created_at"`
+}
+
+// CommitChangeDTO 是单资源变更行（源：commit_changes；before/after 为联表表示摘要，缺省 null）。
+type CommitChangeDTO struct {
+	ResourceID    string  `json:"resource_id"`
+	ChangeKind    string  `json:"change_kind"`
+	ProjectBefore *string `json:"project_before,omitempty"` // 表示摘要（联表），缺省 null
+	ProjectAfter  *string `json:"project_after,omitempty"`
+	RuntimeBefore *string `json:"runtime_before,omitempty"`
+	RuntimeAfter  *string `json:"runtime_after,omitempty"`
+}
+
+// CommitDTO 是单提交详情（changes 全量，单 commit 不分页）。
+type CommitDTO struct {
+	SchemaVersion int               `json:"schema_version"`
+	Summary       CommitSummaryDTO  `json:"summary"`
+	PlanID        string            `json:"plan_id"`
+	Changes       []CommitChangeDTO `json:"changes"`
+}
+
+// CommitPageDTO 是历史列表分页（created_at DESC；cursor=上一页末条 commit_id）。
+type CommitPageDTO struct {
+	SchemaVersion int                `json:"schema_version"`
+	Items         []CommitSummaryDTO `json:"items"`
+	NextCursor    string             `json:"next_cursor,omitempty"`
+}

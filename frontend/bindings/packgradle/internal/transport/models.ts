@@ -16,6 +16,44 @@ export interface ActionAvailabilityDTO {
 }
 
 /**
+ * ApplyOperationDTO 是单操作行投影。硬约束 4：不含 temp_relative_path / ownership_proof_json。
+ */
+export interface ApplyOperationDTO {
+    "operation_id": string;
+    "ordinal": number;
+
+    /**
+     * pending|running|applied|verified|failed|compensated（ADR-0004 §2 单调路径）
+     */
+    "status": string;
+    "resource_id"?: string;
+
+    /**
+     * root-relative，非临时路径
+     */
+    "relative_path"?: string;
+
+    /**
+     * 与计划操作一致（create/modify/delete）
+     */
+    "change_kind"?: string;
+
+    /**
+     * 终局摘要码（成功为空；失败/补偿带说明码）
+     */
+    "result_code"?: string;
+}
+
+/**
+ * ApplyOperationPageDTO 是逐操作清单分页（ordinal 升序；cursor=上一页末条 operation_id）。
+ */
+export interface ApplyOperationPageDTO {
+    "schema_version": number;
+    "items": ApplyOperationDTO[] | null;
+    "next_cursor"?: string;
+}
+
+/**
  * ChangeDTO 是单资源三态 Diff 行。Base 在无基线时缺省。
  */
 export interface ChangeDTO {
@@ -53,6 +91,60 @@ export interface ChangesSummaryDTO {
     "modify_count": number;
     "delete_count": number;
     "conflict_count": number;
+}
+
+/**
+ * CommitChangeDTO 是单资源变更行（源：commit_changes；before/after 为联表表示摘要，缺省 null）。
+ */
+export interface CommitChangeDTO {
+    "resource_id": string;
+    "change_kind": string;
+
+    /**
+     * 表示摘要（联表），缺省 null
+     */
+    "project_before"?: string | null;
+    "project_after"?: string | null;
+    "runtime_before"?: string | null;
+    "runtime_after"?: string | null;
+}
+
+/**
+ * CommitDTO 是单提交详情（changes 全量，单 commit 不分页）。
+ */
+export interface CommitDTO {
+    "schema_version": number;
+    "summary": CommitSummaryDTO;
+    "plan_id": string;
+    "changes": CommitChangeDTO[] | null;
+}
+
+/**
+ * CommitPageDTO 是历史列表分页（created_at DESC；cursor=上一页末条 commit_id）。
+ */
+export interface CommitPageDTO {
+    "schema_version": number;
+    "items": CommitSummaryDTO[] | null;
+    "next_cursor"?: string;
+}
+
+/**
+ * CommitSummaryDTO 是历史列表行。
+ */
+export interface CommitSummaryDTO {
+    "commit_id": string;
+
+    /**
+     * initialize|sync|restore
+     */
+    "kind": string;
+
+    /**
+     * exact|partial
+     */
+    "completeness": string;
+    "remaining_change_count": number;
+    "created_at": string;
 }
 
 /**

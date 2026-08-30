@@ -499,5 +499,8 @@
   "rebind.newEndpoint": "新端点",
   "rebind.prepExpired": "预检已过期，请重新执行预检",
   "settings.subtitle": "主题与语言",
-  "app.mockBadgeTip": "Mock 模式已启用：当前为模拟数据，前往设置页关闭"
+  "app.mockBadgeTip": "Mock 模式已启用：当前为模拟数据，前往设置页关闭",
+  "err.apply.no_run": "该工作区尚无应用同步运行记录: {0}",
+  "err.apply.run_not_found": "运行记录不存在或属于其他工作区: {0}",
+  "err.commit.not_found": "历史记录不存在或属于其他工作区: {0}"
 }
