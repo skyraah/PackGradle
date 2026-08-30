@@ -42,6 +42,9 @@ type Application interface {
 	// 预检持久化 → Apply 单事务原位更新端点绑定（ADR-0003），恒 reinitialize。
 	PrepareRebind(ctx context.Context, input view.PrepareRebindInput) (view.RebindPreparationView, error)
 	ApplyRebind(ctx context.Context, preparationID string) (view.RelationView, error)
+	// ConfirmPlan 计划确认并创建 Apply 运行（契约 05 §3.1；票 #36）：
+	// token/任务/run 单事务同生共死，幂等重入返回既有任务。
+	ConfirmPlan(ctx context.Context, input view.ConfirmPlanInput) (view.TaskView, error)
 }
 
 var _ Application = (*App)(nil)

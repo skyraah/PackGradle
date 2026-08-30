@@ -418,3 +418,11 @@ type ChangesPageDTO struct {
 	Summary       ChangesSummaryDTO `json:"summary"`
 	NextCursor    string            `json:"next_cursor,omitempty"`
 }
+
+// ---- Phase 2 Apply（契约 05）----
+
+// ConfirmPlanDTO 是计划确认输入（契约 05 §3.1）。成功返回 TaskDTO
+// （kind=apply，status=queued，PlanID 字段回填）；幂等重入返回既有任务。
+type ConfirmPlanDTO struct {
+	PlanID string `json:"plan_id"`
+}

@@ -250,3 +250,15 @@ func (s *SyncService) ApplyRebind(preparationID string) (RelationDTO, error) {
 func pageRequest(cursor string, limit int) ports.PageRequest {
 	return ports.PageRequest{Cursor: cursor, Limit: limit}
 }
+
+// ---- Phase 2 Apply（契约 05；票 #36）----
+
+// ConfirmPlan 确认 resolved 计划并创建 Apply 任务（契约 05 §3.1）。
+// 幂等重入（D4）返回既有任务；任务此刻无 runner（T04），保持 queued。
+func (s *SyncService) ConfirmPlan(input ConfirmPlanDTO) (TaskDTO, error) {
+	v, err := s.app.ConfirmPlan(context.Background(), view.ConfirmPlanInput{PlanID: input.PlanID})
+	if err != nil {
+		return TaskDTO{}, err
+	}
+	return taskDTO(v), nil
+}

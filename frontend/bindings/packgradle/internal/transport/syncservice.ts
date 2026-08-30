@@ -30,6 +30,14 @@ export function CancelTask(taskID: string): $CancellablePromise<void> {
 }
 
 /**
+ * ConfirmPlan 确认 resolved 计划并创建 Apply 任务（契约 05 §3.1）。
+ * 幂等重入（D4）返回既有任务；任务此刻无 runner（T04），保持 queued。
+ */
+export function ConfirmPlan(input: $models.ConfirmPlanDTO): $CancellablePromise<$models.TaskDTO> {
+    return $Call.ByID(2865490822, input);
+}
+
+/**
  * CreateRelation 消费预检并创建 Relation。
  */
 export function CreateRelation(preparationID: string): $CancellablePromise<$models.RelationDTO> {

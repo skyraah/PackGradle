@@ -55,6 +55,14 @@ export interface ChangesSummaryDTO {
     "conflict_count": number;
 }
 
+/**
+ * ConfirmPlanDTO 是计划确认输入（契约 05 §3.1）。成功返回 TaskDTO
+ * （kind=apply，status=queued，PlanID 字段回填）；幂等重入返回既有任务。
+ */
+export interface ConfirmPlanDTO {
+    "plan_id": string;
+}
+
 export interface ConfirmationRequirementDTO {
     "code": string;
     "severity": string;

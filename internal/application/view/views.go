@@ -336,3 +336,9 @@ type RebindPreparationView struct {
 	BaselineInheritance  string                 `json:"baseline_inheritance"` // inherit|reinitialize
 	InvalidatedPlanCount int                    `json:"invalidated_plan_count"`
 }
+
+// ConfirmPlanInput 是计划确认输入（契约 05 §3.1；票 #36）。成功返回
+// TaskView（kind=apply，status=queued，PlanID 回填）；幂等重入返回既有任务。
+type ConfirmPlanInput struct {
+	PlanID string `json:"plan_id"`
+}

@@ -159,6 +159,24 @@ func (r *ApplyRunRepository) LatestByRelation(ctx context.Context, relationID st
 	return run, true, nil
 }
 
+// LatestByPlan 返回该计划当前/最近一次运行（created_at 最新，task_id 决胜）；
+// 无运行返回 ok=false。ConfirmPlan 幂等重入三分支按「本计划的运行」判定
+// （契约 05 §3.1 D4：活跃重入 / committed 拆码 / recovery 拆码；票 #36）。
+func (r *ApplyRunRepository) LatestByPlan(ctx context.Context, planID string) (model.ApplyRun, bool, error) {
+	run, err := scanApplyRun(func(dest ...any) error {
+		return r.db.QueryRowContext(ctx,
+			"SELECT "+applyRunColumns+" FROM apply_runs WHERE plan_id=?"+
+				" ORDER BY created_at DESC, task_id DESC LIMIT 1", planID).Scan(dest...)
+	})
+	if err == sql.ErrNoRows {
+		return model.ApplyRun{}, false, nil
+	}
+	if err != nil {
+		return model.ApplyRun{}, false, fmt.Errorf("sqlite: 读取计划 %s 最新运行: %w", planID, err)
+	}
+	return run, true, nil
+}
+
 // AdvanceState 沿六阶段状态机推进运行阶段（ADR-0004 §5）。状态判定与写入在
 // 同一事务内原子完成；终态与非法跳变返回 ErrInvalidTransition。
 func (r *ApplyRunRepository) AdvanceState(ctx context.Context, taskID, state, updatedAt string) error {
