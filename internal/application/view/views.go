@@ -321,6 +321,88 @@ type PrepareRebindInput struct {
 	RootPath   string `json:"root_path"` // 新端点根路径（project: pack.toml 所在目录；runtime: Prism 实例目录）
 }
 
+// ---- Apply 运行与历史读投影（契约 05 §2/§3.2/§3.3/§3.5；票 #39）----
+
+// ApplyRunView 是一次 Apply 的运行头投影（ADR-0004 §1 六阶段；契约 05 §3.2）。
+// TaskID 即 run_id（apply_runs 主键）。
+type ApplyRunView struct {
+	SchemaVersion  int    `json:"schema_version"`
+	TaskID         string `json:"task_id"`
+	RelationID     string `json:"relation_id"`
+	PlanID         string `json:"plan_id"`
+	PlanDigest     string `json:"plan_digest"`
+	State          string `json:"state"` // prepared|staged|applying|verifying|committed|recovery_required
+	OperationCount int    `json:"operation_count"`
+	StagingCleared bool   `json:"staging_cleared"`
+	AcknowledgedAt string `json:"acknowledged_at,omitempty"` // 人工确认时间（recovery_required 收口后）
+	CommitID       string `json:"commit_id,omitempty"`       // committed 后回填
+	CreatedAt      string `json:"created_at"`
+	UpdatedAt      string `json:"updated_at"`
+}
+
+// ApplyOperationView 是单操作行投影（契约 05 §3.3）。硬约束 4（ADR-0004 §4）：
+// 普通用户视图不暴露临时路径与 ownership proof——本投影只携带白名单字段。
+type ApplyOperationView struct {
+	OperationID  string `json:"operation_id"`
+	Ordinal      int    `json:"ordinal"`
+	Status       string `json:"status"` // pending|running|applied|verified|failed|compensated（ADR-0004 §2 单调路径）
+	ResourceID   string `json:"resource_id,omitempty"`
+	RelativePath string `json:"relative_path,omitempty"` // root-relative，非临时路径
+	ChangeKind   string `json:"change_kind,omitempty"`   // 与计划操作一致（write_runtime/remove_project/...）
+	ResultCode   string `json:"result_code,omitempty"`   // 终局摘要码（成功为空；失败/补偿带说明码）
+}
+
+// ApplyOperationPage 是逐操作清单分页（ordinal 升序；cursor=上一页末条 operation_id，
+// 与 GetChanges 同协议）。
+type ApplyOperationPage struct {
+	SchemaVersion int                  `json:"schema_version"`
+	Items         []ApplyOperationView `json:"items"`
+	NextCursor    string               `json:"next_cursor,omitempty"`
+}
+
+// ListApplyOperationsInput 是逐操作清单查询输入（契约 05 §2）。
+type ListApplyOperationsInput struct {
+	RelationID string `json:"relation_id"`
+	TaskID     string `json:"task_id"` // 即 run_id
+	Cursor     string `json:"cursor,omitempty"`
+	Limit      int    `json:"limit"`
+}
+
+// CommitSummaryView 是历史列表行（契约 05 §3.5）。
+type CommitSummaryView struct {
+	CommitID           string `json:"commit_id"`
+	Kind               string `json:"kind"`         // initialize|sync|restore
+	Completeness       string `json:"completeness"` // exact|partial
+	RemainingChangeCnt int    `json:"remaining_change_count"`
+	CreatedAt          string `json:"created_at"`
+}
+
+// CommitChangeView 是单资源变更行（源：commit_changes）。Project*/Runtime* 为
+// 联表表示的单行展示摘要；缺省 nil（DTO omitempty 序列化为 null 缺省）。
+type CommitChangeView struct {
+	ResourceID    string  `json:"resource_id"`
+	ChangeKind    string  `json:"change_kind"`
+	ProjectBefore *string `json:"project_before,omitempty"`
+	ProjectAfter  *string `json:"project_after,omitempty"`
+	RuntimeBefore *string `json:"runtime_before,omitempty"`
+	RuntimeAfter  *string `json:"runtime_after,omitempty"`
+}
+
+// CommitView 是单提交详情（changes 全量，单 commit 不分页；契约 05 §3.5）。
+type CommitView struct {
+	SchemaVersion int                `json:"schema_version"`
+	Summary       CommitSummaryView  `json:"summary"`
+	PlanID        string             `json:"plan_id"`
+	Changes       []CommitChangeView `json:"changes"`
+}
+
+// CommitPage 是历史列表分页（created_at DESC；cursor=上一页末条 commit_id）。
+type CommitPage struct {
+	SchemaVersion int                 `json:"schema_version"`
+	Items         []CommitSummaryView `json:"items"`
+	NextCursor    string              `json:"next_cursor,omitempty"`
+}
+
 // RebindPreparationView 是 PrepareRebind 结果（契约 03 §2.4）。NewEndpoint 与
 // OldEndpoint 共享同一端点 ID：ApplyRebind 原位更新该端点行的绑定。
 type RebindPreparationView struct {

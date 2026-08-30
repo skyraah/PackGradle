@@ -2,6 +2,7 @@ package transport
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 
 	"packgradle/internal/application/view"
@@ -161,5 +162,118 @@ func TestPolicyViewDTO(t *testing.T) {
 	if rm.ID != "config" || rm.Include == nil || len(rm.Exclude) != 1 || rm.Exclude[0] != "*.log" ||
 		rm.Direction != "project_to_runtime" || rm.RuntimeLocalPolicy != "report" {
 		t.Errorf("规则还原错误: %+v", rm)
+	}
+}
+
+// TestApplyOperationDTOWhitelist 验证 ApplyOperationDTO 序列化白名单（契约 05
+// §0 硬约束 4 / §3.3；票 #39）：产物不含 temp_relative_path/ownership_proof
+// 键，且 slice 归一 []。
+func TestApplyOperationDTOWhitelist(t *testing.T) {
+	page := applyOperationPageDTO(view.ApplyOperationPage{
+		SchemaVersion: model.CurrentSchemaVersion,
+		Items: []view.ApplyOperationView{
+			{
+				OperationID: "op_1", Ordinal: 1, Status: "pending",
+				ResourceID: "mod:path:mods/local.pw.toml", RelativePath: "mods/local.pw.toml",
+				ChangeKind: "write_runtime",
+			},
+			{OperationID: "op_2", Ordinal: 2, Status: "failed", ResultCode: "target_conflict"},
+		},
+	})
+	raw, err := json.Marshal(page)
+	if err != nil {
+		t.Fatal(err)
+	}
+	serialized := string(raw)
+	for _, forbidden := range []string{
+		"temp_relative_path", "ownership_proof", "before_digest", "after_digest", "recovery_ref",
+	} {
+		if strings.Contains(serialized, forbidden) {
+			t.Errorf("ApplyOperationDTO 序列化产物泄漏 %q: %s", forbidden, serialized)
+		}
+	}
+	var doc struct {
+		SchemaVersion int                 `json:"schema_version"`
+		Items         []map[string]any    `json:"items"`
+		NextCursor    string              `json:"next_cursor"`
+	}
+	if err := json.Unmarshal(raw, &doc); err != nil {
+		t.Fatal(err)
+	}
+	allowed := map[string]bool{
+		"operation_id": true, "ordinal": true, "status": true,
+		"resource_id": true, "relative_path": true, "change_kind": true, "result_code": true,
+	}
+	for i, item := range doc.Items {
+		for k := range item {
+			if !allowed[k] {
+				t.Errorf("第 %d 行出现白名单外键 %q", i, k)
+			}
+		}
+	}
+	if doc.Items[0]["relative_path"] != "mods/local.pw.toml" || doc.Items[1]["relative_path"] != nil {
+		t.Errorf("行投影不一致: %v / %v", doc.Items[0], doc.Items[1])
+	}
+
+	// 空 items 归一 []（序列化非 null）
+	empty, err := json.Marshal(applyOperationPageDTO(view.ApplyOperationPage{SchemaVersion: model.CurrentSchemaVersion}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(empty), `"items":[]`) {
+		t.Errorf("空页应序列化 items:[]: %s", empty)
+	}
+}
+
+// TestCommitDTOSerialization 验证历史读 DTO（契约 05 §3.5；票 #39）：
+// before/after 表示摘要 nil ↔ omitempty null，空 slices 归一 []。
+func TestCommitDTOSerialization(t *testing.T) {
+	summary := "mods/local.pw.toml packwiz-mod-toml sha256:abc"
+	dto := commitDTO(view.CommitView{
+		SchemaVersion: model.CurrentSchemaVersion,
+		Summary:       view.CommitSummaryView{CommitID: "commit_1", Kind: "sync", Completeness: "exact", RemainingChangeCnt: 1, CreatedAt: "2026-08-31T10:00:00Z"},
+		PlanID:        "plan_1",
+		Changes: []view.CommitChangeView{
+			{ResourceID: "mod:path:mods/local.pw.toml", ChangeKind: "modify", ProjectAfter: &summary},
+		},
+	})
+	raw, err := json.Marshal(dto)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc struct {
+		Summary map[string]any   `json:"summary"`
+		Changes []map[string]any `json:"changes"`
+	}
+	if err := json.Unmarshal(raw, &doc); err != nil {
+		t.Fatal(err)
+	}
+	if doc.Summary["commit_id"] != "commit_1" || doc.Summary["remaining_change_count"] != float64(1) {
+		t.Errorf("summary 投影不一致: %v", doc.Summary)
+	}
+	ch := doc.Changes[0]
+	if ch["project_after"] != summary {
+		t.Errorf("表示摘要不一致: %v", ch["project_after"])
+	}
+	for _, absent := range []string{"project_before", "runtime_before", "runtime_after"} {
+		if _, ok := ch[absent]; ok {
+			t.Errorf("nil 侧 %s 应缺省（无键）: %v", absent, ch)
+		}
+	}
+
+	// 空 changes 归一 []；分页 items 归一 []
+	emptyCommit, err := json.Marshal(commitDTO(view.CommitView{SchemaVersion: model.CurrentSchemaVersion}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(emptyCommit), `"changes":[]`) {
+		t.Errorf("零变化应序列化 changes:[]: %s", emptyCommit)
+	}
+	emptyPage, err := json.Marshal(commitPageDTO(view.CommitPage{SchemaVersion: model.CurrentSchemaVersion}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(emptyPage), `"items":[]`) {
+		t.Errorf("空页应序列化 items:[]: %s", emptyPage)
 	}
 }

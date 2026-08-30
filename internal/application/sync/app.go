@@ -42,6 +42,11 @@ type Application interface {
 	// 预检持久化 → Apply 单事务原位更新端点绑定（ADR-0003），恒 reinitialize。
 	PrepareRebind(ctx context.Context, input view.PrepareRebindInput) (view.RebindPreparationView, error)
 	ApplyRebind(ctx context.Context, preparationID string) (view.RelationView, error)
+	// Apply 运行与历史读投影（契约 05 §2/§3.2/§3.3/§3.5；票 #39）。
+	GetApplyRun(ctx context.Context, relationID string) (view.ApplyRunView, error)
+	ListApplyOperations(ctx context.Context, input view.ListApplyOperationsInput) (view.ApplyOperationPage, error)
+	ListCommits(ctx context.Context, relationID string, page ports.PageRequest) (view.CommitPage, error)
+	GetCommit(ctx context.Context, relationID, commitID string) (view.CommitView, error)
 }
 
 var _ Application = (*App)(nil)
@@ -58,6 +63,10 @@ type AppDeps struct {
 	Preparations  ports.PreparationRepository
 	HashCache     ports.HashCacheRepository
 	Events        ports.TaskEventRepository
+	// Apply 执行仓库（Phase 2，ADR-0004 事实模型，T01 落库；读投影票 #39 消费）。
+	ApplyRuns ports.ApplyRunRepository
+	Journal   ports.OperationJournalRepository
+	Commits   ports.CommitRepository
 	// Tx 是多步元数据写入的单事务边界（ADR-0003）；CreateRelation 走 RunInTx。
 	Tx            ports.UnitOfWork
 	Publisher     ports.EventPublisher // 事件出口（transport 桥），可为 nil
@@ -122,6 +131,9 @@ func New(deps AppDeps) (*App, error) {
 		{"Preparations", deps.Preparations != nil},
 		{"HashCache", deps.HashCache != nil},
 		{"Events", deps.Events != nil},
+		{"ApplyRuns", deps.ApplyRuns != nil},
+		{"Journal", deps.Journal != nil},
+		{"Commits", deps.Commits != nil},
 		{"Tx", deps.Tx != nil},
 		{"ProjectScan", deps.ProjectScan != nil},
 		{"RuntimeScan", deps.RuntimeScan != nil},

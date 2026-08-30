@@ -12,9 +12,16 @@ export {
 
 export type {
     ActionAvailabilityDTO,
+    ApplyOperationDTO,
+    ApplyOperationPageDTO,
+    ApplyRunDTO,
     ChangeDTO,
     ChangesPageDTO,
     ChangesSummaryDTO,
+    CommitChangeDTO,
+    CommitDTO,
+    CommitPageDTO,
+    CommitSummaryDTO,
     ConfirmationRequirementDTO,
     ConflictDTO,
     ContentRefDTO,
