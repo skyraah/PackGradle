@@ -5,6 +5,7 @@ package ports
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 
 	"packgradle/internal/core/model"
@@ -25,6 +26,11 @@ var (
 	ErrDigestMismatch = errors.New("ports: 持久化 digest 与重算值不一致")
 	ErrParentMismatch = errors.New("ports: parent 对象属于另一 Relation")
 	ErrPlanNotFound   = errors.New("ports: 被引用的计划不存在")
+
+	// Phase 2 Apply（ADR-0004）仓库哨兵。
+	ErrInvalidTransition    = errors.New("ports: 状态机不允许该迁移")
+	ErrConfirmationConsumed = errors.New("ports: 确认令牌已被消费")
+	ErrConfirmationExpired  = errors.New("ports: 确认令牌已过期")
 )
 
 // PageRequest 是列表分页参数（cursor page）。
@@ -180,19 +186,90 @@ type TaskEventRepository interface {
 	Append(ctx context.Context, env model.EventEnvelope) (int64, error) // 返回分配的 stream_sequence
 }
 
+// ---- Apply 执行仓库（Phase 2，ADR-0004 事实模型，schema v5）----
+
+// ApplyRunRepository 持久化 Apply 运行头（apply_runs，一行 = 一次 Apply，
+// task_id 即 run_id）。六阶段状态机沿 ADR-0004 §5：prepared→staged→applying→
+// verifying→committed，失败入 recovery_required；终态不可再迁移。
+type ApplyRunRepository interface {
+	Insert(ctx context.Context, run model.ApplyRun) error
+	Get(ctx context.Context, taskID string) (model.ApplyRun, error)
+	// LatestByRelation 返回该 Relation 当前/最近一次运行（created_at 最新）。
+	LatestByRelation(ctx context.Context, relationID string) (model.ApplyRun, bool, error)
+	// AdvanceState 沿六阶段状态机推进运行阶段；非法迁移返回 ErrInvalidTransition，
+	// 运行不存在返回 ErrNotFound。
+	AdvanceState(ctx context.Context, taskID, state, updatedAt string) error
+	// MarkStagingCleared 将 staging_cleared 记为事实（提交事务成功后清理，ADR-0004 §5）。
+	MarkStagingCleared(ctx context.Context, taskID, updatedAt string) error
+	// MarkAcknowledged 记录人工确认时间（恢复收口唯一出口，契约 05 §6）；
+	// 幂等，保留首次确认时间。
+	MarkAcknowledged(ctx context.Context, taskID, acknowledgedAt, updatedAt string) error
+	// AttachCommit 在 committed 收口时回填提交引用；提交不存在返回 ErrNotFound。
+	AttachCommit(ctx context.Context, taskID, commitID, updatedAt string) error
+}
+
+// OperationJournalRepository 管理逐操作当前行与追加历史（ADR-0004 §2 三层语义）。
+// 历史表 operation_journal_events 只追加：本接口不提供任何改写/删除历史的方法，
+// 当前操作行只按状态机推进（先持久化意图，再执行文件动作）。
+type OperationJournalRepository interface {
+	// InsertBatch 在同一事务写入一整批操作行（初始持久化意图，缺省 status=pending）
+	// 并为每行落初始历史事件（occurredAt 为意图持久化时间）。
+	InsertBatch(ctx context.Context, ops []model.JournalOperation, occurredAt string) error
+	// AdvanceStatus 在同一事务内先追加历史事件、再推进当前行状态（先持久化意图）。
+	// 非法迁移返回 ErrInvalidTransition；操作不存在返回 ErrNotFound。
+	AdvanceStatus(ctx context.Context, taskID, operationID, toStatus, occurredAt string, detail json.RawMessage) error
+	// GetOperation 读取单操作当前投影；不存在返回 ErrNotFound。
+	GetOperation(ctx context.Context, taskID, operationID string) (model.JournalOperation, error)
+	// ListByTask 按 ordinal 升序分页读取逐操作当前投影（cursor 为最后一条 ordinal）。
+	ListByTask(ctx context.Context, taskID string, page PageRequest) ([]model.JournalOperation, string, error)
+	// ListEvents 按序号升序返回任务的全部追加历史（审计与恢复解释）。
+	ListEvents(ctx context.Context, taskID string) ([]model.JournalEvent, error)
+	// LastEvent 回答「最后一个已持久化意图是什么」（任务内 seq 最大的一条；
+	// 无历史返回 ok=false）。
+	LastEvent(ctx context.Context, taskID string) (model.JournalEvent, bool, error)
+}
+
+// CommitRepository 持久化 SyncCommit 提交图（sync_commits + commit_changes 收口，
+// 契约 05 §7 D3）。
+type CommitRepository interface {
+	// Insert 在同一事务写 sync_commits 与 commit_changes（零消费表收口第一步）。
+	// 跨 Relation 引用被守卫拒绝（ErrCrossRelation 系）。
+	Insert(ctx context.Context, c model.SyncCommit) error
+	// GetForRelation 读取单提交含逐资源 changes（联 resource_representations 取资源
+	// 身份）；不存在或属于其他 Relation 一律 ErrNotFound（契约 05 err.commit.not_found 口径）。
+	GetForRelation(ctx context.Context, commitID, relationID string) (model.SyncCommit, error)
+	// ListByRelation 按 Relation 分页列出提交头（不含 changes；id 升序，cursor 为最后一条 id）。
+	ListByRelation(ctx context.Context, relationID string, page PageRequest) ([]model.SyncCommit, string, error)
+}
+
+// PlanConfirmationRepository 持久化计划确认令牌（plan_confirmations 收口，
+// 契约 05 §7 D4，ConfirmPlan 幂等重入）。
+type PlanConfirmationRepository interface {
+	Insert(ctx context.Context, c model.PlanConfirmation) error
+	// ListByPlan 返回该计划的全部确认记录（confirmed_at 升序）。
+	ListByPlan(ctx context.Context, planID string) ([]model.PlanConfirmation, error)
+	// MarkConsumed 消费确认令牌：仅未消费且未过期时可消费；不存在返回 ErrNotFound、
+	// 已消费返回 ErrConfirmationConsumed、已过期返回 ErrConfirmationExpired。
+	MarkConsumed(ctx context.Context, planID, token string) error
+}
+
 // Repos 是单个事务域内可用的仓库集合（UnitOfWork.RunInTx 闭包参数），
 // 字段与 AppDeps 的同名仓库一一对应，但全部绑定同一事务。
 type Repos struct {
-	Endpoints    EndpointRepository
-	Relations    RelationRepository
-	Snapshots    SnapshotRepository
-	Baselines    BaselineRepository
-	Plans        PlanRepository
-	Tasks        TaskRepository
-	Mappings     MappingRepository
-	Preparations PreparationRepository
-	HashCache    HashCacheRepository
-	Events       TaskEventRepository
+	Endpoints         EndpointRepository
+	Relations         RelationRepository
+	Snapshots         SnapshotRepository
+	Baselines         BaselineRepository
+	Plans             PlanRepository
+	Tasks             TaskRepository
+	Mappings          MappingRepository
+	Preparations      PreparationRepository
+	HashCache         HashCacheRepository
+	Events            TaskEventRepository
+	ApplyRuns         ApplyRunRepository
+	Journal           OperationJournalRepository
+	Commits           CommitRepository
+	PlanConfirmations PlanConfirmationRepository
 }
 
 // UnitOfWork 是跨仓库的单事务边界（ADR-0003：多步元数据写入 doctrine）。

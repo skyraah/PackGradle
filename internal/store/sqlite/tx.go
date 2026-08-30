@@ -78,15 +78,19 @@ func (u *UnitOfWork) RunInTx(ctx context.Context, fn func(repos ports.Repos) err
 // txRepos 构造绑定 tx 的事务域仓库集合。
 func txRepos(tx *sql.Tx) ports.Repos {
 	return ports.Repos{
-		Endpoints:    &EndpointRepository{db: tx},
-		Relations:    &RelationRepository{db: tx},
-		Snapshots:    &SnapshotRepository{db: tx},
-		Baselines:    &BaselineRepository{db: tx},
-		Plans:        &PlanRepository{db: tx},
-		Tasks:        &TaskRepository{db: tx},
-		Mappings:     &MappingRepository{db: tx},
-		Preparations: &PreparationRepository{db: tx},
-		HashCache:    &HashCacheRepository{db: tx},
-		Events:       &EventRepository{db: tx},
+		Endpoints:         &EndpointRepository{db: tx},
+		Relations:         &RelationRepository{db: tx},
+		Snapshots:         &SnapshotRepository{db: tx},
+		Baselines:         &BaselineRepository{db: tx},
+		Plans:             &PlanRepository{db: tx},
+		Tasks:             &TaskRepository{db: tx},
+		Mappings:          &MappingRepository{db: tx},
+		Preparations:      &PreparationRepository{db: tx},
+		HashCache:         &HashCacheRepository{db: tx},
+		Events:            &EventRepository{db: tx},
+		ApplyRuns:         &ApplyRunRepository{db: tx},
+		Journal:           &OperationJournalRepository{db: tx},
+		Commits:           &CommitRepository{db: tx},
+		PlanConfirmations: &PlanConfirmationRepository{db: tx},
 	}
 }
