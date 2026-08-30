@@ -14,6 +14,7 @@ import (
 	"packgradle/internal/application/task"
 	"packgradle/internal/application/view"
 	"packgradle/internal/core/model"
+	"packgradle/internal/syncstage"
 )
 
 // Application 是 P1 只读核心用例集（transport 依赖此接口而非具体实现）。
@@ -70,6 +71,10 @@ type AppDeps struct {
 	ApplyRuns ports.ApplyRunRepository
 	Journal   ports.OperationJournalRepository
 	Commits   ports.CommitRepository
+	// Apply 引擎文件层依赖（T04）：CAS 承接 before-content 保全（objectstore.CAS
+	// 满足 syncstage.ContentStore），StagingRoot 是按运行隔离的暂存根目录。
+	CAS         syncstage.ContentStore
+	StagingRoot string
 	// Tx 是多步元数据写入的单事务边界（ADR-0003）；CreateRelation 走 RunInTx。
 	Tx            ports.UnitOfWork
 	Publisher     ports.EventPublisher // 事件出口（transport 桥），可为 nil
@@ -101,6 +106,11 @@ type App struct {
 	// 为 T14 pgheadless -metrics 供数；runScan 写入，互斥保护）。
 	scanTimingMu   sync.Mutex
 	lastScanTiming view.ScanTimingView
+
+	// lastApplyTiming 是最近一次 Apply 运行的分相耗时（LastApplyTiming 查询，
+	// 为 T09 pgheadless -metrics apply 度量供数；runApply 写入，互斥保护）。
+	applyTimingMu   sync.Mutex
+	lastApplyTiming view.ApplyTimingView
 }
 
 // LastScanTiming 返回最近一次完成的扫描分相耗时（进程生命周期内最后一次；
@@ -116,6 +126,22 @@ func (a *App) recordScanTiming(timing view.ScanTimingView) {
 	a.scanTimingMu.Lock()
 	defer a.scanTimingMu.Unlock()
 	a.lastScanTiming = timing
+}
+
+// LastApplyTiming 返回最近一次 Apply 运行的分相耗时（进程生命周期内最后一次；
+// 供 headless -metrics apply 度量读取，不入 Application 接口/transport 契约，
+// LastScanTiming 类型断言先例）。
+func (a *App) LastApplyTiming() view.ApplyTimingView {
+	a.applyTimingMu.Lock()
+	defer a.applyTimingMu.Unlock()
+	return a.lastApplyTiming
+}
+
+// recordApplyTiming 覆盖最近一次 Apply 运行的分相耗时。
+func (a *App) recordApplyTiming(timing view.ApplyTimingView) {
+	a.applyTimingMu.Lock()
+	defer a.applyTimingMu.Unlock()
+	a.lastApplyTiming = timing
 }
 
 // New 构造应用；依赖缺失返回错误。
@@ -137,6 +163,8 @@ func New(deps AppDeps) (*App, error) {
 		{"ApplyRuns", deps.ApplyRuns != nil},
 		{"Journal", deps.Journal != nil},
 		{"Commits", deps.Commits != nil},
+		{"CAS", deps.CAS != nil},
+		{"StagingRoot", deps.StagingRoot != ""},
 		{"Tx", deps.Tx != nil},
 		{"ProjectScan", deps.ProjectScan != nil},
 		{"RuntimeScan", deps.RuntimeScan != nil},

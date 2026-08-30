@@ -284,3 +284,29 @@ func (r *CommitRepository) ListByRelation(ctx context.Context, relationID string
 	}
 	return items, nextCursor, nil
 }
+
+// InsertObjectRefs 写 object_refs 引用行（owner = 提交，purpose 引擎定义，
+// 如 before_preservation）。ADR-0004 §6：引用只指向已落盘就绪（objects.state='ready'）
+// 的 CAS 对象——悬挂引用被复合外键拒绝（ErrNotFound 语义）；同 (owner, digest,
+// purpose) 重复引用幂等跳过（PK 去重，CAS 同内容天然去重的镜像语义）。
+func (r *CommitRepository) InsertObjectRefs(ctx context.Context, ownerType, ownerID string, refs []ports.ObjectRefRow) error {
+	if len(refs) == 0 {
+		return nil
+	}
+	return beginOrJoin(ctx, r.db, "写入对象引用", func(tx DBTX) error {
+		for _, ref := range refs {
+			_, err := tx.ExecContext(ctx, `
+INSERT INTO object_refs(owner_type, owner_id, algorithm, digest, purpose, size)
+VALUES(?,?,?,?,?,?) ON CONFLICT DO NOTHING`,
+				ownerType, ownerID, ref.Algorithm, ref.Digest, ref.Purpose, ref.Size)
+			if err != nil {
+				if isForeignKeyViolation(err) {
+					return fmt.Errorf("sqlite: 对象引用 %s/%s 悬挂（对象未就绪）: %w",
+						ref.Algorithm, ref.Digest, ErrNotFound)
+				}
+				return fmt.Errorf("sqlite: 写入对象引用 %s/%s: %w", ref.Algorithm, ref.Digest, err)
+			}
+		}
+		return nil
+	})
+}
