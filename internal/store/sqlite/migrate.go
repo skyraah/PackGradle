@@ -53,6 +53,31 @@ var migrations = []migration{
 		}},
 	{Version: 3, Name: "sync_plans requested_exactness", Stmt: func() string { return schemaV3 }},
 	{Version: 4, Name: "rebind_preparations 重绑预检", Stmt: func() string { return schemaV4 }},
+	{Version: 5, Name: "apply_runs 运行头与 journal 状态约束", Stmt: func() string { return schemaV5 },
+		DisableFK: true,
+		Verify: func(ctx context.Context, conn *sql.Conn) error {
+			rows, err := conn.QueryContext(ctx, "PRAGMA foreign_key_check(operation_journal)")
+			if err != nil {
+				return fmt.Errorf("sqlite: foreign_key_check(operation_journal) 失败: %w", err)
+			}
+			defer rows.Close()
+			bad := 0
+			for rows.Next() {
+				var table string
+				var rowid, parent, fkid sql.NullInt64
+				if err := rows.Scan(&table, &rowid, &parent, &fkid); err != nil {
+					return fmt.Errorf("sqlite: 读取 foreign_key_check 结果: %w", err)
+				}
+				bad++
+			}
+			if err := rows.Err(); err != nil {
+				return fmt.Errorf("sqlite: 遍历 foreign_key_check 结果: %w", err)
+			}
+			if bad > 0 {
+				return fmt.Errorf("sqlite: operation_journal 表存在 %d 行悬挂引用（task），迁移中止", bad)
+			}
+			return nil
+		}},
 }
 
 // SchemaVersion 返回当前代码支持的目标 schema 版本（= len(migrations)）。
