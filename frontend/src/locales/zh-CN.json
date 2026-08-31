@@ -181,6 +181,7 @@
   "workspaces.scanAction": "开始扫描",
   "workspaces.scanRetryAction": "重试扫描",
   "workspaces.cancelTask": "取消任务",
+  "workspaces.historyAction": "同步历史",
   "workspaces.taskKind.scan": "扫描",
   "workspaces.taskKind.apply": "应用",
   "workspaces.taskKind.restore": "恢复",

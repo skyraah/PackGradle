@@ -67,6 +67,7 @@ interface WorkspaceRow {
     canRebind: boolean
     rebindReason: string
     recoveryRequired: boolean
+    canHistory: boolean
     scanLabel: string
     healthTone: BadgeTone
     scanTone: BadgeTone
@@ -91,6 +92,10 @@ const rows = computed<WorkspaceRow[]>(() =>
             // （UX 原型 §4.3 主操作不可用语义；恢复门期间为 err.recovery.in_progress）
             rebindReason: availabilityReasonText(w, 'rebind'),
             recoveryRequired: w.relation.health === 'recovery_required',
+            // 历史入口（T13 B 口径走查发现补，票 #45）：history_view feature 唯一门控，
+            // 列表行承接 /workspaces/:id/history（T10 路由注释既定「入口在工作区列表行
+            // 操作由 T11 承接」而 T11 未落，历史页此前 UI 不可达）；空态由历史页自行呈现
+            canHistory: w.features.history_view === true,
             scanLabel: w.state.scan_state === 'failed' ? t('workspaces.scanRetryAction') : t('workspaces.scanAction'),
             healthTone: toneOf(healthTones, w.relation.health),
             scanTone: toneOf(scanTones, w.state.scan_state),
@@ -345,6 +350,16 @@ const cols: { key: string; alignRight?: boolean }[] = [
                                             @click="prepareSyncPlan(row)"
                                         >
                                             {{ t('workspaces.planAction') }}
+                                        </Button>
+                                        <!-- 同步历史入口：history_view feature 门控（T13 补，票 #45；
+                                             T10 路由注释既定入口在本处而 T11 未落） -->
+                                        <Button
+                                            v-if="row.canHistory"
+                                            size="xs"
+                                            variant="outline"
+                                            @click="router.push('/workspaces/' + row.workspace.relation.relation_id + '/history')"
+                                        >
+                                            {{ t('workspaces.historyAction') }}
                                         </Button>
                                         <!-- 重新绑定入口：availability 驱动（T12 重绑页承接；
                                              健康态不阻止——路径迁移是合法的主动操作）。
