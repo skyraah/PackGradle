@@ -981,15 +981,7 @@ func buildCommitChanges(plans []applyFilePlan, inP, inR, rescanP, rescanR model.
 		if fp.action == "" {
 			continue
 		}
-		ch := model.CommitChange{ResourceID: fp.op.ResourceID}
-		switch fp.action {
-		case applyActionCreate:
-			ch.ChangeKind = string(model.ChangeCreate)
-		case applyActionModify:
-			ch.ChangeKind = string(model.ChangeModify)
-		case applyActionDelete:
-			ch.ChangeKind = string(model.ChangeDelete)
-		}
+		ch := model.CommitChange{ResourceID: fp.op.ResourceID, ChangeKind: string(actionChangeKind(fp.action))}
 		before := repOf(inBySide[fp.targetSide], fp.op.ResourceID)
 		after := repOf(rescanBySide[fp.targetSide], fp.op.ResourceID)
 		if fp.targetSide == model.SideRuntime {

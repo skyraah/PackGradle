@@ -65,3 +65,7 @@
 **A 口径：通过。**
 
 证据：L0 五命令全绿（含 `-race` 硬门槛）；`acceptance:headless` 全新数据目录可重复执行且链路含 ResolvePlan；性能冷/热/命中率三项达标（记录已归档）；P0-1/P0-2 前端部分已显式 deferred。A 口径四条验收标准全部满足，B 口径（A + frontend:build + L1 清单 + 检视 §6 九条）留待 T16/T17。
+
+## 7. Phase 2 衔接（2026-08-31 补记）
+
+P1 结论维持：本报告 A 口径通过（B 口径随后由 [p1-acceptance-2026-08-30-b.md](p1-acceptance-2026-08-30-b.md) 关闭），证据与缺口清单不因 Phase 2 变更。Phase 2 已于 [p2-acceptance-2026-08-31.md](p2-acceptance-2026-08-31.md) 通过 A/B 双口径验收关闭，P1 回归项在其 §8.4 做了不回退抽验。

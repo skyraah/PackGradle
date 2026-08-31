@@ -13,6 +13,12 @@ import { SyncService } from '../api'
 import type { CommitDTO, CommitSummaryDTO } from '../api'
 import { bootstrapped, workspaces } from '../stores/syncCache'
 import { errText } from '../utils/errors'
+import {
+    completenessTone,
+    formatTime,
+    resolvePageState,
+    type QueryPhase,
+} from '../utils/pageState'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
@@ -27,7 +33,7 @@ const commitID = computed(() => String(route.params.commit_id ?? ''))
 
 // —— 查询快照 ——
 const commit = ref<CommitDTO | null>(null)
-const phase = ref<'loading' | 'error' | 'ready'>('loading')
+const phase = ref<QueryPhase>('loading')
 const inflight = ref(false)
 const errorMsg = ref('')
 let querySeq = 0
@@ -58,35 +64,13 @@ const wsRow = computed(() => workspaces.value.find(w => w.relation.relation_id =
 const relationMissing = computed(() => bootstrapped.value && !wsRow.value)
 const gated = computed(() => wsRow.value !== undefined && wsRow.value?.features.history_view !== true)
 
-const pageState = computed<'loading' | 'error' | 'gate' | 'empty' | 'ready'>(() => {
-    if (phase.value === 'loading') return 'loading'
-    if (phase.value === 'error') return 'error'
-    if (gated.value) return 'gate'
-    const changes = commit.value?.changes ?? []
-    if (!changes.length) return 'empty'
-    return 'ready'
-})
+const pageState = computed(() =>
+    resolvePageState(phase.value, gated.value, (commit.value?.changes ?? []).length > 0),
+)
 
 const summary = computed<CommitSummaryDTO | null>(() => commit.value?.summary ?? null)
 
-// —— 展示辅助 ——
-interface BadgeTone {
-    variant: 'default' | 'secondary' | 'destructive' | 'outline'
-    class?: string
-}
-const OK: BadgeTone = { variant: 'outline', class: 'text-emerald-600 dark:text-emerald-400' }
-const WARN: BadgeTone = { variant: 'outline', class: 'text-amber-600 dark:text-amber-400' }
-const NEUTRAL: BadgeTone = { variant: 'outline' }
-
-function completenessTone(c: string): BadgeTone {
-    return c === 'exact' ? OK : WARN
-}
-
-function formatTime(s: string): string {
-    const at = Date.parse(s)
-    return Number.isNaN(at) ? s : new Date(at).toLocaleString()
-}
-
+// —— 展示辅助（色调/时间/相位状态机收敛于 utils/pageState）——
 // 表示摘要「前 → 后」：null 显「—」（契约 05 §3.5）
 function rep(s?: string | null): string {
     return s ?? '—'
