@@ -118,6 +118,22 @@ tasks:
       - bin/pgheadless.exe -project build/perf/fixture/project -instance build/perf/fixture/instance -data build/perf/data -apply -metrics build/perf/metrics-apply.json
       - go run ./cmd/pgfixture -eval build/perf/metrics-cold.json,build/perf/metrics-warm.json,build/perf/metrics-apply.json
 
+  # 恢复强杀注入（验收规格 §2.1/§2.4；票 #41）：acceptance:recovery 注入
+  # harness——每轮全新 fixture + 全新数据目录起 pgheadless -apply 子进程，按
+  # 种子调度的目标相位（staging/applying/verifying 五轮全覆盖）标记出现后随机
+  # 延迟 taskkill /F 真强杀 → 重启走恢复管线（bootstrap.Build 启动恢复）→
+  # 四不变式逐轮断言（终局口径/diff 归零/apply 门禁与复跑/重复恢复幂等，任一
+  # 违反非零退出）；recovery_required 轮以 AcknowledgeRecovery 收口（§2.4 授权
+  # 的唯一 L0 人工路径自动化）后复跑 -apply。逐轮记录 JSON 落
+  # docs/acceptance/records/p2-recovery-<date>-<host>.json。
+  acceptance:recovery:
+    summary: Force-kills pgheadless -apply subprocesses at seeded random moments across 5 rounds, restarts the recovery pipeline, asserts the four recovery invariants per round (acceptance L0)
+    cmds:
+      - go build -o bin/pgheadless.exe ./cmd/pgheadless
+      - go build -o bin/pgrecovery.exe ./cmd/pgrecovery
+      - rm -rf build/recovery
+      - bin/pgrecovery.exe
+
   # B 口径前端构建门槛（验收规格 §1.1）：vue-tsc 类型检查 + Vite 生产构建
   #（package.json `build` = `vue-tsc && vite build --mode production`）。
   frontend:build:
