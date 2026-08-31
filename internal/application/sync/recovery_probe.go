@@ -720,10 +720,15 @@ func (a *App) blockRecoveredRun(ctx context.Context, active model.Task, run mode
 }
 
 // advanceRunToApplying 把运行沿成功链步进到 applying（prepared→staged→applying；
-// 已在 applying/verifying 的运行不动）。
+// 已在 applying/verifying 的运行不动——verifying 相位由恢复收口在原相位继续，
+// 回推 prepared 会被状态机拒绝）。T08 harness 实跑修复：原实现把 verifying 误作
+// 「started」起点沿链回退步进，verifying 相位崩溃一律 journal_advance_failed。
 func (a *App) advanceRunToApplying(ctx context.Context, taskID, from string) error {
+	if from == model.ApplyRunVerifying {
+		return nil
+	}
 	chain := []string{model.ApplyRunPrepared, model.ApplyRunStaged, model.ApplyRunApplying}
-	started := from == model.ApplyRunVerifying // verifying 相位无需回推
+	started := false
 	for _, s := range chain {
 		if s == from {
 			started = true
