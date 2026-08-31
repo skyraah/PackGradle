@@ -10,6 +10,10 @@
 // T14 性能基线：-metrics <file> 时输出分项 JSON（扫描四相耗时 + 本次扫描
 // hash cache 命中 delta，schema p1-perf-run/1），供 task acceptance:perf
 // 冷/热两轮采集与 pgfixture -eval 门槛评估。
+//
+// -apply（P2 A 口径主链路，票 #40）：-resolve 链路之后 ConfirmPlan → 轮询
+// GetTask 至终态 → committed/ListCommits/applied 断言链（实现在 apply.go；
+// Taskfile acceptance:headless 同目录两遍跑，第二遍 noop 收口）。
 package main
 
 import (
@@ -38,6 +42,7 @@ func main() {
 	dataRoot := flag.String("data", "", "用户数据目录（默认系统用户数据目录下 PackGradle）")
 	metricsPath := flag.String("metrics", "", "分项指标 JSON 输出路径（T14 性能基线，可选）")
 	resolve := flag.Bool("resolve", false, "PrepareSync 后执行 ResolvePlan → GetPlan（A 口径 headless 链路）")
+	apply := flag.Bool("apply", false, "ResolvePlan 后 ConfirmPlan → Apply → committed 断言链（P2 A 口径主链路）")
 	flag.Parse()
 	if *projectRoot == "" || *instanceDir == "" {
 		flag.Usage()
@@ -104,7 +109,12 @@ func main() {
 	fatalOn(err, "GetPlan")
 	dump("GetPlan", got)
 
-	if *resolve {
+	if *apply {
+		if err := runApplyChain(ctx, app, rel, got); err != nil {
+			log.Fatalf("-apply 链路失败: %v", err)
+		}
+		fmt.Println("headless -apply 链路完成（ConfirmPlan → committed 断言全过）")
+	} else if *resolve {
 		resolved, err := app.ResolvePlan(ctx, view.ResolvePlanInput{
 			PlanID:      plan.PlanID,
 			Resolutions: defaultResolutions(plan.Conflicts),
