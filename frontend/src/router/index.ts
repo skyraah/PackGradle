@@ -81,6 +81,34 @@ const workspacesRebind: RouteRecordRaw = {
     meta: { titleKey: 'nav.workspacesRebind' },
 }
 
+// 工作区详情：同步历史页（ListCommits 分页，UX 原型 §7.7；history_view 门控，
+// 契约 05 §5，票 #42。入口在工作区列表行操作由 T11 承接，不占侧栏导航项）
+const workspacesHistory: RouteRecordRaw = {
+    path: '/workspaces/:id/history',
+    name: 'workspaces-history',
+    component: () => import('../views/WorkspacesHistoryView.vue'),
+    meta: { titleKey: 'nav.workspacesHistory' },
+}
+
+// 工作区详情：同步记录详情页（GetCommit 逐资源变更表，UX 原型 §7.8，
+// 契约 05 §5。由历史页行进入，不占侧栏导航项）
+const workspacesCommit: RouteRecordRaw = {
+    path: '/workspaces/:id/history/:commit_id',
+    name: 'workspaces-commit',
+    component: () => import('../views/WorkspacesCommitView.vue'),
+    meta: { titleKey: 'nav.workspacesCommit' },
+}
+
+// 工作区详情：恢复详情页（GetApplyRun/ListApplyOperations/AcknowledgeRecovery，
+// UX 原型 §7.12；契约 05 §5 D2，run_id=task_id，票 #42。
+// 「处理恢复」入口在任务中心/列表行由 T11 承接，不占侧栏导航项）
+const workspacesRecovery: RouteRecordRaw = {
+    path: '/workspaces/:id/recoveries/:run_id',
+    name: 'workspaces-recovery',
+    component: () => import('../views/WorkspacesRecoveryView.vue'),
+    meta: { titleKey: 'nav.workspacesRecovery' },
+}
+
 const settings: RouteRecordRaw = {
     path: '/settings',
     name: 'settings',
@@ -103,6 +131,9 @@ const router = createRouter({
         workspacesMappings,
         workspacesPlan,
         workspacesRebind,
+        workspacesHistory,
+        workspacesCommit,
+        workspacesRecovery,
         { path: '/', ...legacyRedirect },
         // :pathMatch(.*)* 亦可空重复，覆盖裸 /projects
         { path: '/projects/:pathMatch(.*)*', ...legacyRedirect },
