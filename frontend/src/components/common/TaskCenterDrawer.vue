@@ -2,7 +2,8 @@
 // 任务中心抽屉（shadcn-vue Sheet；UX 原型 §5.3）：后端任务投影。
 // 数据全部来自 stores/syncCache（查询 API 的投影）：ListTasks(active) 缓存 +
 // task_updated 事件经 GetTask 重读；这里不做第二处数据获取、不订阅事件。
-// 顶部徽标 = 活跃任务数；条目内联取消与「查看工作区」上下文动作。
+// 顶部徽标 = 活跃任务数；条目内联取消与「查看工作区」上下文动作；
+// recovery_required 任务带「处理恢复」动作（导航恢复详情页，契约 05 §5）。
 import { computed, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useRouter } from 'vue-router'
@@ -174,6 +175,16 @@ async function cancelTask(task: TaskDTO): Promise<void> {
                         </div>
                         <div v-if="task.outcome" class="text-faint mt-1 text-xs">{{ task.outcome }}</div>
                         <div v-if="task.relation_id" class="mt-2 flex justify-end gap-2">
+                            <!-- 处理恢复（契约 05 §5 任务中心入口，T16 deferred 收口）：
+                                 恢复详情页 run_id=task_id（apply_runs 主键） -->
+                            <Button
+                                v-if="task.status === 'recovery_required'"
+                                size="xs"
+                                variant="outline"
+                                @click="router.push('/workspaces/' + task.relation_id + '/recoveries/' + task.task_id)"
+                            >
+                                {{ t('tasks.recoverAction') }}
+                            </Button>
                             <Button
                                 v-if="task.plan_id"
                                 size="xs"
