@@ -1,11 +1,20 @@
 # Pack Gradle
 
-一个便于整合包作者构建packwiz与prism launcher联动开发环境的工具
+---
 
-### 特性
+一个用于在 packwiz 项目与 Prism Launcher 实例之间进行同步的桌面工具/CLI。旨在为您提供更健康的modpack项目管理模式。
 
-- 一键环境配置 - 自动检测packwiz、prism launcher的装载状态，并为您将关键字添加到系统变量中
-- packwiz项目管理 - 添加pack.toml路径以导入工具内，以视图管理您的项目
-- 双边同步 - 将packwiz项目对应到您的prism launcher实例（或在prism新建），并根据您的配置文件创建Junction以同步您的项目文件更改
-- meta优化 - 提供pw.toml列表可视化功能以便您标识您pickwiz项目中的mod side，并提供prism和packwiz之间相互的mata拉取请求，以便您更新您项目中的mod
+## 概览
 
+- 基于**packwiz**架构的*远端协作modpack项目*与*本地开发时实例*分体管理，便于您统一管理您的packwiz项目。
+- 接管**prism launcher**基于`.index`与`*.pw.toml`的管理系统，由packwiz作为统一交付入口。
+
+---
+
+## 特性
+
+- 工作区管理：登记 packwiz 项目与 Prism 实例并建立同步关系
+- 双端差异察觉与同步：项目源与运行实例两侧的变更差异可 `push` / `pull`
+- 历史与回滚：每次同步更改计入本地历史，可回滚
+- mod管理（开发中）：基于 [packwiz cli](https://github.com/packwiz/packwiz) 开发的mod管理，更新mod版本并下载推送至运行实例
+- 尽请期待……
