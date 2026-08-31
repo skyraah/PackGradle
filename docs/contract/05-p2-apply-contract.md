@@ -218,3 +218,15 @@ type CommitPageDTO struct {
 | 未实现能力不暴露 | §1：restore 全家 false 不注册；`prepare_restore/apply_restore` 不出现在 availability |
 | ADR-0004 权威 | §0.3/§3.4：六阶段与四路裁决只投影不重定；acknowledge 是唯一人工出口 |
 | 无临时路径/ownership proof 透出 | §0.4/§3.3：ApplyOperationDTO 字段白名单 |
+
+## 10. 执行落地增补（P2 执行会话，2026-08-31）
+
+本文签名与 DTO 已按 §2/§3 全量落地，**零签名偏差**；本节总括执行面事实，不逐票流水。
+
+- **transport**：6 个新方法入 `SyncService`（服务总方法 68→74）；新 DTO `ApplyRunDTO`/`ApplyOperationPageDTO`/`CommitDTO` 族与 bindings 已重生成；6 个新错误码（§6）全带 zh-CN 键并由 conformance test 双向锁定。
+- **features/availability**：`sync_apply=true`、`history_view=true`、`materialization_modes=["copy"]` 按期点亮；`apply_sync` 可用性推导含 `err.plan.none_ready` 拆码；recovery_required 期间 apply/rebind 入口以 `err.recovery.in_progress` 不可用（reason code 直出文案）。
+- **schema**：v5 迁移落 `apply_runs`（六阶段 CHECK）、`operation_journal` 重建（六状态 CHECK）、`operation_journal_events` 追加历史（触发器拒 UPDATE/DELETE）、`plan_confirmations.consumed_at`；`sync_commits`/`commit_changes` 零消费表由 ListCommits/GetCommit 收口（§7）。
+- **引擎与恢复**：六阶段编排 + journal 三层 + 意图先行铁律按 ADR-0004 落地（`internal/application/sync/apply.go`、`internal/syncstage/`）；恢复 probe 四路裁决 + `AcknowledgeRecovery` 幂等语义与 §3.4 一致（`recovery.go`）。执行期增补（不改契约面）：applying 相两段式批量化（批前单事务持久化整批 running 意图、批内文件动作有界并行、批后单事务记录终态）——崩溃形态全在 §3.4 引用的恢复矩阵内，性能记录见验收报告。
+- **事件**：零新 event_type；`relation_invalidated` 两发射点（committed 事务提交后、恢复收口后）按 §4 落地。
+- **前端**：三新路由 + plans「应用同步」主操作 + 任务中心/列表行「处理恢复」双入口按 §5 落地（shadcn-vue，locale 增 history/recovery/plans 块）。
+- **验收**：A 口径通过（L0 六命令全绿 + 性能五门槛达标 + 恢复五轮四不变式），报告 [../acceptance/reports/p2-acceptance-2026-08-31.md](../acceptance/reports/p2-acceptance-2026-08-31.md)；B 口径（frontend:build + L1 增量清单）待 L1 执行。

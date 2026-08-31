@@ -353,3 +353,12 @@ T16 执行落地（票 #26，ADR-0001）：单发布切换——一级导航收�
 | D3 rebind 的 baseline 继承 | P1 恒 `reinitialize` | 等价证明需完整扫描，P1 不承担；`inherit` 留 Phase 2 |
 | D4 端点用例服务归属 | `ProjectService` + `RuntimeService` 两服务 | 对齐架构 §4.2 目录；两者发现语义不同 |
 | D5 PrepareRelation 输入扩展 | 不扩展 `endpoint_id` | P1 无消费方，避免双通道输入漂移；前端接入时再议 |
+
+## 6. P2 执行期增补总括（2026-08-31）
+
+P2 执行会话（Apply 链路，见 [契约 05](./05-p2-apply-contract.md) §10）全程未回退本文面，执行事实总括：
+
+- **硬约束延续**：DTO 只增不删（P2 六方法/九 DTO 全部为新增）、顶层 `schema_version`、slice 归一 `[]`、`AppErrorDTO/ProblemDTO` 错误形态、availability 单一门控（前端不自行叠加可用性条件）零回退。
+- **既有事件协议零改动**：三类型信封、seq 跳号、受控重查管线不变；`relation_invalidated` 仅新增两个发射点（apply committed 后、恢复收口后，见契约 05 §4）。
+- **locale conformance 面扩大**：zh-CN 497→610 键（`err.*` 101→108：契约 05 §6 六码 + `err.plan.expired` 补键；`msg.*` 9→14：apply 分相短语五键）；conformance test 三向校验继续随 `task test` 运行。
+- **P1 能力不回退**：changes/mappings/plans/rebind 页与 -resolve headless 链路在 P2 验收（A 口径 L0）中作为回归面全程通过；P1 性能口径（冷/热扫描、热命中率）在 P2 五门槛中沿用达标。
