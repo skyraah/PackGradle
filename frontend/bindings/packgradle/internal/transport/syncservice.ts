@@ -17,6 +17,16 @@ import { Call as $Call, CancellablePromise as $CancellablePromise } from "@wails
 import * as $models from "./models.js";
 
 /**
+ * AcknowledgeRecovery 人工确认恢复收口（契约 05 §3.4；票 #38）：前置
+ * run=recovery_required（否则 err.recovery.not_required），效果 acknowledged_at
+ * 落库 + 关系复位 healthy（头基线不动、不建 SyncCommit），发布
+ * relation_invalidated 引导重扫；返回确认后的工作区投影。已确认重入幂等返回。
+ */
+export function AcknowledgeRecovery(taskID: string): $CancellablePromise<$models.WorkspaceDTO> {
+    return $Call.ByID(2839175458, taskID);
+}
+
+/**
  * ApplyRebind 消费重绑预检并原位更新端点绑定（ADR-0003 单事务；恒 reinitialize）。
  */
 export function ApplyRebind(preparationID: string): $CancellablePromise<$models.RelationDTO> {
@@ -43,6 +53,14 @@ export function ConfirmPlan(input: $models.ConfirmPlanDTO): $CancellablePromise<
  */
 export function CreateRelation(preparationID: string): $CancellablePromise<$models.RelationDTO> {
     return $Call.ByID(1642239991, preparationID);
+}
+
+/**
+ * GetApplyRun 返回该工作区当前/最近一次 Apply 运行头投影（契约 05 §3.2；票 #39）。
+ * 关系无任何运行记录 → err.apply.no_run。
+ */
+export function GetApplyRun(relationID: string): $CancellablePromise<$models.ApplyRunDTO> {
+    return $Call.ByID(3777018104, relationID);
 }
 
 /**

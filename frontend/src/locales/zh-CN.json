@@ -238,6 +238,7 @@
   "err.scan.task_not_cancellable": "任务已结束，无法取消",
   "err.scan.incomplete": "扫描未就绪，请先完成扫描",
   "err.recovery.in_progress": "恢复流程进行中，操作暂不可用",
+  "err.recovery.not_required": "该运行不处于恢复状态，无需确认: {0}",
   "err.sync.snapshot_not_found": "快照不存在: {0}",
   "msg.task.scan.queued": "扫描已排队…",
   "msg.task.scan.scanning_project": "正在扫描项目源…",

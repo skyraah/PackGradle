@@ -54,6 +54,40 @@ export interface ApplyOperationPageDTO {
 }
 
 /**
+ * ApplyRunDTO 是一次 Apply 的运行头投影（ADR-0004 §1 六阶段；契约 05 §3.2）。
+ */
+export interface ApplyRunDTO {
+    "schema_version": number;
+
+    /**
+     * 即 run_id（apply_runs 主键）
+     */
+    "task_id": string;
+    "relation_id": string;
+    "plan_id": string;
+    "plan_digest": string;
+
+    /**
+     * prepared|staged|applying|verifying|committed|recovery_required
+     */
+    "state": string;
+    "operation_count": number;
+    "staging_cleared": boolean;
+
+    /**
+     * 人工确认时间（recovery_required 收口后）
+     */
+    "acknowledged_at"?: string;
+
+    /**
+     * committed 后回填
+     */
+    "commit_id"?: string;
+    "created_at": string;
+    "updated_at": string;
+}
+
+/**
  * ChangeDTO 是单资源三态 Diff 行。Base 在无基线时缺省。
  */
 export interface ChangeDTO {

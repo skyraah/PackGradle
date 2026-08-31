@@ -91,6 +91,13 @@ func writeFileAtomic(dest string, r io.Reader) error {
 	return nil
 }
 
+// WriteFileAtomic 以「临时文件 + fsync + 原子 rename」写入 dest
+// （writeFileAtomic 的导出形态）：恢复补偿以 CAS before 保全回写旧内容时
+// 必须保持与动作原语相同的原子落盘语义（T05 恢复探测消费）。
+func WriteFileAtomic(dest string, r io.Reader) error {
+	return writeFileAtomic(dest, r)
+}
+
 // withinRoot 报告 target 是否落在 root 之内（含 root 本身）；
 // 大小写不敏感（Windows 卷），统一斜杠后前缀比较。
 func withinRoot(root, target string) bool {
