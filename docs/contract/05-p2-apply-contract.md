@@ -228,5 +228,5 @@ type CommitPageDTO struct {
 - **schema**：v5 迁移落 `apply_runs`（六阶段 CHECK）、`operation_journal` 重建（六状态 CHECK）、`operation_journal_events` 追加历史（触发器拒 UPDATE/DELETE）、`plan_confirmations.consumed_at`；`sync_commits`/`commit_changes` 零消费表由 ListCommits/GetCommit 收口（§7）。
 - **引擎与恢复**：六阶段编排 + journal 三层 + 意图先行铁律按 ADR-0004 落地（`internal/application/sync/apply.go`、`internal/syncstage/`）；恢复 probe 四路裁决 + `AcknowledgeRecovery` 幂等语义与 §3.4 一致（`recovery.go`）。执行期增补（不改契约面）：applying 相两段式批量化（批前单事务持久化整批 running 意图、批内文件动作有界并行、批后单事务记录终态）——崩溃形态全在 §3.4 引用的恢复矩阵内，性能记录见验收报告。
 - **事件**：零新 event_type；`relation_invalidated` 两发射点（committed 事务提交后、恢复收口后）按 §4 落地。
-- **前端**：三新路由 + plans「应用同步」主操作 + 任务中心/列表行「处理恢复」双入口按 §5 落地（shadcn-vue，locale 增 history/recovery/plans 块）。
+- **前端**：三新路由 + plans「应用同步」主操作 + 任务中心/列表行「处理恢复」双入口按 §5 落地（shadcn-vue，locale 增 history/recovery/plans 块）。执行取舍一处：§3.2 消费方清单中的「工作区横幅」未落为独立横幅组件，恢复状态改由列表行徽标、plans 页门控区与恢复详情页三处承载（可观测职责不减，L1 勾选附偏差注记）。
 - **验收**：A 口径通过（L0 六命令全绿 + 性能五门槛达标 + 恢复五轮四不变式），报告 [../acceptance/reports/p2-acceptance-2026-08-31.md](../acceptance/reports/p2-acceptance-2026-08-31.md)；B 口径（frontend:build + L1 增量清单）待 L1 执行。

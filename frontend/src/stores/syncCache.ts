@@ -6,10 +6,9 @@ import type { TaskDTO, WorkspaceDTO } from '../../bindings/packgradle/internal/t
 import { SyncService } from '../api'
 import { t } from '../i18n'
 import { errText } from '../utils/errors'
+import { PAGE_LIMIT } from '../utils/pageState'
 import { showSnackbar } from './ui'
 
-// 单轮分页上限：与后端 MaxPageLimit 对齐，分页循环拉满
-const PAGE_LIMIT = 200
 // 周期对账兜底（契约 04 §2.4 Q7）：仅窗口可见时执行，为缓存陈旧时间提供上界
 const RECONCILE_MS = 30_000
 

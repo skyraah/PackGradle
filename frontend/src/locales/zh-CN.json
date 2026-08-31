@@ -399,6 +399,7 @@
   "plans.frozen.expiredHint": "基于当前最新快照重新生成一份计划即可继续",
   "plans.rescan": "重新扫描并生成新计划",
   "plans.regenerate": "用当前快照重新生成",
+  "plans.appliedHint": "已按计划写入两侧文件，重新扫描并生成新计划即可继续同步",
   "plans.appliedTitle": "该计划已应用完成",
   "plans.applyAction": "应用同步",
   "plans.applyHint": "确认后将创建应用任务：按计划写入两侧文件，可离开本页，在任务中心追踪进度",

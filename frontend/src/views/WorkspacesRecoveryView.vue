@@ -17,6 +17,18 @@ import type { ApplyOperationDTO, ApplyRunDTO } from '../api'
 import { bootstrapped, tasks, triggerRequery, workspaces } from '../stores/syncCache'
 import { showSnackbar } from '../stores/ui'
 import { errorCode, errText } from '../utils/errors'
+import {
+    BAD,
+    BUSY,
+    formatTime,
+    NEUTRAL,
+    OK,
+    PAGE_LIMIT,
+    toneOf,
+    WARN,
+    type BadgeTone,
+    type QueryPhase,
+} from '../utils/pageState'
 import { canRescan } from '../utils/plans'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -30,12 +42,9 @@ const router = useRouter()
 const relationID = computed(() => String(route.params.id ?? ''))
 const runID = computed(() => String(route.params.run_id ?? ''))
 
-// 单页行数（与后端 MaxPageLimit 对齐）
-const PAGE_LIMIT = 200
-
 // —— 运行头查询快照 ——
 const run = ref<ApplyRunDTO | null>(null)
-const phase = ref<'loading' | 'error' | 'ready'>('loading')
+const phase = ref<QueryPhase>('loading')
 const inflight = ref(false)
 const errorMsg = ref('')
 // GetApplyRun 按关系返回最近一次运行：路由指向的 run_id 与其不符时为陈旧深链
@@ -67,7 +76,7 @@ async function loadRun(): Promise<void> {
 // —— 操作清单查询快照（独立于 run 头：失败不打断摘要区）——
 const ops = ref<ApplyOperationDTO[]>([])
 const opsNextCursor = ref('')
-const opsPhase = ref<'loading' | 'error' | 'ready'>('loading')
+const opsPhase = ref<QueryPhase>('loading')
 const opsInflight = ref(false)
 const opsErrorMsg = ref('')
 let opsSeq = 0
@@ -172,17 +181,7 @@ async function rescan(): Promise<void> {
     }
 }
 
-// —— 展示辅助 ——
-interface BadgeTone {
-    variant: 'default' | 'secondary' | 'destructive' | 'outline'
-    class?: string
-}
-const OK: BadgeTone = { variant: 'outline', class: 'text-emerald-600 dark:text-emerald-400' }
-const WARN: BadgeTone = { variant: 'outline', class: 'text-amber-600 dark:text-amber-400' }
-const NEUTRAL: BadgeTone = { variant: 'outline' }
-const BUSY: BadgeTone = { variant: 'secondary' }
-const BAD: BadgeTone = { variant: 'destructive' }
-
+// —— 展示辅助（色调/时间收敛于 utils/pageState）——
 const stateTones: Record<string, BadgeTone> = {
     prepared: BUSY,
     staged: BUSY,
@@ -199,16 +198,6 @@ const statusTones: Record<string, BadgeTone> = {
     verified: OK,
     failed: BAD,
     compensated: WARN,
-}
-
-function toneOf(map: Record<string, BadgeTone>, value: string): BadgeTone {
-    return map[value] ?? NEUTRAL
-}
-
-function formatTime(s?: string): string {
-    if (!s) return '—'
-    const at = Date.parse(s)
-    return Number.isNaN(at) ? s : new Date(at).toLocaleString()
 }
 
 const runFacts = computed(() => {

@@ -437,8 +437,8 @@ func (a *App) compensateOne(ctx context.Context, run model.ApplyRun, op model.Jo
 			marshalJSONRaw(map[string]string{"code": "recovery_compensated"}))
 	}
 
-	switch v.action {
-	case applyActionCreate:
+	switch actionChangeKind(v.action) {
+	case model.ChangeCreate:
 		// 删除本运行新建文件；补偿前重核归属证据（目标仍为 after 内容）。
 		if ref, err := syncstage.HashFile(v.targetAbs); err != nil || ref.Digest != op.AfterDigest {
 			return "target no longer at after digest"
@@ -446,7 +446,7 @@ func (a *App) compensateOne(ctx context.Context, run model.ApplyRun, op model.Jo
 		if err := os.Remove(v.targetAbs); err != nil {
 			return fmt.Sprintf("删除新建文件失败: %v", err)
 		}
-	case applyActionModify, applyActionDelete:
+	case model.ChangeModify, model.ChangeDelete:
 		// 以 CAS before 保全恢复旧内容；无引用（策略豁免保全，如 mod redownload）
 		// 则无恢复对象——保留现状（delete 的缺席本就是计划目标态）。
 		if casDigest == "" {

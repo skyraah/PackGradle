@@ -30,6 +30,22 @@ const (
 	applyActionDelete = "delete"
 )
 
+// actionChangeKind 把文件动作类别映射为提交变化类别（同一 create/modify/delete
+// 三分法一一对应；空串/未知动作返回空串）。verifyRescan 复扫判定、buildCommitChanges
+// 提交变化行与恢复补偿（recovery_probe）三处级联共享此映射，作为动作分支的唯一词汇表。
+func actionChangeKind(action string) model.ChangeKind {
+	switch action {
+	case applyActionCreate:
+		return model.ChangeCreate
+	case applyActionModify:
+		return model.ChangeModify
+	case applyActionDelete:
+		return model.ChangeDelete
+	default:
+		return ""
+	}
+}
+
 // 操作终局结果码（journal result_json 顶层 code；T06 ListApplyOperations
 // ResultCode 的数据源。引擎定义字符串，非 err.* 码，不经 locale）。
 const (
@@ -425,8 +441,8 @@ func verifyRescan(plan model.SyncPlan, plans []applyFilePlan, rescanP, rescanR m
 	snaps := map[model.Side]model.ObservedSnapshot{model.SideProject: rescanP, model.SideRuntime: rescanR}
 
 	for _, fp := range plans {
-		switch fp.action {
-		case applyActionCreate, applyActionModify:
+		switch actionChangeKind(fp.action) {
+		case model.ChangeCreate, model.ChangeModify:
 			pSem, err := sideSemantic(fp.op.ResourceID, repOf(rescanP, fp.op.ResourceID))
 			if err != nil {
 				return nil, 0, err
@@ -439,7 +455,7 @@ func verifyRescan(plan model.SyncPlan, plans []applyFilePlan, rescanP, rescanR m
 				violations = append(violations,
 					fmt.Sprintf("write %s: 复扫双侧语义不一致（project=%q runtime=%q）", fp.op.ResourceID, pSem, rSem))
 			}
-		case applyActionDelete:
+		case model.ChangeDelete:
 			if snapshotObs(snaps[fp.targetSide], fp.op.ResourceID) != nil {
 				violations = append(violations,
 					fmt.Sprintf("delete %s: 复扫目标侧 %s 仍存在", fp.op.ResourceID, fp.targetSide))

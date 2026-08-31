@@ -11,6 +11,15 @@ import { SyncService } from '../api'
 import type { CommitSummaryDTO } from '../api'
 import { bootstrapped, workspaces } from '../stores/syncCache'
 import { errText } from '../utils/errors'
+import {
+    completenessTone,
+    formatTime,
+    NEUTRAL,
+    PAGE_LIMIT,
+    resolvePageState,
+    type BadgeTone,
+    type QueryPhase,
+} from '../utils/pageState'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
@@ -22,14 +31,11 @@ const router = useRouter()
 
 const relationID = computed(() => String(route.params.id ?? ''))
 
-// 单页行数（与后端 MaxPageLimit 对齐）
-const PAGE_LIMIT = 200
-
 // —— 查询快照（旧数据在刷新失败时保留）——
 const items = ref<CommitSummaryDTO[]>([])
 const nextCursor = ref('')
 // 查询生命周期：phase 是互斥主状态；inflight 只在已有快照时投影为 refreshing
-const phase = ref<'loading' | 'error' | 'ready'>('loading')
+const phase = ref<QueryPhase>('loading')
 const inflight = ref(false)
 const errorMsg = ref('')
 
@@ -41,13 +47,7 @@ const relationMissing = computed(() => bootstrapped.value && !wsRow.value)
 // 页面不渲染内容（入口不渲染由 T11 的列表行承接）
 const gated = computed(() => wsRow.value !== undefined && wsRow.value?.features.history_view !== true)
 
-const pageState = computed<'loading' | 'error' | 'gate' | 'empty' | 'ready'>(() => {
-    if (phase.value === 'loading') return 'loading'
-    if (phase.value === 'error') return 'error'
-    if (gated.value) return 'gate'
-    if (!items.value.length) return 'empty'
-    return 'ready'
-})
+const pageState = computed(() => resolvePageState(phase.value, gated.value, items.value.length > 0))
 // 重查失败保留旧快照时的提示（成功后清空；契约 04 受控重查的失败语义）
 const refreshing = computed(() => inflight.value && items.value.length > 0)
 const refreshFailed = computed(() => phase.value === 'ready' && errorMsg.value !== '')
@@ -84,28 +84,11 @@ const loadMore = () => void queryPage(nextCursor.value)
 // 路由切换工作区 → 全量重查
 watch(relationID, reload, { immediate: true })
 
-// —— 展示辅助 ——
-interface BadgeTone {
-    variant: 'default' | 'secondary' | 'destructive' | 'outline'
-    class?: string
-}
-const OK: BadgeTone = { variant: 'outline', class: 'text-emerald-600 dark:text-emerald-400' }
-const WARN: BadgeTone = { variant: 'outline', class: 'text-amber-600 dark:text-amber-400' }
-const NEUTRAL: BadgeTone = { variant: 'outline' }
-
+// —— 展示辅助（色调/时间/相位状态机收敛于 utils/pageState）——
 const kindTones: Record<string, BadgeTone> = {
     initialize: NEUTRAL,
     sync: NEUTRAL,
     restore: NEUTRAL,
-}
-
-function completenessTone(c: string): BadgeTone {
-    return c === 'exact' ? OK : WARN
-}
-
-function formatTime(s: string): string {
-    const at = Date.parse(s)
-    return Number.isNaN(at) ? s : new Date(at).toLocaleString()
 }
 
 const cols = ['history.colTime', 'history.colKind', 'history.colCompleteness', 'history.colRemaining', 'history.colCommit']
