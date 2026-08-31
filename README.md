@@ -6,7 +6,7 @@
 
 ## 概览
 
-- 基于**packwiz**架构的*远端协作modpack项目*与*本地开发时实例*分体管理，便于您统一管理您的packwiz项目。
+- 基于**packwiz**架构的 远端协作modpack项目 与 本地开发时实例 分体管理，便于您统一管理您的packwiz项目。
 - 接管**prism launcher**基于`.index`与`*.pw.toml`的管理系统，由packwiz作为统一交付入口。
 
 ## 特性
