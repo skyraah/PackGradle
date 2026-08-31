@@ -1,0 +1,71 @@
+{
+  "schema": "p2-perf-baseline/1",
+  "ticket": "skyraah/PackGradle#44",
+  "spec": "docs/acceptance/p2-acceptance-spec.md §3",
+  "date": "2026-08-31",
+  "machine": {
+    "host": "Skye",
+    "os": "windows",
+    "arch": "amd64",
+    "go_version": "go1.26.5",
+    "cpus": 16
+  },
+  "fixture": {
+    "seed": 20260830,
+    "mods": 300,
+    "managed_files": 2700,
+    "note": "生成器 internal/perffixture + cmd/pgfixture；apply 操作数 2400（与 T09/T14 基线同构，task acceptance:perf 每轮重建 fixture 与数据目录）"
+  },
+  "procedure": "task acceptance:perf：go build pgheadless → rm -rf + 生成 fixture → rm -rf build/perf/data → 冷扫描（全新数据目录）→ 热扫描（同目录紧接二次）→ -apply 度量（第一遍 initialize 全量 copy 即冷 apply；-metrics p2-perf-run/1 分相计时 + 峰值内存增量）→ pgfixture -eval 五门槛。本票共 4 轮实跑：轮 1（修复前二进制）复现 T14 观察项——metrics-cold 的 scan_phases_ms 全 0 而 run_total_ms 真值（LastScanTiming 落账晚于任务终态的竞态），随票最小修复（计时先于成功终态写入 + 回归单测 TestScanTimingVisibleWhenNoActiveTasks）后轮 2-4 为修复后实测，全序列见 variance_note；本记录取修复后轮 4（末次沉降重测，扫描段回到安静量级）。",
+  "cold": {
+    "schema": "p2-perf-run/1",
+    "captured_at": "2026-08-31T02:19:48Z",
+    "scan_phases_ms": { "project_scan": 43, "runtime_scan": 2888, "normalize": 10, "persist": 20 },
+    "scan_total_ms": 2968,
+    "run_total_ms": 3092,
+    "hash_cache": { "hits": 0, "misses": 2700, "hit_ratio": 0 }
+  },
+  "warm": {
+    "schema": "p2-perf-run/1",
+    "captured_at": "2026-08-31T02:19:48Z",
+    "scan_phases_ms": { "project_scan": 41, "runtime_scan": 405, "normalize": 11, "persist": 33 },
+    "scan_total_ms": 498,
+    "run_total_ms": 617,
+    "hash_cache": { "hits": 2700, "misses": 0, "hit_ratio": 1 }
+  },
+  "apply": {
+    "schema": "p2-perf-run/1",
+    "captured_at": "2026-08-31T02:20:17Z",
+    "kind": "initialize",
+    "operation_count": 2400,
+    "phases_ms": { "staging": 11745, "applying": 7105, "verifying": 7183 },
+    "apply_total_ms": 27682,
+    "chain_total_ms": 27974,
+    "peak_memory_delta": {
+      "metric": "go_runtime_memstats_sys_peak_delta",
+      "baseline_bytes": 39325696,
+      "peak_bytes": 57102336,
+      "delta_bytes": 17776640,
+      "delta_mib": 17.0,
+      "peak_heap_inuse_bytes": 26124288,
+      "samples": 274,
+      "note": "runtime.ReadMemStats 按 GetTask 轮询间隔（~100ms）+ 终态补充采样；增量 = apply 段 Sys 峰值 − ConfirmPlan 前基线"
+    }
+  },
+  "thresholds": {
+    "cold_ms_max": 10000,
+    "warm_ms_max": 2000,
+    "warm_hit_ratio_min": 0.95,
+    "apply_ms_max": 30000,
+    "apply_peak_delta_mib_max": 256
+  },
+  "verdict": {
+    "cold_pass": true,
+    "warm_pass": true,
+    "warm_hit_ratio_pass": true,
+    "apply_peak_memory_pass": true,
+    "apply_time_pass": true,
+    "conclusion": "五门槛全过：冷扫描 2968ms ≤10s（与 T14 记录轮 2974ms 同量级）、热扫描 498ms ≤2s、热命中率 100% ≥95%、冷 apply 27682ms ≤30000ms、Apply 峰值内存增量 17.0MiB <256MiB。修复后三轮（29495/28060/27682ms）均过硬门槛，但未回到 T14 安静窗口（17672/22221ms，staging 6173ms）：本验收会话 perf 之前已连跑 headless -apply 两遍与 recovery 五轮（每轮重建 fixture、各产生数万新文件），Defender 实时扫描队列持续在途，纯新文件写路径（staging、冷扫描）被逐文件拦截垫高；applying 相各轮稳定 4.0-7.3s（T14 安静轮 7279ms 同量级）、verifying 7183ms 与 T14 安静轮 7111ms 一致，代码路径未回退，判定为环境方差，全序列与处置见 variance_note。"
+  },
+  "variance_note": "四轮全序列：轮 1（修复前二进制，LastScanTiming 竞态复现轮）冷扫描门槛空过（scan_phases_ms 全 0）不可用作达标证据，apply 14193ms（staging 6327ms——本会话最安静 staging，彼时 Defender 队列尚空）仅供对照；轮 2（修复后）冷 3943ms/热 516ms/apply 29495ms（staging 13712ms，7.7% 裕度）/峰值 17.2MiB；轮 3（沉降 ~6 分钟）冷 7234ms/热 469ms/apply 28060ms（staging 15011ms）/峰值 17.2MiB；轮 4（再沉降后，本记录）冷 2968ms/热 498ms/apply 27682ms（staging 11745ms、verifying 7183ms）/峰值 17.0MiB——冷扫描已回到 T14 量级（2974ms），staging 仍垫高（安静 6173ms）为残余队列。噪声归因沿 T14/P1 §2.3：每轮 perf 产生 ~2 万新文件（2400 暂存副本 + 2400 所有权证明 + 2400 目标 + 各自临时文件），Defender 实时扫描逐文件拦截 writeFileAtomic 的 create+close+rename（每文件 1-3ms 卷级串行税）；本会话前段还跑过 acceptance:headless（-apply 两遍）与 acceptance:recovery（五轮强杀 + 复跑，每轮重建 fixture），队列压力高于 T14 会话。处置沿 P1 §2.3（沉降重测）逐档执行至扫描段回落；Defender 排除目录需管理员权限未实施（T14 同注记）。判定：五门槛在全部修复后轮次均达标（最差 29495ms 仍 ≤30s），A 口径达标成立；安静窗口宽裕度结论以 T14 记录（同代码 17672ms、裕度 41%）为准。"
+}
