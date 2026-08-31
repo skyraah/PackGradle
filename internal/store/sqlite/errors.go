@@ -32,6 +32,13 @@ var (
 	ErrParentMismatch = ports.ErrParentMismatch
 	// ErrPlanNotFound 被引用的计划不存在（任务 plan_id 外键语义转换）。
 	ErrPlanNotFound = ports.ErrPlanNotFound
+	// ErrInvalidTransition 状态机不允许该迁移（apply_runs 六阶段 /
+	// operation_journal 六状态单调路径，ADR-0004 §2/§5）。
+	ErrInvalidTransition = ports.ErrInvalidTransition
+	// ErrConfirmationConsumed 确认令牌已被消费（ConfirmPlan 幂等重入口径由 application 决定）。
+	ErrConfirmationConsumed = ports.ErrConfirmationConsumed
+	// ErrConfirmationExpired 确认令牌已过期（引导重新 Resolve 计划）。
+	ErrConfirmationExpired = ports.ErrConfirmationExpired
 )
 
 // isUniqueViolation 判断是否 SQLite 唯一约束冲突。

@@ -9,9 +9,10 @@ import { useI18n } from 'vue-i18n'
 import { useRoute, useRouter } from 'vue-router'
 import { SyncService } from '../api'
 import type { ChangeDTO, ChangesSummaryDTO } from '../api'
-import { bootstrapped, tasks, workspaces } from '../stores/syncCache'
+import { bootstrapped, tasks, triggerRequery, workspaces } from '../stores/syncCache'
 import { showSnackbar } from '../stores/ui'
 import { errText } from '../utils/errors'
+import { PAGE_LIMIT } from '../utils/pageState'
 import { canPrepareSync, prepareSync } from '../utils/plans'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -25,8 +26,6 @@ const router = useRouter()
 
 const relationID = computed(() => String(route.params.id ?? ''))
 
-// 单页行数（与后端 MaxPageLimit 对齐）
-const PAGE_LIMIT = 200
 const PREFIX_DEBOUNCE_MS = 300
 
 // —— 查询快照（旧数据在刷新失败时保留）——
@@ -128,6 +127,9 @@ async function prepareSyncPlan(): Promise<void> {
     preparing.value = true
     try {
         const plan = await prepareSync(ws)
+        // PrepareSync 不发事件：补一轮受控重查，计划页才能拿到新鲜的
+        // apply_sync availability（否则停留在 none_ready 直到下次事件/对账）
+        triggerRequery()
         await router.push('/workspaces/' + relationID.value + '/plans/' + plan.plan_id)
     } catch (e) {
         showSnackbar(errText(e), 'error')

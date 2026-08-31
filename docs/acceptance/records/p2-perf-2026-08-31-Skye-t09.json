@@ -1,0 +1,73 @@
+{
+  "schema": "p2-perf-baseline/1",
+  "ticket": "skyraah/PackGradle#46",
+  "spec": "docs/acceptance/p2-acceptance-spec.md §3",
+  "date": "2026-08-31",
+  "machine": {
+    "host": "Skye",
+    "os": "windows",
+    "arch": "amd64",
+    "go_version": "go1.26.5",
+    "cpus": 16
+  },
+  "fixture": {
+    "seed": 20260830,
+    "mods": 300,
+    "managed_files": 2700,
+    "note": "生成器 internal/perffixture + cmd/pgfixture；apply 操作数 2400（2700 冲突 = 2400 text init_choice + 300 mod skip，P2 划线 mod 无下载器不可 copy 物化）；本票起 acceptance:perf 重建前 rm -rf fixture（apply 会改写 fixture 运行时侧，不重建则重跑变 adopt_equal 收敛态，T07 acceptance:headless 同款教训实跑复现）"
+  },
+  "procedure": "task acceptance:perf：go build pgheadless → rm -rf + 生成 fixture → rm -rf build/perf/data → 冷扫描（全新数据目录）→ 热扫描（同目录紧接二次）→ -apply 度量（第一遍 initialize 全量 copy 即冷 apply；-metrics p2-perf-run/1 含分相计时 + 峰值内存增量）→ pgfixture -eval 五门槛（本票 T09 验收轮，实跑两轮）",
+  "cold": {
+    "schema": "p2-perf-run/1",
+    "captured_at": "2026-08-31T00:35:17Z",
+    "scan_phases_ms": { "project_scan": 45, "runtime_scan": 5639, "normalize": 9, "persist": 27 },
+    "scan_total_ms": 5739,
+    "run_total_ms": 5842,
+    "hash_cache": { "hits": 0, "misses": 2700, "hit_ratio": 0 }
+  },
+  "warm": {
+    "schema": "p2-perf-run/1",
+    "captured_at": "2026-08-31T00:35:20Z",
+    "scan_phases_ms": { "project_scan": 38, "runtime_scan": 369, "normalize": 10, "persist": 28 },
+    "scan_total_ms": 472,
+    "run_total_ms": 640,
+    "hash_cache": { "hits": 2700, "misses": 0, "hit_ratio": 1 }
+  },
+  "apply": {
+    "schema": "p2-perf-run/1",
+    "captured_at": "2026-08-31T00:37:17Z",
+    "kind": "initialize",
+    "operation_count": 2400,
+    "phases_ms": { "staging": 26253, "applying": 81992, "verifying": 7825 },
+    "apply_total_ms": 117685,
+    "chain_total_ms": 118041,
+    "completeness": "partial",
+    "remaining_change_count": 300,
+    "peak_memory_delta": {
+      "metric": "go_runtime_memstats_sys_peak_delta",
+      "baseline_bytes": 40103936,
+      "peak_bytes": 54218752,
+      "delta_bytes": 14114816,
+      "delta_mib": 13.46,
+      "peak_heap_inuse_bytes": 28925952,
+      "samples": 1169,
+      "note": "runtime.ReadMemStats 按 GetTask 轮询间隔（~100ms）+ 终态补充采样；增量 = apply 段 Sys 峰值 − ConfirmPlan 前基线"
+    }
+  },
+  "thresholds": {
+    "cold_ms_max": 10000,
+    "warm_ms_max": 2000,
+    "warm_hit_ratio_min": 0.95,
+    "apply_ms_max": 30000,
+    "apply_peak_delta_mib_max": 256
+  },
+  "verdict": {
+    "cold_pass": true,
+    "warm_pass": true,
+    "warm_hit_ratio_pass": true,
+    "apply_peak_memory_pass": true,
+    "apply_time_pass": false,
+    "conclusion": "扫描三项 5739ms/472ms/100% 全过（与 P1 记录可比，不回退）、Apply 峰值内存增量 13.46MiB ≪ 256MiB 过；冷 apply 117685ms > 30000ms 门槛未过（首轮 86826ms，两轮均 3-4 倍超标）"
+  },
+  "variance_note": "冷扫描两轮 3065/5739ms 落 P1 既往区间（3137-8580ms），无 Defender 新增异常。冷 apply 分相（首轮 staging=20864ms/applying=57350ms/verifying=7008ms；次轮 26253/81992/7825ms）显示耗时由引擎逐操作耐久语义主导：SQLite synchronous(FULL)（open.go DSN，§8.3 事务提交即落盘）× 每操作 ~4 事务（journal running/applied + 任务推进等）+ writeFileAtomic 临时文件+fsync+rename × 每操作 1-2 次文件写（ADR-0004 崩溃安全铁律）+ staging 侧 StageContent 同款 fsync + Defender 实时扫描新文件放大方差（86.8→117.7s）。2,400 操作按 ~36-49ms/操作换算，与 T07 小 fixture 单操作实测（staging 8.25ms + applying 16.6ms/操作）同量级外推相符——非 harness 失真、非环境独变，属引擎耐久语义对 3,000 规模的固有成本。达标路径（引擎域，非 T09 范围）：逐操作事务批量化/组提交、synchronous 分级（WAL+NORMAL 的崩溃窗口语义需 ADR-0004 决策）或 fsync 合并，需独立性能票立项；门槛值是否随语义调整属验收规格（Q3）决策。"
+}

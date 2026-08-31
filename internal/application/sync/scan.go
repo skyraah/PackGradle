@@ -206,6 +206,12 @@ func (a *App) runScan(ctx context.Context, t model.Task, rel model.Relation, pro
 	t.Status = model.TaskStatusSucceeded
 	t.MessageKey = "msg.task.scan.succeeded"
 	t.Completed = scanPhases
+	// 先落分相计时再落成功终态（票 #44）：pgheadless waitScan 以「无活跃
+	// 任务」为扫描完成信号，若成功终态先于计时可见，消费方会在函数返回前
+	// 的 deferred recordScanTiming 执行前读到零值计时（-metrics scan_phases_ms
+	// 全 0 而 run_total_ms 为真值的竞态，T14 九轮两现、T12 验收轮复现）。
+	timing.TotalMs = time.Since(scanStart).Milliseconds()
+	a.recordScanTiming(timing)
 	if _, err := a.runner.Update(commitCtx, t); err != nil {
 		log.Printf("scan: 任务 %s 成功终态落库失败: %v", t.TaskID, err)
 		return

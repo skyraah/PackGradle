@@ -1,9 +1,13 @@
 <script setup lang="ts">
-// /workspaces/:id/plans/:plan_id：只读计划与冲突解决（契约 03 §2.6；UX 原型 §7.5）。
+// /workspaces/:id/plans/:plan_id：只读计划、冲突解决与应用同步（契约 03 §2.6、
+// 契约 05 §1/§5；UX 原型 §7.5）。
 // 计划数据为本页查询快照（GetPlan 读投影），工作区上下文（关系名/availability）
 // 读 stores/syncCache 投影，页面不做第二处取数。
-// 硬约束（验收规格 UX §15.1）：页面无 Apply/History/Restore 入口；计划内容不可编辑——
-// 冲突选择只用于 ResolvePlan 产生全新不可变计划，旧计划保持只读。
+// 硬约束（验收规格 UX §15.1）：计划内容不可编辑——冲突选择只用于 ResolvePlan 产生
+// 全新不可变计划，旧计划保持只读；History/Restore 入口不在本页（Phase 2/3 各归其页）。
+// 应用链路（T11 票 #43）：resolved 计划主操作「应用同步」由 apply_sync availability
+// 唯一门控（契约 05 §1，不可用显后端原因码）；ConfirmPlan 成功即长任务移交任务中心
+// （UX §7.9 可离开页面）；committed 后 GetPlan 投影 status=applied，主操作区收敛为重扫引导。
 import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useRoute, useRouter } from 'vue-router'
@@ -12,7 +16,13 @@ import type { ConflictDTO, SyncPlanDTO } from '../api'
 import { bootstrapped, tasks, triggerRequery, workspaces } from '../stores/syncCache'
 import { showSnackbar } from '../stores/ui'
 import { errText } from '../utils/errors'
-import { canPrepareSync, canRescan, prepareSync } from '../utils/plans'
+import {
+    availabilityReasonText,
+    canApplySync,
+    canPrepareSync,
+    canRescan,
+    prepareSync,
+} from '../utils/plans'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
@@ -66,6 +76,10 @@ const isStale = computed(() => plan.value?.status === 'stale')
 const isExpired = computed(() => plan.value?.status === 'expired')
 // 停用态：内容继续可读，但冲突决议与重新生成等推进控件全部隐藏（UX 原型 §7.5 Stale/expired）
 const frozen = computed(() => isStale.value || isExpired.value)
+// 已应用（committed 后 GetPlan 读取时投影，契约 05 §5）：不可重入（ConfirmPlan 返回
+// err.plan.apply_not_reentrant），主操作区收敛为重扫引导
+const isApplied = computed(() => plan.value?.status === 'applied')
+const retired = computed(() => frozen.value || isApplied.value)
 // 冲突决议只在 draft 且有冲突时开放；resolved 计划的选择为既成事实只读展示
 const canResolve = computed(
     () => plan.value?.status === 'draft' && (plan.value.conflicts?.length ?? 0) > 0,
@@ -103,6 +117,7 @@ const bidirectional = computed(() => writeRuntimeCount.value > 0 && writeProject
 const statusTones: Record<string, { variant: 'default' | 'secondary' | 'destructive' | 'outline'; class?: string }> = {
     draft: { variant: 'secondary' },
     resolved: { variant: 'outline', class: 'text-emerald-600 dark:text-emerald-400' },
+    applied: { variant: 'outline', class: 'text-emerald-600 dark:text-emerald-400' },
     stale: { variant: 'outline', class: 'text-amber-600 dark:text-amber-400' },
     expired: { variant: 'outline', class: 'text-amber-600 dark:text-amber-400' },
 }
@@ -150,6 +165,9 @@ async function submitResolutions(): Promise<void> {
         }))
         const next = await SyncService.ResolvePlan({ plan_id: plan.value.plan_id, resolutions })
         showSnackbar(t('plans.resolveSuccess'), 'success')
+        // PrepareSync/ResolvePlan 不发事件：补一轮受控重查，新计划页才能拿到新鲜的
+        // apply_sync availability（否则停留在 none_ready 直到下次事件/对账）
+        triggerRequery()
         // 全新不可变计划：导航到新 plan_id（路由参数变化触发整页重查，草稿不迁移）
         await router.replace('/workspaces/' + relationID.value + '/plans/' + next.plan_id)
     } catch (e) {
@@ -158,6 +176,21 @@ async function submitResolutions(): Promise<void> {
         resolving.value = false
     }
 }
+
+// 无冲突草稿自动推进（T13 B 口径走查发现修，票 #45）：纯 UI 流程中 0 冲突草稿
+// 没有决议入口（冲突决议控件仅 draft 且有冲突时开放），「应用同步」永远不可达。
+// 无冲突即无决议需要——自动提交空决议走既有 ResolvePlan 产生全新 resolved 计划
+// （router.replace 导航复用）；用户仍需显式点「应用同步」，计划不可编辑语义不变。
+watch(plan, p => {
+    if (
+        p?.status === 'draft' &&
+        (p.conflicts?.length ?? 0) === 0 &&
+        !frozen.value &&
+        !resolving.value
+    ) {
+        void submitResolutions()
+    }
+})
 
 // —— 停用态的推进动作（availability 唯一门控，逻辑收敛于 utils/plans）——
 // stale 主操作「重新扫描并生成新计划」（UX §7.5）：发起扫描后回列表页，扫描完成
@@ -171,6 +204,7 @@ async function regenerate(): Promise<void> {
     regenerating.value = true
     try {
         const next = await prepareSync(ws)
+        triggerRequery()
         await router.replace('/workspaces/' + relationID.value + '/plans/' + next.plan_id)
     } catch (e) {
         showSnackbar(errText(e), 'error')
@@ -193,6 +227,40 @@ async function rescan(): Promise<void> {
         rescanning.value = false
     }
 }
+
+// —— 应用同步（契约 05 §1/§5；UX 原型 §7.5 resolved plan 风险确认与 Apply）——
+// 主操作由 apply_sync availability 唯一门控；不可用时主操作区显后端原因码文案
+// （already_running/in_progress/incomplete/stale/expired/none_ready 各态均为后端推导）。
+// ConfirmPlan 直接创建 apply 任务（契约 05 §3.1，token 幂等重入在后端）：成功即长任务
+// 移交任务中心（UX §7.9 可离开页面），跳回工作区变化页继续追踪。
+const canApply = computed(() => canApplySync(wsRow.value))
+const applyReason = computed(() => availabilityReasonText(wsRow.value, 'apply_sync'))
+const applying = ref(false)
+
+async function applyPlan(): Promise<void> {
+    if (!plan.value || applying.value) return
+    applying.value = true
+    try {
+        await SyncService.ConfirmPlan({ plan_id: plan.value.plan_id })
+        showSnackbar(t('plans.applySuccess'), 'success')
+        triggerRequery()
+        await router.push('/workspaces/' + relationID.value + '/changes')
+    } catch (e) {
+        showSnackbar(errText(e), 'error')
+    } finally {
+        applying.value = false
+    }
+}
+
+// 活跃任务收敛（apply committed / 恢复收口）→ 重查一次计划快照：committed 后
+// GetPlan 投影 status=applied（契约 05 §5），主操作区随之收敛；relation_invalidated
+// （committed/恢复收口发射点，契约 05 §4）经既有受控重查管线刷新工作区投影，零新管线。
+watch(
+    () => wsRow.value?.state.active_task_id ?? '',
+    (now, prev) => {
+        if (prev && !now) void loadPlan()
+    },
+)
 </script>
 
 <template>
@@ -256,15 +324,18 @@ async function rescan(): Promise<void> {
             </Card>
 
             <template v-else-if="plan">
-                <!-- 停用态：内容继续可读，顶部说明具体原因，推进控件隐藏（UX 原型 §7.5） -->
-                <Card v-if="frozen">
+                <!-- 停用/已应用：内容继续可读，顶部说明具体原因（UX 原型 §7.5）。
+                     已应用主操作区收敛为重扫引导，沿停用态的既有次级操作 -->
+                <Card v-if="retired">
                     <CardContent class="flex flex-wrap items-center justify-between gap-3 py-4">
                         <span class="text-sm">
-                            <span class="text-amber-600 dark:text-amber-400">{{ t('plans.frozen.' + plan.status) }}</span>
-                            <span class="text-muted-foreground"> — {{ t(isStale ? 'plans.frozen.staleHint' : 'plans.frozen.expiredHint') }}</span>
+                            <span :class="isApplied ? 'text-emerald-600 dark:text-emerald-400' : 'text-amber-600 dark:text-amber-400'">
+                                {{ t(isApplied ? 'plans.appliedTitle' : 'plans.frozen.' + plan.status) }}
+                            </span>
+                            <span class="text-muted-foreground"> — {{ t(isApplied ? 'plans.appliedHint' : isStale ? 'plans.frozen.staleHint' : 'plans.frozen.expiredHint') }}</span>
                         </span>
                         <div class="flex flex-wrap gap-2">
-                            <!-- stale 主操作：重新扫描并生成新计划（发起扫描后回列表继续） -->
+                            <!-- 重扫引导：重新扫描并生成新计划（发起扫描后回列表继续） -->
                             <Button v-if="canRescan(wsRow)" size="sm" :disabled="rescanning" @click="rescan">
                                 {{ t('plans.rescan') }}
                             </Button>
@@ -426,6 +497,22 @@ async function rescan(): Promise<void> {
                         </CardContent>
                     </Card>
                 </template>
+
+                <!-- 应用同步主操作区（UX §7.5 固定确认区；风险与前置条件见对应页签）。
+                     apply_sync availability 唯一门控：可用显主按钮，不可用显后端原因码
+                     （err.recovery.in_progress / err.scan.* / err.plan.* 各态）；未注册不渲染。
+                     等工作区投影到位再渲染，避免引导完成前误显「不可用」 -->
+                <Card v-if="plan.status === 'resolved' && wsRow">
+                    <CardContent class="flex flex-wrap items-center justify-between gap-3 py-4">
+                        <span v-if="canApply" class="text-muted-foreground text-sm">{{ t('plans.applyHint') }}</span>
+                        <span v-else class="text-sm text-amber-600 dark:text-amber-400">
+                            {{ t('plans.applyUnavailable') }}<template v-if="applyReason">：{{ applyReason }}</template>
+                        </span>
+                        <Button v-if="canApply" size="sm" :disabled="applying" @click="applyPlan">
+                            {{ t('plans.applyAction') }}
+                        </Button>
+                    </CardContent>
+                </Card>
             </template>
         </template>
     </div>

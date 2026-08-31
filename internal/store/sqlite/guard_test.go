@@ -325,10 +325,12 @@ func TestMigrateV1ToV2EnforcesTaskReferences(t *testing.T) {
 	if err := NewTaskRepository(db).Insert(ctx, task); err != nil {
 		t.Fatalf("插入任务失败: %v", err)
 	}
-	// Phase 2 才会写 operation_journal，这里预置一行验证表重建不丢数据
+	// Phase 2 才会写 operation_journal，这里预置一行验证表重建不丢数据。
+	// status 取合法六状态值：v5 迁移重建该表时补 status CHECK，拷贝同样校验
+	// CHECK（票 #34），非法旧值会令迁移回滚。
 	if _, err := db.Exec(`INSERT INTO operation_journal
 		(task_id, operation_id, ordinal, status, target_relative_path, ownership_proof_json, operation_json)
-		VALUES('task_mv','op_1',0,'done','mods/x.jar','{}','{}')`); err != nil {
+		VALUES('task_mv','op_1',0,'pending','mods/x.jar','{}','{}')`); err != nil {
 		t.Fatalf("预置 journal 行失败: %v", err)
 	}
 

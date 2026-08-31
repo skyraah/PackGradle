@@ -135,4 +135,11 @@ export type {
     RepresentationDTO,
     ConflictDTO,
     DiagnosticDTO,
+    ApplyRunDTO,
+    ApplyOperationDTO,
+    ApplyOperationPageDTO,
+    CommitSummaryDTO,
+    CommitChangeDTO,
+    CommitDTO,
+    CommitPageDTO,
 } from '../../bindings/packgradle/internal/transport/models'

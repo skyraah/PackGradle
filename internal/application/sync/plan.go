@@ -169,6 +169,16 @@ func (a *App) GetPlan(ctx context.Context, planID string) (view.SyncPlanView, er
 
 func (a *App) planViewWithStatus(ctx context.Context, p model.SyncPlan, rel model.Relation) (view.SyncPlanView, error) {
 	effective := p.Status
+	if p.Status == model.PlanResolved {
+		// committed 后计划投影 status=applied（契约 05 §5）：读取时推导不写库。
+		// committed 是运行终态且 ConfirmPlan 拒绝已应用计划重入，最新运行即判定。
+		if run, found, err := a.deps.ApplyRuns.LatestByPlan(ctx, p.PlanID); err == nil && found &&
+			run.State == model.ApplyRunCommitted {
+			v := PlanView(p)
+			v.Status = string(model.PlanApplied)
+			return v, nil
+		}
+	}
 	if (p.Status == model.PlanDraft || p.Status == model.PlanResolved) && expired(p.ExpiresAt, a.deps.Now().UTC()) {
 		effective = model.PlanExpired
 	} else if p.Status == model.PlanDraft || p.Status == model.PlanResolved {

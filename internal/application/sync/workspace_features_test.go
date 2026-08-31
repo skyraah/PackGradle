@@ -6,20 +6,96 @@ import (
 	"packgradle/internal/core/model"
 )
 
-// p1Features 固定值（契约 03 §2.1 固定值表）。
-func TestP1FeaturesFixedValues(t *testing.T) {
-	f := p1Features()
+// workspaceFeatures 固定值（契约 03 §2.1 + 契约 05 §1 P2 固定值表）。
+func TestWorkspaceFeaturesFixedValues(t *testing.T) {
+	f := workspaceFeatures()
 	if !f.Scan || !f.SyncPreview || !f.ConflictInspection {
-		t.Errorf("P1 能力面 scan/sync_preview/conflict_inspection 应为 true: %+v", f)
+		t.Errorf("能力面 scan/sync_preview/conflict_inspection 应为 true: %+v", f)
 	}
-	if f.SyncApply || f.HistoryView || f.RestorePreview || f.RestoreApply {
-		t.Errorf("P1 未实现能力应为 false: %+v", f)
+	// P2 点亮（契约 05 §1）：sync_apply（ConfirmPlan/Apply 全链路）+ history_view
+	if !f.SyncApply || !f.HistoryView {
+		t.Errorf("P2 应点亮 sync_apply/history_view: %+v", f)
+	}
+	// restore 全家维持 false（Phase 3，硬约束 2）
+	if f.RestorePreview || f.RestoreApply {
+		t.Errorf("restore 能力应维持 false: %+v", f)
 	}
 	if f.ConflictResolution != "choose_side" {
 		t.Errorf("conflict_resolution 应为 choose_side，得到 %s", f.ConflictResolution)
 	}
-	if len(f.MaterializationModes) != 0 {
-		t.Errorf("materialization_modes 应为空数组（非 nil 语义由 transport 归一）: %v", f.MaterializationModes)
+	if len(f.MaterializationModes) != 1 || f.MaterializationModes[0] != "copy" {
+		t.Errorf("materialization_modes 应为 [\"copy\"]: %v", f.MaterializationModes)
+	}
+}
+
+// deriveApplySyncAvailability 按契约 05 §1 apply_sync 推导行逐支断言
+// （原因码优先级：already_running → in_progress → incomplete → expired/stale →
+// none_ready；票 #36）。
+func TestDeriveApplySyncAvailability(t *testing.T) {
+	recovery := string(model.HealthRecoveryRequired)
+
+	ready := planReadiness{hasResolved: true, hasApplicable: true}
+	expiredPlan := planReadiness{hasResolved: true, latestExpired: true}
+	stalePlan := planReadiness{hasResolved: true}
+	noPlan := planReadiness{}
+
+	cases := []struct {
+		name          string
+		health        string
+		scanState     string
+		hasActiveTask bool
+		plans         planReadiness
+		available     bool
+		reason        string
+	}{
+		{
+			name: "全条件满足且存在可应用计划 → available",
+			health: string(model.HealthHealthy), scanState: "ready", plans: ready,
+			available: true,
+		},
+		{
+			name: "活跃任务优先（推导表列序第一）",
+			health: string(model.HealthHealthy), scanState: "ready", hasActiveTask: true, plans: ready,
+			reason: "err.scan.already_running",
+		},
+		{
+			name: "恢复占用 → in_progress",
+			health: recovery, scanState: "ready", plans: ready,
+			reason: "err.recovery.in_progress",
+		},
+		{
+			name: "扫描未就绪 → incomplete",
+			health: string(model.HealthHealthy), scanState: "never_scanned", plans: ready,
+			reason: "err.scan.incomplete",
+		},
+		{
+			name: "无任何 resolved 计划 → none_ready（新码）",
+			health: string(model.HealthHealthy), scanState: "ready", plans: noPlan,
+			reason: "err.plan.none_ready",
+		},
+		{
+			name: "最新 resolved 计划已过期 → expired（既有码）",
+			health: string(model.HealthHealthy), scanState: "ready", plans: expiredPlan,
+			reason: "err.plan.expired",
+		},
+		{
+			name: "最新 resolved 计划 stale → stale（既有码）",
+			health: string(model.HealthHealthy), scanState: "ready", plans: stalePlan,
+			reason: "err.plan.stale",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := deriveApplySyncAvailability(tc.health, tc.scanState, tc.hasActiveTask, tc.plans)
+			if got.Action != "apply_sync" {
+				t.Fatalf("action = %s，期望 apply_sync", got.Action)
+			}
+			if got.Available != tc.available || got.ReasonCode != tc.reason {
+				t.Fatalf("available=%v reason=%q，期望 available=%v reason=%q",
+					got.Available, got.ReasonCode, tc.available, tc.reason)
+			}
+		})
 	}
 }
 

@@ -8,8 +8,16 @@
 // 不可裁决冲突（identity_ambiguous/mapping_collision）直接失败带证据。
 //
 // T14 性能基线：-metrics <file> 时输出分项 JSON（扫描四相耗时 + 本次扫描
-// hash cache 命中 delta，schema p1-perf-run/1），供 task acceptance:perf
-// 冷/热两轮采集与 pgfixture -eval 门槛评估。
+// hash cache 命中 delta），供 task acceptance:perf 冷/热两轮采集与
+// pgfixture -eval 门槛评估。
+//
+// T09（票 #46）apply 度量增量：记录形态升为 p2-perf-run/1——-apply 链路
+// 成功时追加 apply 段（staging/applying/verifying 分相 + apply 总耗时 +
+// 峰值内存增量，采样口径见 apply.go applyPeakMemory），机器规格四元组沿 P1。
+//
+// -apply（P2 A 口径主链路，票 #40）：-resolve 链路之后 ConfirmPlan → 轮询
+// GetTask 至终态 → committed/ListCommits/applied 断言链（实现在 apply.go；
+// Taskfile acceptance:headless 同目录两遍跑，第二遍 noop 收口）。
 package main
 
 import (
@@ -38,6 +46,7 @@ func main() {
 	dataRoot := flag.String("data", "", "用户数据目录（默认系统用户数据目录下 PackGradle）")
 	metricsPath := flag.String("metrics", "", "分项指标 JSON 输出路径（T14 性能基线，可选）")
 	resolve := flag.Bool("resolve", false, "PrepareSync 后执行 ResolvePlan → GetPlan（A 口径 headless 链路）")
+	apply := flag.Bool("apply", false, "ResolvePlan 后 ConfirmPlan → Apply → committed 断言链（P2 A 口径主链路）")
 	flag.Parse()
 	if *projectRoot == "" || *instanceDir == "" {
 		flag.Usage()
@@ -104,7 +113,15 @@ func main() {
 	fatalOn(err, "GetPlan")
 	dump("GetPlan", got)
 
-	if *resolve {
+	var applyStats *applyChainStats
+	if *apply {
+		stats, err := runApplyChain(ctx, app, rel, got)
+		if err != nil {
+			log.Fatalf("-apply 链路失败: %v", err)
+		}
+		applyStats = stats
+		fmt.Println("headless -apply 链路完成（ConfirmPlan → committed 断言全过）")
+	} else if *resolve {
 		resolved, err := app.ResolvePlan(ctx, view.ResolvePlanInput{
 			PlanID:      plan.PlanID,
 			Resolutions: defaultResolutions(plan.Conflicts),
@@ -120,8 +137,9 @@ func main() {
 	}
 
 	if *metricsPath != "" {
-		writeMetrics(*metricsPath, metricsRecord{
-			Schema:      "p1-perf-run/1",
+		rec := metricsRecord{
+			// T09：p1-perf-run/1 → p2-perf-run/1（-apply 时追加 apply 段）
+			Schema:      "p2-perf-run/1",
 			CapturedAt:  time.Now().UTC().Format(time.RFC3339),
 			ProjectRoot: projectAbs,
 			InstanceDir: instanceAbs,
@@ -141,7 +159,11 @@ func main() {
 				Misses:   after.Misses - before.Misses,
 				HitRatio: deltaRatio(after, before),
 			},
-		})
+		}
+		if applyStats != nil {
+			rec.Apply = applyStats
+		}
+		writeMetrics(*metricsPath, rec)
 	}
 }
 
@@ -224,7 +246,8 @@ func deltaRatio(after, before view.HashCacheStatsView) float64 {
 	return float64(hits) / float64(total)
 }
 
-// ---- metrics 记录形态（p1-perf-run/1；pgfixture -eval 读取 ScanTotalMS/HashCache）----
+// ---- metrics 记录形态（p2-perf-run/1；pgfixture -eval 读取 ScanTotalMS/
+// HashCache 与 apply 段。apply 段形态定义在 apply.go，-apply 链路产出）----
 
 type machineInfo struct {
 	Host      string `json:"host"`
@@ -248,16 +271,17 @@ type hashDelta struct {
 }
 
 type metricsRecord struct {
-	Schema       string       `json:"schema"`
-	CapturedAt   string       `json:"captured_at"`
-	ProjectRoot  string       `json:"project_root"`
-	InstanceDir  string       `json:"instance_dir"`
-	DataRoot     string       `json:"data_root"`
-	Machine      machineInfo  `json:"machine"`
-	ScanPhasesMS scanPhasesMS `json:"scan_phases_ms"`
-	ScanTotalMS  int64        `json:"scan_total_ms"`
-	RunTotalMS   int64        `json:"run_total_ms"`
-	HashCache    hashDelta    `json:"hash_cache"`
+	Schema       string           `json:"schema"`
+	CapturedAt   string           `json:"captured_at"`
+	ProjectRoot  string           `json:"project_root"`
+	InstanceDir  string           `json:"instance_dir"`
+	DataRoot     string           `json:"data_root"`
+	Machine      machineInfo      `json:"machine"`
+	ScanPhasesMS scanPhasesMS     `json:"scan_phases_ms"`
+	ScanTotalMS  int64            `json:"scan_total_ms"`
+	RunTotalMS   int64            `json:"run_total_ms"`
+	HashCache    hashDelta        `json:"hash_cache"`
+	Apply        *applyChainStats `json:"apply,omitempty"` // 仅 -apply 链路成功时非空
 }
 
 func writeMetrics(path string, rec metricsRecord) {

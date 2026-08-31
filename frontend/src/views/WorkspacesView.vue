@@ -11,7 +11,7 @@ import type { TaskDTO, WorkspaceDTO } from '../api'
 import { bootstrapped, bootstrapError, retryBootstrap, tasks, triggerRequery, workspaces } from '../stores/syncCache'
 import { showSnackbar } from '../stores/ui'
 import { errText } from '../utils/errors'
-import { canPrepareSync, canRebind, prepareSync } from '../utils/plans'
+import { availabilityReasonText, canPrepareSync, canRebind, prepareSync } from '../utils/plans'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
@@ -65,6 +65,9 @@ interface WorkspaceRow {
     canScan: boolean
     canPrepareSync: boolean
     canRebind: boolean
+    rebindReason: string
+    recoveryRequired: boolean
+    canHistory: boolean
     scanLabel: string
     healthTone: BadgeTone
     scanTone: BadgeTone
@@ -85,6 +88,14 @@ const rows = computed<WorkspaceRow[]>(() =>
             canScan: w.features.scan && w.availability?.some(a => a.action === 'scan' && a.available) === true,
             canPrepareSync: canPrepareSync(w),
             canRebind: canRebind(w),
+            // 已注册但不可用（如恢复门期间的 rebind）→ 保留稳定位置并显后端原因码
+            // （UX 原型 §4.3 主操作不可用语义；恢复门期间为 err.recovery.in_progress）
+            rebindReason: availabilityReasonText(w, 'rebind'),
+            recoveryRequired: w.relation.health === 'recovery_required',
+            // 历史入口（T13 B 口径走查发现补，票 #45）：history_view feature 唯一门控，
+            // 列表行承接 /workspaces/:id/history（T10 路由注释既定「入口在工作区列表行
+            // 操作由 T11 承接」而 T11 未落，历史页此前 UI 不可达）；空态由历史页自行呈现
+            canHistory: w.features.history_view === true,
             scanLabel: w.state.scan_state === 'failed' ? t('workspaces.scanRetryAction') : t('workspaces.scanAction'),
             healthTone: toneOf(healthTones, w.relation.health),
             scanTone: toneOf(scanTones, w.state.scan_state),
@@ -115,13 +126,13 @@ function lastActivity(w: WorkspaceDTO): string {
 
 // —— 行操作（动作成功后立即触发一轮受控重查；后续事件继续经管线刷新）——
 // withPending 统一防重入：同 id 动作进行中禁点，结束后释放
-const pending = ref({ scanning: new Set<string>(), cancelling: new Set<string>(), preparing: new Set<string>() })
+const pending = ref({ scanning: new Set<string>(), cancelling: new Set<string>(), preparing: new Set<string>(), recovering: new Set<string>() })
 
-function isPending(kind: 'scanning' | 'cancelling' | 'preparing', id: string): boolean {
+function isPending(kind: 'scanning' | 'cancelling' | 'preparing' | 'recovering', id: string): boolean {
     return pending.value[kind].has(id)
 }
 
-async function withPending(kind: 'scanning' | 'cancelling' | 'preparing', id: string, action: () => Promise<void>): Promise<void> {
+async function withPending(kind: 'scanning' | 'cancelling' | 'preparing' | 'recovering', id: string, action: () => Promise<void>): Promise<void> {
     if (isPending(kind, id)) return
     const next = new Set(pending.value[kind])
     next.add(id)
@@ -136,13 +147,33 @@ async function withPending(kind: 'scanning' | 'cancelling' | 'preparing', id: st
 }
 
 // 生成同步计划（T11 点亮的 prepare_sync 入口，availability 驱动）：
-// 用列表缓存的当前修订与最新双端快照直接发起，成功后进入计划页。
+// 用列表缓存的当前修订与最新双端快照直接发起，成功后进入计划页；
+// PrepareSync 不发事件，立即补一轮受控重查让计划页拿到新鲜 availability（apply_sync 门控）。
 function prepareSyncPlan(row: WorkspaceRow): void {
     const ws = row.workspace
     void withPending('preparing', ws.relation.relation_id, async () => {
         try {
             const plan = await prepareSync(ws)
+            triggerRequery()
             await router.push('/workspaces/' + ws.relation.relation_id + '/plans/' + plan.plan_id)
+        } catch (e) {
+            showSnackbar(errText(e), 'error')
+        }
+    })
+}
+
+// 处理恢复（契约 05 §5 列表行入口，与任务中心同款双入口）：导航恢复详情页
+// /workspaces/:id/recoveries/:run_id，run_id=task_id。任务中心缓存持有恢复任务
+// 时直接取其 task_id，否则 GetApplyRun 取最近运行（恢复门期间即恢复中的运行）。
+function openRecovery(row: WorkspaceRow): void {
+    const relID = row.workspace.relation.relation_id
+    void withPending('recovering', relID, async () => {
+        try {
+            const cached = [...tasks.value.values()].find(
+                k => k.relation_id === relID && k.status === 'recovery_required',
+            )
+            const runID = cached?.task_id ?? (await SyncService.GetApplyRun(relID)).task_id
+            await router.push('/workspaces/' + relID + '/recoveries/' + runID)
         } catch (e) {
             showSnackbar(errText(e), 'error')
         }
@@ -282,6 +313,17 @@ const cols: { key: string; alignRight?: boolean }[] = [
                                 <TableCell class="text-muted-foreground text-xs">{{ row.activity }}</TableCell>
                                 <TableCell>
                                     <div class="flex justify-end gap-2">
+                                        <!-- 处理恢复：恢复门期间的行内主上下文动作（UX 原型 §7.1
+                                             行操作优先级 1；契约 05 §5 双入口之列表行） -->
+                                        <Button
+                                            v-if="row.recoveryRequired"
+                                            size="xs"
+                                            variant="outline"
+                                            :disabled="isPending('recovering', row.workspace.relation.relation_id)"
+                                            @click="openRecovery(row)"
+                                        >
+                                            {{ t('workspaces.recoverAction') }}
+                                        </Button>
                                         <!-- 受管范围入口：映射策略查看/编辑（policy 随关系恒存在） -->
                                         <Button
                                             size="xs"
@@ -309,10 +351,32 @@ const cols: { key: string; alignRight?: boolean }[] = [
                                         >
                                             {{ t('workspaces.planAction') }}
                                         </Button>
-                                        <!-- 重新绑定入口：availability 驱动（T12 重绑页承接；
-                                             健康态不阻止——路径迁移是合法的主动操作） -->
+                                        <!-- 同步历史入口：history_view feature 门控（T13 补，票 #45；
+                                             T10 路由注释既定入口在本处而 T11 未落） -->
                                         <Button
-                                            v-if="row.canRebind"
+                                            v-if="row.canHistory"
+                                            size="xs"
+                                            variant="outline"
+                                            @click="router.push('/workspaces/' + row.workspace.relation.relation_id + '/history')"
+                                        >
+                                            {{ t('workspaces.historyAction') }}
+                                        </Button>
+                                        <!-- 重新绑定入口：availability 驱动（T12 重绑页承接；
+                                             健康态不阻止——路径迁移是合法的主动操作）。
+                                             恢复门期间不可用（err.recovery.in_progress）→
+                                             保留位置禁点并以 tooltip 显后端原因码（UX §4.3）；
+                                             其余不可用态沿既有语义直接隐藏（P1 行为不回退） -->
+                                        <Button
+                                            v-if="row.recoveryRequired && row.rebindReason"
+                                            size="xs"
+                                            variant="outline"
+                                            disabled
+                                            :title="row.rebindReason"
+                                        >
+                                            {{ t('workspaces.rebindAction') }}
+                                        </Button>
+                                        <Button
+                                            v-else-if="row.canRebind"
                                             size="xs"
                                             variant="outline"
                                             @click="router.push('/workspaces/' + row.workspace.relation.relation_id + '/rebind')"

@@ -2,7 +2,8 @@
 // 任务中心抽屉（shadcn-vue Sheet；UX 原型 §5.3）：后端任务投影。
 // 数据全部来自 stores/syncCache（查询 API 的投影）：ListTasks(active) 缓存 +
 // task_updated 事件经 GetTask 重读；这里不做第二处数据获取、不订阅事件。
-// 顶部徽标 = 活跃任务数；条目内联取消与「查看工作区」上下文动作。
+// 顶部徽标 = 活跃任务数；条目内联取消与「查看工作区」上下文动作；
+// recovery_required 任务带「处理恢复」动作（导航恢复详情页，契约 05 §5）。
 import { computed, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useRouter } from 'vue-router'
@@ -48,6 +49,13 @@ function kindLabel(task: TaskDTO): string {
 
 function statusLabel(status: string): string {
     return t('tasks.status.' + status)
+}
+
+// 导航前收起抽屉（T13 B 口径走查发现修，票 #45）：处理恢复/查看计划/查看工作区
+// 都是跨页动作，Sheet 遮罩不收起会盖在目标页上
+function goTo(target: string): void {
+    open.value = false
+    void router.push(target)
 }
 
 // 状态徽标：ok=绿 / 进行中=secondary / 需注意=琥珀 / 异常=destructive（与工作区列表同画板）
@@ -174,15 +182,25 @@ async function cancelTask(task: TaskDTO): Promise<void> {
                         </div>
                         <div v-if="task.outcome" class="text-faint mt-1 text-xs">{{ task.outcome }}</div>
                         <div v-if="task.relation_id" class="mt-2 flex justify-end gap-2">
+                            <!-- 处理恢复（契约 05 §5 任务中心入口，T16 deferred 收口）：
+                                 恢复详情页 run_id=task_id（apply_runs 主键） -->
+                            <Button
+                                v-if="task.status === 'recovery_required'"
+                                size="xs"
+                                variant="outline"
+                                @click="goTo('/workspaces/' + task.relation_id + '/recoveries/' + task.task_id)"
+                            >
+                                {{ t('tasks.recoverAction') }}
+                            </Button>
                             <Button
                                 v-if="task.plan_id"
                                 size="xs"
                                 variant="outline"
-                                @click="router.push('/workspaces/' + task.relation_id + '/plans/' + task.plan_id)"
+                                @click="goTo('/workspaces/' + task.relation_id + '/plans/' + task.plan_id)"
                             >
                                 {{ t('tasks.viewPlan') }}
                             </Button>
-                            <Button size="xs" variant="outline" @click="router.push('/workspaces/' + task.relation_id + '/changes')">
+                            <Button size="xs" variant="outline" @click="goTo('/workspaces/' + task.relation_id + '/changes')">
                                 {{ t('tasks.viewWorkspace') }}
                             </Button>
                         </div>

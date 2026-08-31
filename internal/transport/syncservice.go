@@ -10,8 +10,9 @@ import (
 	"packgradle/internal/core/model"
 )
 
-// SyncService 是新架构 P1 只读核心的 Wails 出口（与 legacy 三服务并存注册）。
-// 不暴露 Apply/ConfirmPlan/Restore（Phase 2/3 能力，未实现即不出现在产品操作面）。
+// SyncService 是 relation 域用例的 Wails 出口（与 legacy 三服务并存注册）。
+// 写路径（ConfirmPlan/Apply 执行/Restore）按 Phase 2 票面逐票点亮；读投影
+// （Apply 运行头/逐操作/历史提交）自票 #39 起挂载。
 type SyncService struct {
 	app syncapp.Application
 }
@@ -249,4 +250,72 @@ func (s *SyncService) ApplyRebind(preparationID string) (RelationDTO, error) {
 
 func pageRequest(cursor string, limit int) ports.PageRequest {
 	return ports.PageRequest{Cursor: cursor, Limit: limit}
+}
+
+// ---- Phase 2 Apply（契约 05；票 #36）----
+
+// ConfirmPlan 确认 resolved 计划并创建 Apply 任务（契约 05 §3.1）。
+// 幂等重入（D4）返回既有任务；任务此刻无 runner（T04），保持 queued。
+func (s *SyncService) ConfirmPlan(input ConfirmPlanDTO) (TaskDTO, error) {
+	v, err := s.app.ConfirmPlan(context.Background(), view.ConfirmPlanInput{PlanID: input.PlanID})
+	if err != nil {
+		return TaskDTO{}, err
+	}
+	return taskDTO(v), nil
+}
+
+// GetApplyRun 返回该工作区当前/最近一次 Apply 运行头投影（契约 05 §3.2；票 #39）。
+// 关系无任何运行记录 → err.apply.no_run。
+func (s *SyncService) GetApplyRun(relationID string) (ApplyRunDTO, error) {
+	v, err := s.app.GetApplyRun(context.Background(), relationID)
+	if err != nil {
+		return ApplyRunDTO{}, err
+	}
+	return applyRunDTO(v), nil
+}
+
+// ListApplyOperations 逐操作清单分页（契约 05 §3.3；票 #39）：ordinal 升序，
+// cursor 为上一页末条 operation_id（GetChanges 同协议）；task 不存在或跨关系
+// → err.apply.run_not_found。DTO 为白名单投影，绝不含临时路径与 ownership proof
+// （契约 05 §0 硬约束 4）。
+func (s *SyncService) ListApplyOperations(relationID, taskID, cursor string, limit int) (ApplyOperationPageDTO, error) {
+	v, err := s.app.ListApplyOperations(context.Background(), view.ListApplyOperationsInput{
+		RelationID: relationID, TaskID: taskID, Cursor: cursor, Limit: limit,
+	})
+	if err != nil {
+		return ApplyOperationPageDTO{}, err
+	}
+	return applyOperationPageDTO(v), nil
+}
+
+// ListCommits 历史提交列表，created_at DESC 分页（契约 05 §3.5；票 #39）；
+// cursor 为上一页末条 commit_id。
+func (s *SyncService) ListCommits(relationID, cursor string, limit int) (CommitPageDTO, error) {
+	v, err := s.app.ListCommits(context.Background(), relationID, pageRequest(cursor, limit))
+	if err != nil {
+		return CommitPageDTO{}, err
+	}
+	return commitPageDTO(v), nil
+}
+
+// GetCommit 单提交详情，changes 全量（契约 05 §3.5；票 #39）；
+// 记录不存在或跨关系 → err.commit.not_found。
+func (s *SyncService) GetCommit(relationID, commitID string) (CommitDTO, error) {
+	v, err := s.app.GetCommit(context.Background(), relationID, commitID)
+	if err != nil {
+		return CommitDTO{}, err
+	}
+	return commitDTO(v), nil
+}
+
+// AcknowledgeRecovery 人工确认恢复收口（契约 05 §3.4；票 #38）：前置
+// run=recovery_required（否则 err.recovery.not_required），效果 acknowledged_at
+// 落库 + 关系复位 healthy（头基线不动、不建 SyncCommit），发布
+// relation_invalidated 引导重扫；返回确认后的工作区投影。已确认重入幂等返回。
+func (s *SyncService) AcknowledgeRecovery(taskID string) (WorkspaceDTO, error) {
+	v, err := s.app.AcknowledgeRecovery(context.Background(), taskID)
+	if err != nil {
+		return WorkspaceDTO{}, err
+	}
+	return workspaceDTO(v), nil
 }

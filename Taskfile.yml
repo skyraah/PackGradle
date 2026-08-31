@@ -80,31 +80,59 @@ tasks:
     cmds:
       - go test -race ./...
 
-  # A 口径 headless 链路验收（验收规格 §1.1；票 #25）：小规模确定性 fixture +
-  # 全新用户数据目录跑 Register → Scan → Snapshot → PrepareSync → ResolvePlan
-  # → GetPlan 全链路（-resolve）；第二遍同目录重跑验证可重复执行（复用
-  # Relation 路径）。任一步失败退出码非 0。
+  # A 口径 headless 链路验收（验收规格 §1.1；票 #25/#40）：小规模确定性
+  # fixture + 全新用户数据目录跑 Register → Scan → Snapshot → PrepareSync
+  # → ResolvePlan → GetPlan 全链路（-resolve，P1 链路回归不回退）；
+  # -apply 扩展（票 #40）：ConfirmPlan → Apply 跑完 → 断言 GetApplyRun
+  # committed、ListCommits 含新记录、计划投影 applied、收口后 diff 归零。
+  # 同一数据目录两遍 -apply：第一遍 initialize 全量收口 committed，第二遍
+  # 复用 Relation 重扫重 apply（noop 收口且数据不变）。任一步失败退出码非 0。
   acceptance:headless:
-    summary: Runs the pgheadless full chain (Register → Scan → Snapshot → PrepareSync → ResolvePlan → GetPlan) on a fresh data dir, twice (acceptance L0)
+    summary: Runs the pgheadless chain on a fresh data dir - a -resolve regression pass, then -apply twice on the same data dir (initialize committed + noop re-apply) (acceptance L0)
     cmds:
       - go build -o bin/pgheadless.exe ./cmd/pgheadless
+      - rm -rf build/headless/fixture
       - go run ./cmd/pgfixture -out build/headless/fixture -mods 6 -text-files 12
       - rm -rf build/headless/data
       - bin/pgheadless.exe -project build/headless/fixture/project -instance build/headless/fixture/instance -data build/headless/data -resolve
       - bin/pgheadless.exe -project build/headless/fixture/project -instance build/headless/fixture/instance -data build/headless/data -resolve
+      - bin/pgheadless.exe -project build/headless/fixture/project -instance build/headless/fixture/instance -data build/headless/data -apply
+      - bin/pgheadless.exe -project build/headless/fixture/project -instance build/headless/fixture/instance -data build/headless/data -apply
 
-  # 性能基线（验收规格 §2；票 #24）：3,000 资源确定性 fixture（产物入 build/perf，
-  # 不入 git）→ 冷扫描（全新数据目录）→ 热扫描（同目录紧接二次）→ 门槛评估
-  #（冷 ≤10s / 热 ≤2s / 热命中率 ≥95%，任一超标退出码 1）。
+  # 性能基线（验收规格 §2 沿用 + P2 §3 增量；票 #24/#46）：3,000 资源确定性
+  # fixture（产物入 build/perf，不入 git）→ 冷扫描（全新数据目录）→ 热扫描
+  #（同目录紧接二次）→ -apply 度量（第一遍 initialize 全量 copy 即冷 apply，
+  # -metrics 记分相计时 + 峰值内存增量）→ 门槛评估（冷 ≤10s / 热 ≤2s / 热命中
+  # 率 ≥95% / 冷 apply ≤30s / Apply 峰值内存增量 <256MiB，任一超标退出码 1）。
+  # fixture 重建前 rm -rf（T07 acceptance:headless 先例）：apply 会把 copy 落盘
+  # 改写 fixture 运行时侧，不重建则重跑冷扫描/冷 apply 变 adopt_equal 收敛态。
   acceptance:perf:
-    summary: Generates the 3,000-resource fixture and runs pgheadless cold/warm scans with -metrics (acceptance L0)
+    summary: Generates the 3,000-resource fixture and runs pgheadless cold/warm scans + apply with -metrics, then evaluates the five perf gates (acceptance L0)
     cmds:
       - go build -o bin/pgheadless.exe ./cmd/pgheadless
+      - rm -rf build/perf/fixture
       - go run ./cmd/pgfixture -out build/perf/fixture
       - rm -rf build/perf/data
       - bin/pgheadless.exe -project build/perf/fixture/project -instance build/perf/fixture/instance -data build/perf/data -metrics build/perf/metrics-cold.json
       - bin/pgheadless.exe -project build/perf/fixture/project -instance build/perf/fixture/instance -data build/perf/data -metrics build/perf/metrics-warm.json
-      - go run ./cmd/pgfixture -eval build/perf/metrics-cold.json,build/perf/metrics-warm.json
+      - bin/pgheadless.exe -project build/perf/fixture/project -instance build/perf/fixture/instance -data build/perf/data -apply -metrics build/perf/metrics-apply.json
+      - go run ./cmd/pgfixture -eval build/perf/metrics-cold.json,build/perf/metrics-warm.json,build/perf/metrics-apply.json
+
+  # 恢复强杀注入（验收规格 §2.1/§2.4；票 #41）：acceptance:recovery 注入
+  # harness——每轮全新 fixture + 全新数据目录起 pgheadless -apply 子进程，按
+  # 种子调度的目标相位（staging/applying/verifying 五轮全覆盖）标记出现后随机
+  # 延迟 taskkill /F 真强杀 → 重启走恢复管线（bootstrap.Build 启动恢复）→
+  # 四不变式逐轮断言（终局口径/diff 归零/apply 门禁与复跑/重复恢复幂等，任一
+  # 违反非零退出）；recovery_required 轮以 AcknowledgeRecovery 收口（§2.4 授权
+  # 的唯一 L0 人工路径自动化）后复跑 -apply。逐轮记录 JSON 落
+  # docs/acceptance/records/p2-recovery-<date>-<host>.json。
+  acceptance:recovery:
+    summary: Force-kills pgheadless -apply subprocesses at seeded random moments across 5 rounds, restarts the recovery pipeline, asserts the four recovery invariants per round (acceptance L0)
+    cmds:
+      - go build -o bin/pgheadless.exe ./cmd/pgheadless
+      - go build -o bin/pgrecovery.exe ./cmd/pgrecovery
+      - rm -rf build/recovery
+      - bin/pgrecovery.exe
 
   # B 口径前端构建门槛（验收规格 §1.1）：vue-tsc 类型检查 + Vite 生产构建
   #（package.json `build` = `vue-tsc && vite build --mode production`）。

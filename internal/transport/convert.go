@@ -317,3 +317,61 @@ func planDTO(v view.SyncPlanView) SyncPlanDTO {
 		},
 	}
 }
+
+// ---- Apply 运行与历史读投影转换（契约 05 §3；票 #39）----
+
+func applyRunDTO(v view.ApplyRunView) ApplyRunDTO {
+	return ApplyRunDTO{
+		SchemaVersion: v.SchemaVersion, TaskID: v.TaskID, RelationID: v.RelationID,
+		PlanID: v.PlanID, PlanDigest: v.PlanDigest, State: v.State,
+		OperationCount: v.OperationCount, StagingCleared: v.StagingCleared,
+		AcknowledgedAt: v.AcknowledgedAt, CommitID: v.CommitID,
+		CreatedAt: v.CreatedAt, UpdatedAt: v.UpdatedAt,
+	}
+}
+
+func applyOperationDTO(v view.ApplyOperationView) ApplyOperationDTO {
+	return ApplyOperationDTO{
+		OperationID: v.OperationID, Ordinal: v.Ordinal, Status: v.Status,
+		ResourceID: v.ResourceID, RelativePath: v.RelativePath,
+		ChangeKind: v.ChangeKind, ResultCode: v.ResultCode,
+	}
+}
+
+func applyOperationPageDTO(v view.ApplyOperationPage) ApplyOperationPageDTO {
+	items := make([]ApplyOperationDTO, 0, len(v.Items))
+	for _, op := range v.Items {
+		items = append(items, applyOperationDTO(op))
+	}
+	return ApplyOperationPageDTO{SchemaVersion: v.SchemaVersion, Items: items, NextCursor: v.NextCursor}
+}
+
+func commitSummaryDTO(v view.CommitSummaryView) CommitSummaryDTO {
+	return CommitSummaryDTO{
+		CommitID: v.CommitID, Kind: v.Kind, Completeness: v.Completeness,
+		RemainingChangeCnt: v.RemainingChangeCnt, CreatedAt: v.CreatedAt,
+	}
+}
+
+func commitDTO(v view.CommitView) CommitDTO {
+	changes := make([]CommitChangeDTO, 0, len(v.Changes))
+	for _, ch := range v.Changes {
+		changes = append(changes, CommitChangeDTO{
+			ResourceID: ch.ResourceID, ChangeKind: ch.ChangeKind,
+			ProjectBefore: ch.ProjectBefore, ProjectAfter: ch.ProjectAfter,
+			RuntimeBefore: ch.RuntimeBefore, RuntimeAfter: ch.RuntimeAfter,
+		})
+	}
+	return CommitDTO{
+		SchemaVersion: v.SchemaVersion, Summary: commitSummaryDTO(v.Summary),
+		PlanID: v.PlanID, Changes: changes,
+	}
+}
+
+func commitPageDTO(v view.CommitPage) CommitPageDTO {
+	items := make([]CommitSummaryDTO, 0, len(v.Items))
+	for _, c := range v.Items {
+		items = append(items, commitSummaryDTO(c))
+	}
+	return CommitPageDTO{SchemaVersion: v.SchemaVersion, Items: items, NextCursor: v.NextCursor}
+}

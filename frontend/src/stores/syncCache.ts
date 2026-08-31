@@ -6,10 +6,9 @@ import type { TaskDTO, WorkspaceDTO } from '../../bindings/packgradle/internal/t
 import { SyncService } from '../api'
 import { t } from '../i18n'
 import { errText } from '../utils/errors'
+import { PAGE_LIMIT } from '../utils/pageState'
 import { showSnackbar } from './ui'
 
-// 单轮分页上限：与后端 MaxPageLimit 对齐，分页循环拉满
-const PAGE_LIMIT = 200
 // 周期对账兜底（契约 04 §2.4 Q7）：仅窗口可见时执行，为缓存陈旧时间提供上界
 const RECONCILE_MS = 30_000
 
@@ -110,9 +109,42 @@ async function queryAndCommit(dirtyIDs: string[]): Promise<void> {
         for (const task of list) nextTasks.set(task.task_id, task)
     }
     // GetTask 重读结果只在任务仍活跃时入缓存（终态由下一轮 ListTasks(active) 自然收敛）；
-    // 重读失败不阻塞本轮，记录诊断后等下一次事件/对账重试
+    // 唯一例外 recovery_required：终态但仍是任务中心的注意面（「处理恢复」动作挂载点，
+    // 契约 05 §5），重读放行入缓存；重读失败不阻塞本轮，记录诊断后等下一次事件/对账重试
     for (const task of rereads) {
-        if (task && !TASK_TERMINAL_STATUSES.has(task.status)) nextTasks.set(task.task_id, task)
+        if (task && (task.status === 'recovery_required' || !TASK_TERMINAL_STATUSES.has(task.status))) {
+            nextTasks.set(task.task_id, task)
+        }
+    }
+    // recovery_required 任务已离开活跃列表，按轮重建会把它丢掉：关系处于恢复门期间
+    // 从上轮缓存保留（任务终态后状态不再变化，关系投影是唯一收敛信号——acknowledge
+    // 或 probe 收口发布 relation_invalidated，health 离开 recovery_required 后下一轮自然剔除）
+    const recoveryRelations = new Set(
+        wss.filter(w => w.relation.health === 'recovery_required').map(w => w.relation.relation_id),
+    )
+    for (const prev of tasks.value.values()) {
+        if (prev.status === 'recovery_required' && prev.relation_id && recoveryRelations.has(prev.relation_id)) {
+            nextTasks.set(prev.task_id, prev)
+        }
+    }
+    // 冷启动发现（T13 B 口径走查发现补，票 #45）：应用重启后上轮缓存不存在，
+    // 恢复门内的恢复任务既不在活跃列表也无从保留——任务中心「处理恢复」入口断链。
+    // 以查询 API 为事实源（契约 05 §5）：GetApplyRun 最近运行 → GetTask 重读，
+    // 经上方 recovery_required 例外放行入缓存；失败不阻塞本轮，等对账重试。
+    for (const w of wss) {
+        if (w.relation.health !== 'recovery_required') continue
+        const known = [...nextTasks.values()].some(
+            t => t.relation_id === w.relation.relation_id && t.status === 'recovery_required',
+        )
+        if (known) continue
+        try {
+            const run = await SyncService.GetApplyRun(w.relation.relation_id)
+            if (!run?.task_id) continue
+            const t = await SyncService.GetTask(run.task_id)
+            if (t && t.status === 'recovery_required') nextTasks.set(t.task_id, t)
+        } catch (e) {
+            console.warn('[syncCache] 恢复任务发现失败', w.relation.relation_id, e)
+        }
     }
 
     workspaces.value = wss

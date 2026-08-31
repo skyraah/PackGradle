@@ -151,6 +151,21 @@ func (r *RelationRepository) UpdateHeadBaseline(ctx context.Context, id, baselin
 	return nil
 }
 
+// UpdateHeadCommit 设置/清除（空串）关系头提交引用（Phase 2 Apply committed 收口
+// 写，redesign §6.6 步骤 5；schema_v1 冻结列无 FK，悬挂引用由调用方在同一事务内
+// 先写 sync_commits 保证——§8.3 Repository 契约）。关系不存在返回 ErrNotFound。
+func (r *RelationRepository) UpdateHeadCommit(ctx context.Context, id, commitID string) error {
+	res, err := r.db.ExecContext(ctx,
+		"UPDATE relations SET head_commit_id=? WHERE id=?", nullString(commitID), id)
+	if err != nil {
+		return fmt.Errorf("sqlite: 更新 Relation %s 提交引用: %w", id, err)
+	}
+	if n, err := res.RowsAffected(); err == nil && n == 0 {
+		return fmt.Errorf("sqlite: 更新 Relation %s 提交引用: %w", id, ErrNotFound)
+	}
+	return nil
+}
+
 // PairExists 判断 project/runtime 配对是否已存在关系。
 func (r *RelationRepository) PairExists(ctx context.Context, projectID, runtimeID string) (bool, error) {
 	var exists bool
