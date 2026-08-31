@@ -110,9 +110,23 @@ async function queryAndCommit(dirtyIDs: string[]): Promise<void> {
         for (const task of list) nextTasks.set(task.task_id, task)
     }
     // GetTask 重读结果只在任务仍活跃时入缓存（终态由下一轮 ListTasks(active) 自然收敛）；
-    // 重读失败不阻塞本轮，记录诊断后等下一次事件/对账重试
+    // 唯一例外 recovery_required：终态但仍是任务中心的注意面（「处理恢复」动作挂载点，
+    // 契约 05 §5），重读放行入缓存；重读失败不阻塞本轮，记录诊断后等下一次事件/对账重试
     for (const task of rereads) {
-        if (task && !TASK_TERMINAL_STATUSES.has(task.status)) nextTasks.set(task.task_id, task)
+        if (task && (task.status === 'recovery_required' || !TASK_TERMINAL_STATUSES.has(task.status))) {
+            nextTasks.set(task.task_id, task)
+        }
+    }
+    // recovery_required 任务已离开活跃列表，按轮重建会把它丢掉：关系处于恢复门期间
+    // 从上轮缓存保留（任务终态后状态不再变化，关系投影是唯一收敛信号——acknowledge
+    // 或 probe 收口发布 relation_invalidated，health 离开 recovery_required 后下一轮自然剔除）
+    const recoveryRelations = new Set(
+        wss.filter(w => w.relation.health === 'recovery_required').map(w => w.relation.relation_id),
+    )
+    for (const prev of tasks.value.values()) {
+        if (prev.status === 'recovery_required' && prev.relation_id && recoveryRelations.has(prev.relation_id)) {
+            nextTasks.set(prev.task_id, prev)
+        }
     }
 
     workspaces.value = wss
