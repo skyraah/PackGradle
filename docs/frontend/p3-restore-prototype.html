@@ -1,0 +1,1042 @@
+<!DOCTYPE html>
+<!-- ============================================================================
+PackGradle P3 回滚面 UX 原型（抛弃式 · Round P3）
+--------------------------------------------------------------------------------
+回答的问题：契约 06 决议已定（三方法 / 独立 RestorePlanDTO / CF 探测内嵌 /
+StageUserObject 补全），回滚面落到屏幕上是什么样？四标记 + 可用性说明 +
+用户对象补全交互，哪种信息结构成立？
+
+按 workspace-ux-prototype.html 头注约定开副本，不改原文件。
+壳层 / 组件 / 画板机制 / 主题令牌全部沿用该文件（docs/概念风格.pdf 基准），
+术语跟随 05 文档 §3，唯一例外见下方术语注记。
+
+术语注记：05 文档 §3.1 将 RestorePlan 定名「恢复计划」；ADR-0006 / CONTEXT.md
+（2026-09-01，更新）已将 Restore 定名「回滚」，「恢复」专指 Apply 崩溃恢复语境。
+本原型按新定名（回滚计划 / 确认并回滚 / 回滚到此处），SyncCommit 仍称「同步记录」。
+
+用法：
+  1) 直接双击打开（file:// 离线可用，无任何外部依赖）；
+  2) 底部浮条或 ← → 键切换画板；画板目录见下拉框。
+交互（内存态演示数据，刷新即重置）：
+  · H-03/04/05 三画板 = 同一份回滚计划的三种信息结构（结构差异，非配色差异）：
+      A 分组小节 / B 单表全列 / C 摘要卡先导——2026-09-01 已拍板：结构 B（H-04）定稿入契约 06，
+      H-03/05 抛弃归档仅留对照
+  · 「需你提供」行：提供文件 → hash 校验 → 命中就绪 / 未命中可重试
+    （waystones 固定命中，hand-placed 固定未命中，可反复演示）
+  · 全部补全后 exact 解锁、横幅转绿；确认回滚弹四要素确认框 → 建回滚任务
+  · T-01 任务中心含 kind=restore / kind=gc 任务样例（ADR-0007 移交面）
+
+覆盖画板：T-01 | H-01 H-02 | H-03 H-04 H-05 | SET-02
+这是抛弃式原型：结论验证后把决策折回契约 06 与 05 文档，本文件归档抛弃分支。
+============================================================================ -->
+<html lang="zh-CN" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PackGradle P3 回滚原型（演示数据）</title>
+<style>
+/* ================= 1. 主题令牌（与 workspace-ux-prototype.html 一致） ================= */
+:root{
+  --bg:#F2F5F9; --surface:#FFFFFF; --surface2:#EDF1F6; --surface3:#E3E9F0;
+  --rail:#FFFFFF;
+  --border:rgba(15,23,42,.14); --border-weak:rgba(15,23,42,.07);
+  --text:#17202B; --muted:#5A6675; --faint:#8B95A3;
+  --rail-icon:#5A6675;
+  --primary:#16A34A; --on-primary:#FFFFFF;
+  --success:#16A34A; --warning:#B45309; --error:#DC2626; --info:#0369A1;
+  --tint-primary:rgba(22,163,74,.10); --tint-success:rgba(22,163,74,.10);
+  --tint-warning:rgba(180,83,9,.11); --tint-error:rgba(220,38,38,.09);
+  --shadow:0 10px 32px rgba(15,23,42,.16);
+  --proto:#7A3FF2;
+}
+html[data-theme="dark"]{
+  --bg:#1B212D; --surface:#222A37; --surface2:#2A3240; --surface3:#333C4C;
+  --rail:#121720;
+  --border:rgba(148,163,184,.14); --border-weak:rgba(148,163,184,.07);
+  --text:#E9EDF3; --muted:#9AA6B6; --faint:#6C7787;
+  --rail-icon:#6F8878;
+  --primary:#4ADE80; --on-primary:#052E16;
+  --success:#4ADE80; --warning:#FBBF24; --error:#F87171; --info:#7DD3FC;
+  --tint-primary:rgba(74,222,128,.13); --tint-success:rgba(74,222,128,.13);
+  --tint-warning:rgba(251,191,36,.13); --tint-error:rgba(248,113,113,.13);
+  --shadow:0 10px 32px rgba(0,0,0,.5);
+}
+
+/* ================= 2. 基础与壳层（沿用） ================= */
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{height:100%}
+body{
+  font:13px/1.55 "Segoe UI","Microsoft YaHei UI","Microsoft YaHei",system-ui,sans-serif;
+  background:var(--bg);color:var(--text);overflow:hidden;
+}
+button{font:inherit;color:inherit;background:none;border:none;cursor:pointer}
+input,select{font:inherit;color:var(--text)}
+a{color:var(--primary);text-decoration:none}
+::selection{background:var(--tint-primary)}
+#app{display:flex;flex-direction:column;height:100%}
+.titlebar{
+  height:46px;flex:none;display:flex;align-items:center;gap:10px;padding:0 8px 0 0;
+  background:var(--rail);border-bottom:1px solid var(--border);user-select:none;
+}
+.tb-brand{width:68px;flex:none;display:flex;align-items:center;justify-content:center}
+.tb-logo{
+  width:30px;height:30px;border-radius:8px;background:var(--tint-primary);color:var(--primary);
+  border:1px solid var(--tint-primary);
+  display:flex;align-items:center;justify-content:center;font-weight:700;font-size:15px;
+}
+.tb-title{font-size:13.5px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:46vw}
+.tb-sub{color:var(--muted);font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.tb-drag{flex:1;height:100%}
+.tb-actions{display:flex;align-items:center;gap:6px;padding-right:2px}
+.win-btn{width:40px;height:34px;display:flex;align-items:center;justify-content:center;color:var(--muted);border-radius:6px}
+.win-btn:hover{background:var(--surface2);color:var(--text)}
+.win-btn.close:hover{background:var(--error);color:#fff}
+.body-row{flex:1;display:flex;min-height:0}
+.rail{
+  width:68px;flex:none;background:var(--rail);border-right:1px solid var(--border);
+  display:flex;flex-direction:column;align-items:center;padding:10px 0;gap:4px;
+}
+.rail-btn{
+  width:48px;height:48px;border-radius:10px;display:flex;flex-direction:column;gap:2px;
+  align-items:center;justify-content:center;color:var(--rail-icon);position:relative;
+}
+.rail-btn span{font-size:10px;line-height:1}
+.rail-btn:hover{background:var(--surface2);color:var(--text)}
+.rail-btn.active{background:var(--tint-primary);color:var(--primary)}
+.rail-spacer{flex:1}
+.main{flex:1;min-width:0;display:flex;flex-direction:column;background:var(--bg)}
+.screen{flex:1;overflow-y:auto;padding:20px 24px 84px}
+@media (max-width:1000px){.screen{padding:16px}}
+
+/* ================= 3. 基础组件（沿用） ================= */
+.icon{width:20px;height:20px;flex:none;display:inline-block;vertical-align:-4px}
+.icon.sm{width:16px;height:16px;vertical-align:-3px}
+.icon.lg{width:24px;height:24px}
+.btn{
+  display:inline-flex;align-items:center;gap:6px;height:34px;padding:0 14px;border-radius:6px;
+  border:1px solid transparent;font-weight:600;font-size:12.5px;white-space:nowrap;
+}
+.btn:disabled{opacity:.45;cursor:not-allowed}
+.btn-primary{background:var(--primary);color:var(--on-primary)}
+.btn-primary:hover:not(:disabled){filter:brightness(1.08)}
+.btn-tonal{background:var(--tint-primary);color:var(--primary)}
+.btn-tonal:hover{filter:brightness(1.05)}
+.btn-text{color:var(--muted)}
+.btn-text:hover{background:var(--surface2);color:var(--text)}
+.btn-outline{border-color:var(--border);color:var(--text)}
+.btn-outline:hover{background:var(--surface2)}
+.btn-danger-t{background:var(--tint-error);color:var(--error)}
+.btn-sm{height:28px;padding:0 10px;font-size:12px}
+.btn-icon{width:34px;padding:0;justify-content:center;color:var(--muted)}
+.btn-icon:hover{background:var(--surface2);color:var(--text)}
+.st{
+  display:inline-flex;align-items:center;gap:5px;height:22px;padding:0 9px;border-radius:4px;
+  font-size:11.5px;font-weight:600;cursor:default;white-space:nowrap;
+}
+.st::before{content:"";width:6px;height:6px;border-radius:50%;background:currentColor;flex:none}
+.st.plain::before{display:none}
+.st-ok{background:var(--tint-success);color:var(--success)}
+.st-run{background:var(--tint-primary);color:var(--primary)}
+.st-run.pulse::before{animation:pp 1.2s ease-in-out infinite}
+@keyframes pp{50%{opacity:.25}}
+.st-warn{background:var(--tint-warning);color:var(--warning)}
+.st-err{background:var(--tint-error);color:var(--error)}
+.st-mut{background:var(--surface2);color:var(--muted)}
+.st-info{background:var(--tint-primary);color:var(--info)}
+.chip{
+  display:inline-flex;align-items:center;gap:5px;height:24px;padding:0 10px;border-radius:6px;
+  background:var(--surface2);color:var(--muted);font-size:11.5px;font-weight:600;cursor:default;
+}
+.chip.proto{background:transparent;border:1px dashed var(--proto);color:var(--proto);cursor:default}
+.chip.demo{background:var(--tint-warning);color:var(--warning)}
+.chip.hot{background:var(--tint-warning);color:var(--warning)}
+.chip.bad{background:var(--tint-error);color:var(--error)}
+.banner{
+  display:flex;align-items:center;gap:10px;padding:10px 14px;border-radius:8px;margin-bottom:14px;
+  font-size:12.5px;border:1px solid transparent;
+}
+.banner .grow{flex:1;min-width:0}
+.banner b{font-weight:700}
+.banner-warn{background:var(--tint-warning);border-color:var(--tint-warning);color:var(--text)}
+.banner-warn .icon{color:var(--warning)}
+.banner-err{background:var(--tint-error);border-color:var(--tint-error);color:var(--text)}
+.banner-err .icon{color:var(--error)}
+.banner-info{background:var(--tint-primary);border-color:var(--tint-primary);color:var(--text)}
+.banner-info .icon{color:var(--primary)}
+.banner-ok{background:var(--tint-success);border-color:var(--tint-success);color:var(--text)}
+.banner-ok .icon{color:var(--success)}
+.page-head{display:flex;align-items:flex-start;gap:12px;margin-bottom:6px}
+.page-head h1{font-size:18px;font-weight:700;line-height:1.3}
+.page-head .grow{flex:1;min-width:0}
+.page-sub{color:var(--muted);font-size:12px;margin-top:2px}
+.toolbar{display:flex;align-items:center;gap:8px;min-height:44px;padding:6px 0;flex-wrap:wrap}
+.toolbar .grow{flex:1}
+.hint-fixed{color:var(--faint);font-size:11.5px}
+.field{
+  height:34px;border:1px solid var(--border);border-radius:6px;background:var(--surface);
+  padding:0 10px;display:inline-flex;align-items:center;gap:6px;color:var(--text);
+}
+.field input{border:none;outline:none;background:transparent;width:170px}
+.field:focus-within{border-color:var(--primary)}
+.tabs{display:flex;gap:2px;border-bottom:1px solid var(--border);margin:8px 0 14px}
+.tab{
+  padding:8px 14px;font-weight:600;color:var(--muted);border-radius:6px 6px 0 0;position:relative;font-size:12.5px;
+}
+.tab:hover{color:var(--text)}
+.tab.active{color:var(--primary)}
+.tab.active::after{content:"";position:absolute;left:8px;right:8px;bottom:-1px;height:2px;background:var(--primary);border-radius:2px}
+.table{width:100%;border-collapse:collapse;background:var(--surface);border:1px solid var(--border);border-radius:8px;overflow:hidden}
+.table th{
+  text-align:left;font-size:11.5px;color:var(--muted);font-weight:600;padding:9px 12px;
+  border-bottom:1px solid var(--border);background:var(--surface2);white-space:nowrap;
+}
+.table td{padding:10px 12px;border-bottom:1px solid var(--border-weak);vertical-align:middle}
+.table tr:last-child td{border-bottom:none}
+.table tbody tr:hover{background:var(--surface2)}
+.table .num{font-variant-numeric:tabular-nums}
+.rowname{font-weight:600}
+.rowsub{color:var(--faint);font-size:11.5px;margin-top:1px}
+.ellipsis{max-width:100%;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.mono{font-family:Consolas,"Courier New",monospace;font-size:12px}
+.table-scroll{overflow-x:auto}
+.empty{padding:56px 0;text-align:center;color:var(--muted)}
+.empty .icon{width:40px;height:40px;color:var(--faint);margin-bottom:10px}
+.empty h3{font-size:15px;color:var(--text);margin-bottom:4px}
+.empty p{font-size:12px;margin-bottom:16px}
+.sec{font-size:13px;font-weight:700;margin:22px 0 8px;display:flex;align-items:center;gap:8px}
+.sec:first-child{margin-top:0}
+.sec .n{color:var(--faint);font-weight:600;font-size:12px}
+.pnote{
+  border:1px dashed var(--proto);border-radius:8px;padding:8px 12px;margin:12px 0;
+  color:var(--proto);font-size:11.5px;display:flex;gap:8px;align-items:flex-start;
+}
+.pnote b{flex:none}
+.kv{display:grid;grid-template-columns:120px 1fr;gap:4px 12px;font-size:12.5px}
+.kv dt{color:var(--muted)}
+.tech{color:var(--faint);font-size:11px;word-break:break-all}
+
+/* ================= 4. 抽屉 / 弹窗 / 提示（沿用） ================= */
+.overlay{position:fixed;inset:0;background:rgba(0,0,0,.42);z-index:40}
+.drawer{
+  position:fixed;top:0;right:0;bottom:0;width:min(400px,calc(100vw - 68px));z-index:50;
+  background:var(--surface);border-left:1px solid var(--border);display:flex;flex-direction:column;
+  box-shadow:var(--shadow);
+}
+.drawer-h{flex:none;display:flex;align-items:center;gap:8px;padding:14px 16px;border-bottom:1px solid var(--border);font-weight:700}
+.drawer-b{flex:1;overflow-y:auto;padding:14px 16px}
+.drawer-f{flex:none;padding:12px 16px;border-top:1px solid var(--border);display:flex;gap:8px;justify-content:flex-end}
+.dialog-wrap{position:fixed;inset:0;z-index:60;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,.42)}
+.dialog{
+  width:min(520px,calc(100vw - 48px));max-height:min(640px,calc(100vh - 64px));
+  background:var(--surface);border:1px solid var(--border);border-radius:8px;box-shadow:var(--shadow);
+  display:flex;flex-direction:column;
+}
+.dialog-h{flex:none;padding:14px 18px;border-bottom:1px solid var(--border);font-weight:700;display:flex;align-items:center;gap:8px}
+.dialog-b{flex:1;overflow-y:auto;padding:16px 18px}
+.dialog-f{flex:none;padding:12px 18px;border-top:1px solid var(--border);display:flex;gap:8px;justify-content:flex-end}
+.danger-strip{border-left:3px solid var(--error)}
+#toast-root{position:fixed;right:18px;bottom:76px;z-index:70;display:flex;flex-direction:column;gap:8px;align-items:flex-end}
+.toast{
+  background:var(--surface3);color:var(--text);border:1px solid var(--border);border-radius:8px;
+  padding:9px 14px;font-size:12.5px;box-shadow:var(--shadow);max-width:380px;
+}
+.toast.ok{border-left:3px solid var(--success)}
+.toast.err{border-left:3px solid var(--error)}
+
+/* ================= 5. 画板导航浮条（沿用） ================= */
+.proto-bar{
+  position:fixed;left:50%;transform:translateX(-50%);bottom:14px;z-index:45;
+  display:flex;align-items:center;gap:4px;padding:6px 8px;border-radius:999px;
+  background:#141519;color:#EDEEF2;border:1px solid rgba(255,255,255,.16);
+  box-shadow:0 10px 30px rgba(0,0,0,.45);font-size:12px;max-width:min(94vw,980px);white-space:nowrap;
+}
+.proto-bar .pb-dot{width:8px;height:8px;border-radius:50%;background:var(--proto);margin:0 4px;flex:none}
+.proto-bar button{color:#EDEEF2;border-radius:999px;white-space:nowrap}
+.pb-nav{width:30px;height:30px;display:flex;align-items:center;justify-content:center}
+.pb-nav:hover{background:rgba(255,255,255,.12)}
+.pb-label{padding:0 8px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.pb-label small{color:#9DA2AB;font-weight:500;margin-right:6px}
+.pb-extra{display:flex;align-items:center;gap:4px;border-left:1px solid rgba(255,255,255,.14);padding-left:8px;margin-left:4px}
+.pb-extra select{background:transparent;color:#EDEEF2;border:none;font-size:11.5px;outline:none}
+.pb-extra select option{color:#111}
+.pb-mini{height:28px;padding:0 10px;font-size:11.5px;color:#C9CAD1}
+.pb-mini:hover{background:rgba(255,255,255,.12);color:#fff}
+
+/* ================= 6. 画板共用件（沿用：sumchips / metrics / panel / set-sec / cand） ================= */
+.sumchips{display:flex;gap:8px;flex-wrap:wrap;margin:10px 0 4px}
+.sumchips .chip b{color:var(--text);margin-left:4px}
+.metrics{
+  display:flex;gap:18px;flex-wrap:wrap;color:var(--muted);font-size:12px;
+  padding:8px 12px;background:var(--surface);border:1px solid var(--border);border-radius:8px;margin-bottom:12px;
+}
+.metrics b{color:var(--text);font-weight:600}
+.panel{border:1px solid var(--border);border-radius:8px;background:var(--surface);padding:14px 16px}
+.panel h3{font-size:13px;margin-bottom:10px;display:flex;align-items:center;gap:8px}
+.panel .table{border:none;margin:0 -16px -14px;width:calc(100% + 32px);border-radius:0 0 8px 8px}
+.pf-row{display:flex;gap:9px;align-items:flex-start;padding:7px 0;border-bottom:1px solid var(--border-weak);font-size:12.5px}
+.pf-row:last-child{border-bottom:none}
+.pf-ok{color:var(--success)} .pf-warn{color:var(--warning)} .pf-err{color:var(--error)}
+.set-sec{border-top:1px solid var(--border);padding:18px 0 6px}
+.set-sec:first-of-type{border-top:none;padding-top:4px}
+.set-sec h2{font-size:14.5px;margin-bottom:2px}
+.set-sec .desc{color:var(--muted);font-size:12px;margin-bottom:12px}
+.set-row{display:flex;align-items:center;gap:14px;padding:9px 0;flex-wrap:wrap}
+.set-row .lab{width:190px;flex:none;color:var(--muted);font-size:12.5px}
+.set-row .val{flex:1;min-width:200px}
+.set-row .ops{display:flex;gap:8px}
+.radio{width:16px;height:16px;border-radius:50%;border:2px solid var(--faint);flex:none}
+.verdict{display:inline-flex;align-items:center;gap:5px;font-weight:600;font-size:12px;cursor:default}
+.v-w{color:var(--warning)} .v-e{color:var(--error)}
+
+/* ================= 7. 画板：回滚计划（P3 新增样式，令牌取自主题） ================= */
+.avail{display:inline-flex;align-items:center;gap:6px;font-size:12px;color:var(--muted)}
+.avail .dot{width:7px;height:7px;border-radius:50%;flex:none}
+.decide{
+  display:flex;align-items:center;gap:12px;padding:12px 16px;margin-top:16px;flex-wrap:wrap;
+  border:1px solid var(--border);border-radius:8px;background:var(--surface);
+}
+.decide .grow{flex:1}
+.exopt{
+  display:inline-flex;align-items:center;gap:8px;padding:8px 13px;border:1px solid var(--border);
+  border-radius:8px;font-size:12.5px;font-weight:600;color:var(--muted);cursor:pointer;background:var(--surface);
+}
+.exopt:hover{color:var(--text)}
+.exopt.on{border-color:var(--primary);background:var(--tint-success);color:var(--text)}
+.exopt.dis{opacity:.5;cursor:not-allowed}
+.exopt .radio{border-color:var(--muted)}
+.exopt.on .radio{border-color:var(--primary);background:var(--primary);box-shadow:inset 0 0 0 3px var(--surface)}
+.prov{display:inline-flex;align-items:center;gap:7px;font-size:12px}
+.spin{width:13px;height:13px;border:2px solid var(--surface3);border-top-color:var(--primary);
+  border-radius:50%;animation:spin 0.8s linear infinite;flex:none}
+@keyframes spin{to{transform:rotate(360deg)}}
+.dcards{display:grid;grid-template-columns:repeat(5,1fr);gap:10px;margin:12px 0}
+@media (max-width:1000px){.dcards{grid-template-columns:repeat(2,1fr)}}
+.dcard{
+  border:1px solid var(--border);border-radius:8px;background:var(--surface);padding:13px 15px;
+  cursor:pointer;text-align:left;transition:border-color .1s;
+}
+.dcard:hover{border-color:var(--primary)}
+.dcard.on{border-color:var(--primary);box-shadow:0 0 0 1px var(--primary) inset}
+.dcard .k{font-size:11.5px;color:var(--muted);margin-bottom:4px;display:flex;align-items:center;gap:6px}
+.dcard .v{font-size:22px;font-weight:700;line-height:1.1}
+.dcard .hint{font-size:10.5px;color:var(--faint);margin-top:3px}
+
+/* 滚动条 */
+::-webkit-scrollbar{width:10px;height:10px}
+::-webkit-scrollbar-thumb{background:var(--surface3);border-radius:6px;border:2px solid var(--bg)}
+::-webkit-scrollbar-track{background:transparent}
+</style>
+</head>
+<body>
+<div id="app">
+  <header class="titlebar">
+    <div class="tb-brand"><div class="tb-logo">P</div></div>
+    <div style="display:flex;flex-direction:column;min-width:0;justify-content:center">
+      <div id="tb-title" class="tb-title">工作区</div>
+      <div id="tb-sub" class="tb-sub"></div>
+    </div>
+    <div class="tb-drag"></div>
+    <div class="tb-actions">
+      <span class="chip proto" title="抛弃式原型 · 演示数据，不连接后端">原型</span>
+      <span class="chip demo" title="所有数据为内存态演示数据，刷新即重置">演示数据</span>
+      <button class="win-btn" data-action="open-tasks" title="任务中心" style="position:relative">
+        <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M18 8a6 6 0 1 0-12 0c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.7 21a2 2 0 0 1-3.4 0"/></svg>
+        <span id="bell-badge" style="position:absolute;top:2px;right:2px;min-width:15px;height:15px;border-radius:8px;background:var(--error);color:#fff;font-size:9.5px;font-weight:700;display:none;align-items:center;justify-content:center;padding:0 3px"></span>
+      </button>
+      <button class="win-btn" data-action="toggle-theme" title="切换深浅主题" id="theme-btn"></button>
+      <button class="win-btn" title="最小化（装饰）"><svg class="icon sm" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path d="M5 12h14"/></svg></button>
+      <button class="win-btn" title="最大化（装饰）"><svg class="icon sm" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="5" y="5" width="14" height="14" rx="2"/></svg></button>
+      <button class="win-btn close" title="关闭（装饰）"><svg class="icon sm" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
+    </div>
+  </header>
+
+  <div class="body-row">
+    <nav class="rail">
+      <button class="rail-btn active" data-nav="#/workspaces/w1/history" title="工作区">
+        <svg class="icon lg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 7h12"/><path d="M13 4l3 3-3 3"/><path d="M20 17H8"/><path d="M11 14l-3 3 3 3"/></svg>
+        <span>工作区</span>
+      </button>
+      <button class="rail-btn" data-action="toast-demo" title="项目源（本原型不含）">
+        <svg class="icon lg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M3 8a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><path d="M3 11h18"/></svg>
+        <span>项目源</span>
+      </button>
+      <button class="rail-btn" data-action="toast-demo" title="运行实例（本原型不含）">
+        <svg class="icon lg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 2l8 4.6v9.2L12 21l-8-5.2V6.6z"/><path d="M4 6.6l8 4.6 8-4.6"/><path d="M12 11.2V21"/></svg>
+        <span>实例</span>
+      </button>
+      <div class="rail-spacer"></div>
+      <button class="rail-btn" data-nav="#/settings-retention" title="设置">
+        <svg class="icon lg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 7h9M17 7h3M17 5v4"/><path d="M4 12h3M11 12h9M11 10v4"/><path d="M4 17h9M17 17h3M17 15v4"/></svg>
+        <span>设置</span>
+      </button>
+    </nav>
+    <div class="main"><div class="screen" id="screen"></div></div>
+  </div>
+</div>
+
+<div id="layer-root"></div>
+<div id="toast-root"></div>
+
+<div class="proto-bar" id="proto-bar">
+  <span class="pb-dot" title="原型导航（非产品 UI）"></span>
+  <button class="pb-nav" data-action="board-prev" title="上一画板（←）">←</button>
+  <span class="pb-label" id="pb-label"></span>
+  <button class="pb-nav" data-action="board-next" title="下一画板（→）">→</button>
+  <div class="pb-extra">
+    <select id="pb-jump" title="画板目录"></select>
+    <button class="pb-mini" data-action="toggle-theme" title="切换主题">主题</button>
+    <button class="pb-mini" data-action="reset-demo" title="重置演示状态">重置</button>
+    <button class="pb-mini" data-action="help-open" title="关于本原型">?</button>
+  </div>
+</div>
+
+<script>
+"use strict";
+/* ============================================================================
+   本文件是什么：契约 06（P3 回滚面）的可交互 UX 原型（抛弃式）。
+   结构与 workspace-ux-prototype.html 一致：
+     DEMO（数据）/ S（状态）/ BOARDS（画板清单）/ SCREENS（渲染）/ ACTIONS（行为）
+   ============================================================================ */
+
+/* ================= 1. 图标（沿用原型的内联 SVG 集） ================= */
+const I = (name, cls) => `<svg class="icon ${cls||''}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">${ICONS[name]||''}</svg>`;
+const ICONS = {
+  swap:'<path d="M4 7h12"/><path d="M13 4l3 3-3 3"/><path d="M20 17H8"/><path d="M11 14l-3 3 3 3"/>',
+  folder:'<path d="M3 8a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>',
+  cube:'<path d="M12 2l8 4.6v9.2L12 21l-8-5.2V6.6z"/><path d="M4 6.6l8 4.6 8-4.6"/><path d="M12 11.2V21"/>',
+  bell:'<path d="M18 8a6 6 0 1 0-12 0c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.7 21a2 2 0 0 1-3.4 0"/>',
+  sun:'<circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/>',
+  moon:'<path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/>',
+  search:'<circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/>',
+  refresh:'<path d="M21 12a9 9 0 1 1-2.6-6.4"/><path d="M21 3v6h-6"/>',
+  close:'<path d="M6 6l12 12M18 6L6 18"/>',
+  check:'<path d="M4 12.5l5 5L20 6.5"/>',
+  warn:'<path d="M12 3l10 18H2z"/><path d="M12 10v4"/><circle cx="12" cy="17.6" r=".6" fill="currentColor"/>',
+  errC:'<circle cx="12" cy="12" r="9"/><path d="M12 8v5"/><circle cx="12" cy="16.5" r=".6" fill="currentColor"/>',
+  info:'<circle cx="12" cy="12" r="9"/><path d="M12 11v5"/><circle cx="12" cy="8" r=".6" fill="currentColor"/>',
+  clock:'<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3.5 2"/>',
+  file:'<path d="M6 3h8l4 4v14H6z"/><path d="M14 3v4h4"/>',
+  shield:'<path d="M12 3l8 3v6c0 4.5-3.4 7.9-8 9-4.6-1.1-8-4.5-8-9V6z"/><path d="M9 12l2 2 4-4"/>',
+  history:'<path d="M3 12a9 9 0 1 0 3-6.7"/><path d="M3 4v5h5"/><path d="M12 7v5l3.5 2"/>',
+  scan:'<circle cx="12" cy="12" r="3"/><path d="M4 8V6a2 2 0 0 1 2-2h2M16 4h2a2 2 0 0 1 2 2v2M20 16v2a2 2 0 0 1-2 2h-2M8 20H6a2 2 0 0 1-2-2v-2"/>',
+  help:'<circle cx="12" cy="12" r="9"/><path d="M9.5 9a2.6 2.6 0 1 1 3.7 2.4c-.8.4-1.2 1-1.2 1.9"/><circle cx="12" cy="16.8" r=".6" fill="currentColor"/>',
+  sync:'<path d="M4 9a8 8 0 0 1 14-3"/><path d="M20 15a8 8 0 0 1-14 3"/><path d="M18 2v4h-4M6 22v-4h4"/>',
+  trash:'<path d="M4 7h16"/><path d="M9 7V5a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/><path d="M6 7l1 13h10l1-13"/>',
+  down:'<path d="M12 5v14"/><path d="M6 13l6 6 6-6"/>',
+  db:'<ellipse cx="12" cy="5.5" rx="8" ry="2.8"/><path d="M4 5.5v13c0 1.5 3.6 2.8 8 2.8s8-1.3 8-2.8v-13"/><path d="M4 12c0 1.5 3.6 2.8 8 2.8s8-1.3 8-2.8"/>',
+  up:'<path d="M12 19V5"/><path d="M6 11l6-6 6 6"/>',
+};
+
+/* ================= 2. 演示数据 ================= */
+const WS = { id:'w1', p:'Collapse Pack', r:'Collapse Dev', pa:'Packwiz 1.39', ra:'Prism Launcher' };
+
+/* 回滚目标（历史里的任意一条非 head 同步记录） */
+const TARGET = { id:'c-8f3a', time:'3 天前', kindLabel:'同步记录 · exact' };
+
+/* 回滚计划资源（判定 = ADR-0006 §2 四标记矩阵的成品示例） */
+const RES = [
+  { id:1,  path:'config/jei-client.toml',              sub:'text/toml · 覆盖',            m:'cas' },
+  { id:2,  path:'shaderpacks/complementary-rimag.zip', sub:'覆盖 · 17 MiB',               m:'cas' },
+  { id:3,  path:'mods/create-fabric-0.5.1f.jar',       sub:'mod · 回退 0.5.11f → 0.5.1f', m:'dl',   avail:'ok' },
+  { id:4,  path:'mods/sodium-0.5.8.jar',               sub:'mod · 回退 0.5.11 → 0.5.8',   m:'dl',   avail:'ok', newer:'0.5.11' },
+  { id:5,  path:'mods/indium-1.0.9.jar',               sub:'mod · 回退 1.0.11 → 1.0.9',   m:'dl',   avail:'unk' },
+  { id:6,  path:'mods/waystones-fabric-1.2.3.jar',     sub:'mod · 回退 1.2.4 → 1.2.3',    m:'user', why:'CurseForge 已不可获取（探测降标）', expect:'a91f…c33d' },
+  { id:7,  path:'mods/hand-placed-mod.jar',            sub:'mod · 回退到当日版本',        m:'user', why:'手放 mod · 无重取信息', expect:'6d02…9b71' },
+  { id:8,  path:'config/server-specific.lock',         sub:'text · 覆盖',                 m:'unrec', why:'无恢复途径' },
+  { id:9,  path:'mods/create-fabric-0.5.11f.jar',      sub:'mod · 目标之后新增',          m:'del',  delNote:'packwiz 管理 · 删除后可重新下载' },
+  { id:10, path:'mods/debug-tweaks.jar',               sub:'mod · 目标之后新增',          m:'del',  delWarn:'手放 mod · 删除后无法找回' },
+  { id:11, path:'screenshots/2026-08-30.png',          sub:'截图 · 目标之后新增',         m:'del',  delWarn:'40 MiB 超过 32 MiB 保全阈值 · 不做保留' },
+];
+const MARK = {
+  cas:  { t:'可直接恢复', cls:'st-ok',   icon:'db',   secNote:'从对象库取字节写回 · 零网络零介入（ADR-0006 §2）' },
+  dl:   { t:'可重新下载', cls:'st-info', icon:'down', secNote:'经 CurseForge 重取并校验 hash · 可用性为尽力探测，不是承诺（ADR-0006 §7）' },
+  user: { t:'需你提供',   cls:'st-warn', icon:'up',   secNote:'校验通过后进入本次计划的暂存区；不进对象库（ADR-0005 §7）' },
+  unrec:{ t:'不可恢复',   cls:'st-err',  icon:'errC', secNote:'默认阻止原样回滚；仅「允许部分回滚」可跳过' },
+  del:  { t:'将删除',     cls:'st-mut',  icon:'trash',secNote:'目标之后新增的资源随回滚删除（ADR-0006 §5）' },
+};
+
+/* 历史列表（head 禁选 + 墓碑行） */
+const COMMITS = [
+  { id:'c-a1f2', label:'同步记录', cmp:'exact', remain:0, time:'刚刚',  head:true },
+  { id:'c-8f3a', label:'同步记录', cmp:'partial', remain:2, time:'3 天前' },
+  { id:'c-77b0', label:'同步记录', cmp:'exact', remain:0, time:'5 天前' },
+  { id:'c-5e02', label:'回滚记录（回到 c-3d91）', cmp:'exact', remain:0, time:'8 月 24 日' },
+  { id:'c-init', label:'初始化记录', cmp:'exact', remain:0, time:'8 月 22 日' },
+];
+const PRUNED = 37;
+
+/* 任务中心样例（含 ADR-0007 移交的 gc 任务形状） */
+const TASKS = [
+  { id:'t-gc', ws:'Collapse Pack ↔ Collapse Dev', type:'空间回收', status:'queued', phase:'等待空闲时段（安全窗口未开 · 自动续排）', progress:0, canCancel:true, time:'14:00' },
+  { id:'t-scan', ws:'Collapse Pack ↔ Playtest', type:'扫描', status:'running', phase:'扫描 Runtime 资源', progress:62, canCancel:true, time:'14:18' },
+];
+
+/* ================= 3. 内存态 UI 状态（不持久化） ================= */
+function initState(){
+  return {
+    theme:'dark',
+    exactness:'partial',          // exact | partial（决策面）
+    stage:{},                     // 资源 id -> busy|ready|miss（补全状态）
+    variant:'a',                  // 回滚计划画板结构：a|b|c
+    taskKind:'restore',           // T-01 任务中心演示聚焦
+    dialog:null, unread:2,
+  };
+}
+let S = initState();
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+
+/* ================= 4. 派生量 ================= */
+function counts(){
+  const c = { cas:0, dl:0, user:0, unrec:0, del:0 };
+  RES.forEach(r => c[r.m]++);
+  c.userReady = RES.filter(r => r.m==='user' && S.stage[r.id]==='ready').length;
+  return c;
+}
+function blockers(){ // exact 阻塞清单 = 未补全的「需你提供」+ 全部「不可恢复」
+  return RES.filter(r => (r.m==='user' && S.stage[r.id]!=='ready') || r.m==='unrec');
+}
+function marker(r){ return `<span class="st ${MARK[r.m].cls}">${MARK[r.m].t}</span>`; }
+function availCell(r){
+  if (r.m !== 'dl') return '';
+  if (r.avail === 'ok'){
+    return `<span class="avail"><span class="dot" style="background:var(--success)"></span>可获取
+      ${r.newer ? `<span class="chip hot" title="目标不是该 mod 的最新版本 · 仅提示，版本决策归 packwiz">有更新 ${esc(r.newer)}</span>` : ''}
+      <button class="btn btn-text btn-sm" data-action="show-avail" data-id="${r.id}">依据</button></span>`;
+  }
+  return `<span class="avail"><span class="dot" style="background:var(--faint)"></span>未知（探测超时 · 按可重新下载执行）
+    <button class="btn btn-text btn-sm" data-action="show-avail" data-id="${r.id}">依据</button></span>`;
+}
+function provCell(r){
+  if (S.stage[r.id]==='ready') return `<span class="prov" style="color:var(--success)">${I('check','sm')} 已校验 · 字节就绪</span>`;
+  if (S.stage[r.id]==='busy')  return `<span class="prov"><span class="spin"></span>校验 hash（期望 ${esc(r.expect)}）…</span>`;
+  if (S.stage[r.id]==='miss')  return `<span class="prov" style="color:var(--error)">${I('errC','sm')} hash 不符（期望 ${esc(r.expect)}）</span>
+    <button class="btn btn-outline btn-sm" data-action="provide-open" data-id="${r.id}">重选文件</button>`;
+  return `<button class="btn btn-outline btn-sm" data-action="provide-open" data-id="${r.id}">${I('up','sm')} 提供文件</button>`;
+}
+function noteCell(r){
+  if (r.m === 'user') return provCell(r);
+  if (r.delWarn) return `<span class="verdict v-w">${I('warn','sm')} ${esc(r.delWarn)}</span>`;
+  if (r.delNote || r.why) return `<span class="rowsub" style="display:inline">${esc(r.delNote || r.why)}</span>`;
+  return '<span class="rowsub">—</span>';
+}
+/* 表行（B/C 与 A 共用；cols 控制列集） */
+function opRow(r, wide){
+  return `<tr>
+    <td style="width:34%"><div class="rowname ellipsis mono" style="max-width:${wide?300:260}px">${esc(r.path)}</div><div class="rowsub">${esc(r.sub)}</div></td>
+    <td>${marker(r)}</td>
+    <td>${r.m==='dl' ? availCell(r) : (r.m==='user' ? provCell(r) : (r.delWarn ? `<span class="verdict v-w">${I('warn','sm')} 损失面警示</span>` : (r.why ? `<span class="rowsub" style="display:inline">${esc(r.why)}</span>` : '—')))}</td>
+  </tr>`;
+}
+
+/* 横幅 + 决策区（三画板共用） */
+function restoreBanner(){
+  const b = blockers();
+  if (!b.length) return banner('ok','check',`<b>可原样回滚（exact）</b> · 全部资源均已就绪，无阻塞项。`);
+  return banner('warn','warn',`<b>无法原样精确回滚（${b.length} 项阻塞）</b> · ${b.map(r=>`<span class="mono">${esc(r.path.split('/').pop())}</span>`).join('、')}
+    —— 提供文件、或选择「允许部分回滚」跳过它们（结果标记 partial，工作区保持待处理）。`);
+}
+function decideBar(){
+  const b = blockers();
+  const exactOk = !b.length;
+  return `<div class="decide">
+    <button class="exopt ${S.exactness==='exact'?'on':''} ${exactOk?'':'dis'}" data-action="set-exact" data-v="exact" title="${exactOk?'':'被阻塞项阻止（ADR-0006 §4：exact 不可行在计划上先行标记）'}">
+      <span class="radio"></span>原样回滚（exact）</button>
+    <button class="exopt ${S.exactness==='partial'?'on':''}" data-action="set-exact" data-v="partial">
+      <span class="radio"></span>允许部分回滚（partial）</button>
+    <span class="rowsub">${exactOk ? '全部资源就绪 · 可选 exact' : 'exact 已被阻塞项禁止（不可恢复 / 待补全）'}</span>
+    <div class="grow"></div>
+    <button class="btn btn-primary" data-action="restore-confirm">${I('shield','sm')} 确认并回滚</button>
+  </div>`;
+}
+function banner(kind, iconName, html, action){
+  return `<div class="banner banner-${kind}">${I(iconName)}<div class="grow">${html}</div>${action||''}</div>`;
+}
+
+/* ================= 5. 画板清单 ================= */
+const BOARDS = [
+  { id:'H-01',   t:'历史列表（回滚入口 + 墓碑行）', r:'#/workspaces/w1/history', s:()=>{} },
+  { id:'H-02',   t:'同步记录详情（回滚目标）', r:'#/workspaces/w1/history/c-8f3a', s:()=>{} },
+  { id:'H-03',   t:'回滚计划 A · 分组小节', r:'#/workspaces/w1/plans/restore-a', s:()=>{ S.variant='a'; } },
+  { id:'H-04',   t:'回滚计划 B · 单表全列', r:'#/workspaces/w1/plans/restore-b', s:()=>{ S.variant='b'; } },
+  { id:'H-05',   t:'回滚计划 C · 摘要卡先导', r:'#/workspaces/w1/plans/restore-c', s:()=>{ S.variant='c'; } },
+  { id:'T-01',   t:'任务中心（回滚 / GC 任务）', r:'#/tasks', s:()=>{ S.taskKind='restore'; } },
+  { id:'SET-02', t:'设置 · 保留策略（GC 参数）', r:'#/settings-retention', s:()=>{} },
+];
+let boardIdx = 0;
+
+/* ================= 6. 路由（hash） ================= */
+function navigate(hash){ if (location.hash === hash) render(); else location.hash = hash; }
+function parseRoute(){
+  const h = location.hash || '#/workspaces/w1/history';
+  let m;
+  if (h === '#/tasks') return { page:'tasks' };
+  if (h === '#/workspaces/w1/history') return { page:'history' };
+  if ((m = h.match(/^#\/workspaces\/w1\/history\/([\w-]+)$/))) return { page:'commit', id:m[1] };
+  if ((m = h.match(/^#\/workspaces\/w1\/plans\/restore-([abc])$/))) return { page:'restore', variant:m[1] };
+  if (h === '#/settings-retention') return { page:'retention' };
+  return { page:'history' };
+}
+
+/* ================= 7. 各画板渲染 ================= */
+const SCREENS = {
+
+  /* ---- T-01 任务中心（画板仅聚焦演示；运行中经铃铛随时打开） ---- */
+  'tasks'(){
+    const rows = TASKS.map(t => {
+      const stMap = { queued:['st-mut','排队'], running:['st-run pulse','处理中'], done:['st-ok','完成'] };
+      const [cls, lbl] = stMap[t.status] || stMap.running;
+      return `<tr>
+      <td><div class="rowname">${esc(t.type)}</div><div class="rowsub">${esc(t.ws)}</div></td>
+      <td><span class="st ${cls}">${lbl}</span></td>
+      <td style="width:38%"><div class="rowsub" style="margin:0 0 4px">${esc(t.phase)}</div>
+        <div class="prog-wrap" style="display:flex;align-items:center;gap:8px">
+          <div style="flex:1;height:5px;border-radius:3px;background:var(--surface3);overflow:hidden"><i style="display:block;height:100%;width:${t.progress}%;background:var(--primary)"></i></div>
+          <span class="num rowsub" style="margin:0">${t.progress}%</span></div></td>
+      <td class="num" style="color:var(--muted)">${esc(t.time)}</td>
+      <td style="text-align:right">${t.canCancel?`<button class="btn btn-text btn-sm" data-action="cancel-task" data-id="${t.id}">取消</button>`:''}</td>
+    </tr>`; }).join('');
+    return {
+      title:'任务中心 · 回滚与空间回收', sub:'kind=restore / kind=gc 任务样例（ADR-0007 移交面）',
+      html:`<div class="page-head"><div class="grow"><h1>任务中心</h1>
+        <div class="page-sub">回滚任务与空间回收任务均由任务中心承载；进度文案键 <span class="mono">msg.task.restore.* / msg.task.gc.*</span>（演示数据）</div></div></div>
+      <div class="table-scroll"><table class="table">
+        <thead><tr><th>任务</th><th>状态</th><th>阶段与进度</th><th>时间</th><th></th></tr></thead>
+        <tbody>${rows}</tbody></table></div>
+      <div class="pnote">${I('info','sm')}<div><b>原型注记</b> · GC 任务排队文案 =「等待空闲时段（安全窗口未开 · 自动续排）」：安全窗口不开则 pending 自动续，不拒绝（ADR-0007 / 契约 06）。回滚确认后在真实产品中此处出现 kind=restore 任务，长任务可离开页面追踪（§5.3）。</div></div>`,
+    };
+  },
+
+  /* ---- H-01 历史列表 ---- */
+  'history'(){
+    const rows = COMMITS.map(c => `<tr class="${c.head?'':''}">
+      <td><div class="rowname mono">${esc(c.id)}</div></td>
+      <td>${esc(c.label)}</td>
+      <td>${c.cmp==='partial' ? `<span class="st st-warn">partial · 剩余 ${c.remain}</span>` : `<span class="st st-ok">exact</span>`}</td>
+      <td class="num" style="color:var(--muted)">${esc(c.time)}</td>
+      <td style="text-align:right;white-space:nowrap">${c.head
+        ? `<span class="st st-mut" title="当前状态即为该提交的结果 · 回滚到当前 = 空操作，UI 禁选（ADR-0006 §1）">当前状态</span>`
+        : `<button class="btn btn-text btn-sm" data-nav="#/workspaces/w1/history/${c.id}">查看详情</button>`}</td>
+    </tr>`).join('');
+    return {
+      title:`历史 · ${WS.p} ↔ ${WS.r}`, sub:'同步记录即回滚目标 · head 禁选',
+      html:`<div class="page-head"><div class="grow"><h1>${I('history','sm')} 历史</h1>
+        <div class="page-sub">${esc(WS.p)} ${I('swap','sm')} ${esc(WS.r)} · 新的回滚 = 以历史记录的结果状态生成新计划，历史本身不改写（ADR-0006 §9）</div></div></div>
+      <div class="table-scroll"><table class="table">
+        <thead><tr><th>记录</th><th>类型</th><th>完整性</th><th>时间</th><th style="text-align:right">操作</th></tr></thead>
+        <tbody>${rows}</tbody></table></div>
+      <div class="panel" style="margin-top:14px;display:flex;align-items:center;gap:9px;color:var(--muted);font-size:12px">
+        ${I('clock','sm')} 更早 ${PRUNED} 条提交已按保留策略清理 ——可在 <button class="btn btn-text btn-sm" data-nav="#/settings-retention">设置 · 保留策略</button> 调整窗口。
+      </div>
+      <div class="pnote">${I('info','sm')}<div><b>原型注记</b> · 「回滚到此处」是回滚唯一入口（落历史记录详情页，契约 06）；head 行禁选 = UI 防误触，后端无特判路径。墓碑行 = ADR-0007 移交面（CommitPageDTO.pruned_before_count）。restore 记录本身也是合法回滚目标（c-5e02 行可再次回滚 = 重做）。</div></div>`,
+    };
+  },
+
+  /* ---- H-02 同步记录详情 ---- */
+  'commit'(rt){
+    const c = COMMITS.find(x => x.id === rt.id) || COMMITS[1];
+    const head = c.head;
+    return {
+      title:`同步记录 ${c.id}`, sub:'回滚目标确认 · before = 滚前实际值，after = 目标值（回滚预览与此一致）',
+      html:`<div class="page-head">
+        <div class="grow"><h1 style="display:flex;align-items:center;gap:10px"><span class="mono">${esc(c.id)}</span>
+          ${c.cmp==='partial'?`<span class="st st-warn">partial · 剩余 ${c.remain}</span>`:`<span class="st st-ok">exact</span>`}</h1>
+          <div class="page-sub">${esc(c.label)} · ${esc(c.time)} · ${esc(WS.p)} ↔ ${esc(WS.r)}</div></div>
+        <button class="btn btn-text" data-nav="#/workspaces/w1/history">返回历史</button>
+        ${head?'':`<button class="btn btn-primary" data-action="goto-restore" data-id="${c.id}" data-page="2">${I('history','sm')} 回滚到此状态</button>`}
+      </div>
+      ${head?banner('info','info',`<b>这是当前状态</b> · 该记录的结果即工作区现状，回滚到当前 = 空操作，已禁选。`):''}
+      <div class="sumchips">
+        <span class="chip">变更资源<b class="num">43</b></span>
+        <span class="chip">创建<b class="num">6</b></span>
+        <span class="chip">修改<b class="num">34</b></span>
+        <span class="chip">删除<b class="num">3</b></span>
+        <span class="chip">对象库引用<b class="num">40</b></span>
+      </div>
+      <div class="table-scroll"><table class="table">
+        <thead><tr><th>资源</th><th>变更</th><th>Project</th><th>Runtime</th></tr></thead>
+        <tbody>
+          <tr><td class="mono ellipsis" style="max-width:280px">mods/sodium-0.5.8.jar</td><td>修改</td><td class="num">0.5.8 → 0.5.11</td><td class="num">0.5.8 → 0.5.11</td></tr>
+          <tr><td class="mono ellipsis" style="max-width:280px">config/jei-client.toml</td><td>修改</td><td class="num">已变更</td><td class="num">已变更</td></tr>
+          <tr><td class="mono ellipsis" style="max-width:280px">mods/debug-tweaks.jar</td><td>创建</td><td class="num">— → 已安装</td><td class="num">— → 已安装</td></tr>
+        </tbody></table></div>
+      <div class="pnote">${I('info','sm')}<div><b>原型注记</b> · P2 已有路由 <span class="mono">/workspaces/:id/history/:commit_id</span>；P3 增量只有「回滚到此状态」主操作（restore_preview 门控）。逐资源 before/after 语义见 ADR-0006 §9。</div></div>`,
+    };
+  },
+
+  /* ---- H-03/04/05 回滚计划（三种信息结构） ---- */
+  'restore'(rt){
+    S.variant = rt.variant;
+    const c = counts();
+    const head = `<div class="page-head">
+      <div class="grow"><h1 style="display:flex;align-items:center;gap:10px">回滚计划
+        <span class="st st-mut">draft · 只读</span><span class="chip">restore</span>
+        ${rt.variant!=='a'?`<span class="chip proto">结构 ${rt.variant.toUpperCase()}</span>`:''}</h1>
+        <div class="page-sub">回滚到 <a data-nav="#/workspaces/w1/history/c-8f3a" class="mono">${TARGET.id}</a>（${TARGET.kindLabel} · ${TARGET.time}）· ${esc(WS.p)} ↔ ${esc(WS.r)}</div></div>
+      <button class="btn btn-outline" data-nav="#/workspaces/w1/history">放弃</button>
+    </div>`;
+    const structNote = {
+      a:`<b>结构 A · 分组小节</b> · 四标记各成一组、每组一张短表——适合逐组处理（先补全、再确认）；「将删除」组置于最后，损失面警示在组内行上。`,
+      b:`<b>结构 B · 单表全列</b> · 一张全量表、判定/可用性/处理都是列——与 P2 计划页操作表同构（§7.5），顶部计数条，适合扫读全部 ${RES.length} 项。`,
+      c:`<b>结构 C · 摘要卡先导</b> · 五张计数卡先给全局，点卡片切换下方明细——决策最轻，但多一层点击；适合资源量大时先看分布再下钻。`,
+    }[rt.variant];
+
+    let body = '';
+    if (rt.variant === 'a') body = restoreA();
+    if (rt.variant === 'b') body = restoreB();
+    if (rt.variant === 'c') body = restoreC();
+
+    return {
+      title:`回滚计划 · ${WS.p} ↔ ${WS.r}`, sub:'计划不可变 · 四标记判定 = prepare 时点的确定函数（ADR-0006 §2）',
+      html: head
+        + restoreBanner()
+        + body
+        + decideBar()
+        + `<div class="pnote">${I('info','sm')}<div>${structNote}</div></div>
+           <div class="pnote">${I('info','sm')}<div><b>契约注记</b> · 判定术语跟随 ADR-0006；「需你提供」补全 = StageUserObject（选文件 → hash 校验 → 重判），字节只进本次计划暂存、不进对象库（ADR-0005 §7）；CF 可用性 = 出计划时尽力探测，未知不阻塞（「依据」可查探测证据）；确认后建 kind=restore 任务（三方法决议，同 P2 ConfirmPlan 幂等口径）。05 文档 §3.1 的「恢复计划」定名已被 ADR-0006「回滚」取代。</div></div>`,
+    };
+  },
+
+  /* ---- SET-02 保留策略设置 ---- */
+  'retention'(){
+    return {
+      title:'设置 · 保留策略', sub:'config.toml [retention] 段 · ADR-0007（演示数据）',
+      html:`<div style="max-width:860px">
+      <h1 style="font-size:18px;margin-bottom:14px">设置</h1>
+      <div class="set-sec"><h2>保留策略</h2>
+        <div class="desc">控制回滚可用窗口与对象库占用；修改在下次 GC 生效。加载时后端做范围校验，非法值拒绝保存。</div>
+        <div class="set-row"><span class="lab">保留提交数（K/N）</span>
+          <span class="val"><span class="field"><input id="rt-commits" value="20" style="width:90px"> 条</span>
+          <span class="rowsub" style="display:inline;margin-left:10px">每条 relation 至少保留的最近提交数（K=3 硬保底）</span></span></div>
+        <div class="set-row"><span class="lab">保留天数（D）</span>
+          <span class="val"><span class="field"><input id="rt-days" value="90" style="width:90px"> 天</span></span></div>
+        <div class="set-row"><span class="lab">历史占用上限（C）</span>
+          <span class="val"><span class="field"><input id="rt-cap" value="1 GiB" style="width:110px"></span>
+          <span class="rowsub" style="display:inline;margin-left:10px">按 relation 的历史对象占用计</span></span></div>
+        <div class="set-row"><span class="lab">大文件保全阈值</span>
+          <span class="val"><span class="field"><input id="rt-preserve" value="32 MiB" style="width:110px"></span>
+          <span class="rowsub" style="display:inline;margin-left:10px">非 mod 单文件超过此值不做删除前保全 · 0 = 不限（默认 32 MiB）</span></span></div>
+        <div class="set-row"><span class="lab">回收站保留天数</span>
+          <span class="val"><span class="field"><input id="rt-trash" value="7" style="width:90px"> 天</span>
+          <span class="rowsub" style="display:inline;margin-left:10px">清理的对象先进回收站，可人工复活</span></span></div>
+        <div class="set-row"><span class="ops">
+          <button class="btn btn-primary btn-sm" data-action="retention-save">保存</button>
+          <button class="btn btn-text btn-sm" data-action="retention-demo-invalid">演示非法值校验</button>
+          <button class="btn btn-outline btn-sm" data-action="gc-run">${I('trash','sm')} 立即回收空间</button></span></div>
+        <div class="rowsub" style="margin-top:6px">「立即回收空间」建 kind=gc 任务；安全窗口未开时排队自动续，不拒绝。</div>
+      </div>
+      <div class="set-sec"><h2>本地存储</h2><div class="desc">只读健康展示（沿用 P1 设置页）</div>
+        <div class="set-row"><span class="lab">对象库</span><span class="val">1,204 对象 · 3.2 GB（演示）</span><span class="ops"><span class="st st-ok">正常</span></span></div>
+      </div>
+      <div class="pnote">${I('info','sm')}<div><b>原型注记</b> · 五参数与语义出自 ADR-0007（[retention]：keep_commits / keep_days / relation_capacity_bytes / preserve_max_bytes / trash_days）；非法值错误码 <span class="mono">err.settings.retention_invalid</span>（契约 06 决议 Q11）。设置读写走新 SettingsService（Get/UpdateRetentionSettings）。</div></div>
+      </div>`,
+    };
+  },
+};
+
+/* ---- 结构 A：分组小节 ---- */
+function restoreA(){
+  const c = counts();
+  const sec = (key, items, extra) => {
+    if (!items.length) return '';
+    return `<div class="panel" style="margin-bottom:12px"><h3>${I(MARK[key].icon,'sm')} ${MARK[key].t}
+      <span class="sec n" style="margin:0">${items.length} 项${extra||''}</span></h3>
+      <div class="rowsub" style="margin:-6px 0 8px">${MARK[key].secNote}</div>
+      <div class="table-scroll"><table class="table">
+        <thead><tr><th>资源</th><th>判定</th><th>处理 / 说明</th></tr></thead>
+        <tbody>${items.map(r => opRow(r)).join('')}</tbody></table></div></div>`;
+  };
+  return sec('cas',  RES.filter(r=>r.m==='cas'))
+    + sec('dl',    RES.filter(r=>r.m==='dl'))
+    + sec('user',  RES.filter(r=>r.m==='user'), ` · 已就绪 ${c.userReady}/${c.user}（校验通过才计入）`)
+    + sec('unrec', RES.filter(r=>r.m==='unrec'))
+    + sec('del',   RES.filter(r=>r.m==='del'));
+}
+
+/* ---- 结构 B：单表全列 ---- */
+function restoreB(){
+  const c = counts();
+  const chips = `<div class="sumchips">
+    <span class="chip">资源<b class="num">${RES.length}</b></span>
+    <span class="chip"><b class="num" style="color:var(--success)">${c.cas}</b>可直接恢复</span>
+    <span class="chip"><b class="num" style="color:var(--info)">${c.dl}</b>可重新下载</span>
+    <span class="chip hot"><b class="num">${c.user}</b>需你提供（就绪 ${c.userReady}）</span>
+    <span class="chip bad"><b class="num">${c.unrec}</b>不可恢复</span>
+    <span class="chip"><b class="num">${c.del}</b>将删除（警示 ${RES.filter(r=>r.m==='del'&&r.delWarn).length}）</span>
+  </div>`;
+  const rows = RES.map(r => `<tr>
+    <td style="width:30%"><div class="rowname ellipsis mono" style="max-width:260px">${esc(r.path)}</div><div class="rowsub">${esc(r.sub)}</div></td>
+    <td>${marker(r)}</td>
+    <td>${r.m==='dl' ? availCell(r) : '<span class="rowsub">—</span>'}</td>
+    <td>${r.m==='user' ? provCell(r) : noteCell(r)}</td>
+  </tr>`).join('');
+  return chips + `<div class="table-scroll"><table class="table">
+    <thead><tr><th>资源</th><th>判定</th><th>CF 可用性</th><th>处理 / 说明</th></tr></thead>
+    <tbody>${rows}</tbody></table></div>`;
+}
+
+/* ---- 结构 C：摘要卡先导 ---- */
+let openCard = 'user';
+function restoreC(){
+  const c = counts(); const b = blockers();
+  const cards = [
+    { k:'cas',  n:c.cas,  t:'可直接恢复', h:'对象库取字节 · 零网络' },
+    { k:'dl',   n:c.dl,   t:'可重新下载', h:'探测尽力 · 失败可重试' },
+    { k:'user', n:c.user, t:'需你提供',   h:`已就绪 ${c.userReady}/${c.user}` },
+    { k:'unrec',n:c.unrec,t:'不可恢复',   h:'仅部分回滚可跳过' },
+    { k:'del',  n:c.del,  t:'将删除',     h:`警示 ${RES.filter(r=>r.m==='del'&&r.delWarn).length} 项` },
+  ];
+  const items = RES.filter(r => r.m === openCard);
+  return `<div class="dcards">${cards.map(x => `<button class="dcard ${openCard===x.k?'on':''}" data-action="open-card" data-k="${x.k}">
+      <div class="k"><span class="st ${MARK[x.k].cls}" style="height:20px;font-size:11px">${x.t}</span></div>
+      <div class="v num">${x.n}</div><div class="hint">${x.h}</div></button>`).join('')}</div>
+    <div class="panel"><h3>${I(MARK[openCard].icon,'sm')} ${MARK[openCard].t}
+      <span class="sec n" style="margin:0">${items.length} 项 · 点击上方卡片切换</span></h3>
+      <div class="rowsub" style="margin:-6px 0 8px">${MARK[openCard].secNote}</div>
+      ${items.length ? `<div class="table-scroll"><table class="table">
+        <thead><tr><th>资源</th><th>判定</th><th>处理 / 说明</th></tr></thead>
+        <tbody>${items.map(r => opRow(r)).join('')}</tbody></table></div>`
+        : `<div class="rowsub" style="padding:8px 0">该判定下暂无资源。</div>`}
+    </div>
+    <div class="rowsub" style="margin-top:10px">exact ${b.length ? `被 ${b.length} 项阻塞` : '可行'} · 主区只保留决策与确认，明细全部收进卡片。</div>`;
+}
+
+/* ================= 8. 动作 ================= */
+function toast(msg, kind){
+  const t = document.createElement('div');
+  t.className = 'toast ' + (kind||'');
+  t.textContent = msg;
+  $('toast-root').appendChild(t);
+  setTimeout(() => t.remove(), 3200);
+}
+function openDialog(html){ S.dialog = html; renderLayers(); }
+function closeLayers(){ S.dialog = null; renderLayers(); }
+function confirmDialog(o){
+  openDialog(`<div class="dialog ${o.danger?'danger-strip':''}">
+    <div class="dialog-h">${I(o.danger?'warn':'help','sm')} ${esc(o.title)}</div>
+    <div class="dialog-b"><div style="margin-bottom:10px">${o.body}</div>
+      ${o.cons&&o.cons.length?`<div class="sec" style="margin-top:0">后果</div>`+o.cons.map(c=>`<div class="pf-row"><span class="pf-warn">${I('warn','sm')}</span><span>${c}</span></div>`).join(''):''}</div>
+    <div class="dialog-f"><button class="btn btn-text" data-action="dialog-close">取消</button>
+      <button class="btn ${o.danger?'btn-danger-t':'btn-primary'}" data-action="${o.act}">${esc(o.okLabel||'确认')}</button></div>
+  </div>`);
+}
+
+const ACTIONS = {
+  'toggle-theme'(){ S.theme = S.theme==='dark'?'light':'dark'; document.documentElement.dataset.theme = S.theme; $('theme-btn').innerHTML = I(S.theme==='dark'?'sun':'moon'); },
+  'reset-demo'(){ S = initState(); document.documentElement.dataset.theme = S.theme; $('theme-btn').innerHTML = I('sun'); openCard='user'; toast('演示状态已重置'); render(); },
+  'open-tasks'(){ navigate('#/tasks'); },
+  'toast-demo'(){ toast('原型占位：本原型只覆盖 P3 回滚面（完整页面见 workspace-ux-prototype.html）'); },
+  'help-open'(){
+    openDialog(`<div class="dialog"><div class="dialog-h">${I('help','sm')} 关于本原型</div>
+      <div class="dialog-b" style="font-size:12.5px">
+        <p style="margin-bottom:8px">契约 06（P3 回滚面）的可交互原型。H-03/04/05 是<b>同一份回滚计划的三种信息结构</b>（分组小节 / 单表全列 / 摘要卡先导）——2026-09-01 已拍板 <b>结构 B（H-04）定稿</b>入契约 06，H-03/05 抛弃归档。</p>
+        <p style="margin-bottom:8px">可试：①「需你提供」行提供文件 → hash 校验（waystones 命中、hand-placed 固定未命中）；②全部补全后 exact 解锁、横幅转绿；③「确认并回滚」弹四要素确认框；④设置页「演示非法值校验」。</p>
+        <p class="rowsub">画板浮条 ← → 切换；所有数据为内存态演示数据，刷新即重置。</p>
+      </div>
+      <div class="dialog-f"><button class="btn btn-primary" data-action="dialog-close">知道了</button></div></div>`);
+  },
+  'dialog-close'(){ closeLayers(); },
+  'dialog-backdrop'(){ closeLayers(); },
+  'board-prev'(){ switchBoard((boardIdx + BOARDS.length - 1) % BOARDS.length); },
+  'board-next'(){ switchBoard((boardIdx + 1) % BOARDS.length); },
+
+  /* 历史与入口 */
+  'goto-restore'(d){
+    S.exactness = 'partial'; S.stage = {};
+    navigate('#/workspaces/w1/plans/restore-a');
+    toast(`已生成回滚计划（目标 ${d.id}，演示数据）`, 'ok');
+  },
+  'cancel-task'(d){ toast('任务已取消（演示）'); },
+
+  /* 决策面 */
+  'set-exact'(d, el){
+    if (el.classList.contains('dis')){ toast('仍有阻塞项：提供文件或选择允许部分回滚', 'err'); return; }
+    S.exactness = d.v; render();
+  },
+  'open-card'(d){ openCard = d.k; render(); },
+
+  /* 用户对象补全：文件选择 → hash 校验 → 重判 */
+  'provide-open'(d){
+    const r = RES.find(x => x.id === Number(d.id));
+    openDialog(`<div class="dialog">
+      <div class="dialog-h">${I('up','sm')} 提供文件 · <span class="mono">${esc(r.path.split('/').pop())}</span></div>
+      <div class="dialog-b">
+        <div class="rowsub" style="margin-bottom:10px">将按目标摘要 <span class="mono">${esc(r.expect)}</span> 校验所选文件；通过后字节进入<b>本次计划的暂存区</b>（不进对象库，提交后清理）。</div>
+        <div class="set-row"><span class="lab">本地文件</span>
+          <span class="val"><span class="field" style="width:100%"><input id="uo-path" value="C:\\Users\\demo\\Downloads\\${esc(r.path.split('/').pop())}" style="width:100%"></span></span>
+          <button class="btn btn-outline btn-sm" data-action="toast-demo">浏览…</button></div>
+        ${r.why?`<div class="rowsub">降级原因：${esc(r.why)}</div>`:''}
+      </div>
+      <div class="dialog-f"><button class="btn btn-text" data-action="dialog-close">取消</button>
+        <button class="btn btn-primary" data-action="provide-check" data-id="${r.id}">校验并提供</button></div>
+    </div>`);
+  },
+  'provide-check'(d){
+    const id = Number(d.id);
+    closeLayers();
+    S.stage[id] = 'busy'; render();
+    setTimeout(() => {
+      // 演示脚本：id=6（waystones）命中；id=7（hand-placed）固定未命中，可重试
+      S.stage[id] = (id === 7) ? 'miss' : 'ready';
+      render();
+      if (S.stage[id] === 'ready'){
+        const c = counts();
+        toast(`校验通过：字节已入暂存（${c.userReady}/${c.user} 就绪）`, 'ok');
+        if (!blockers().length) toast('全部就绪——exact 回滚已解锁', 'ok');
+      } else {
+        toast('err.userobject.hash_mismatch：文件内容与目标摘要不符', 'err');
+      }
+    }, 800);
+  },
+
+  /* 确认回滚（四要素确认框） */
+  'restore-confirm'(){
+    const c = counts(); const b = blockers();
+    const partial = S.exactness === 'partial' || b.length > 0;
+    confirmDialog({
+      title: partial ? '确认回滚（部分）？' : '确认回滚（原样）？',
+      body:`将把 <b>${esc(WS.p)} ↔ ${esc(WS.r)}</b> 回滚到 <span class="mono">${TARGET.id}</span>（${TARGET.time}）。
+        ${partial ? `结果标记 <b>partial</b>（跳过 / 未提供 / 不可恢复共 ${c.unrec + (c.user - c.userReady)} 项），工作区保持待处理。` : '全部资源将恢复到目标状态。'}`,
+      cons: [
+        `${c.del} 项「目标之后新增」的资源将被删除${RES.some(r=>r.m==='del'&&r.delWarn) ? ' · 其中含无法找回的损失面（见计划行警示）' : ''}`,
+        `${c.dl} 项经 CurseForge 重新下载 · 下载失败 = 整场退出，可重试，不进崩溃恢复`,
+        `回滚永远需要人工确认（授权模式不适用，ADR-0006 §6）`,
+        `成功后产生一条新的回滚记录，历史不改写`,
+      ],
+      okLabel: partial ? '确认并回滚（partial）' : '确认并回滚（exact）',
+      act: 'restore-go',
+    });
+  },
+  'restore-go'(){
+    closeLayers();
+    const partial = S.exactness === 'partial' || blockers().length > 0;
+    TASKS.unshift({ id:'t-restore', ws:`${WS.p} ↔ ${WS.r}`, type:'回滚', status:'running',
+      phase:'重新下载并暂存资源（可离开此页）', progress:8, canCancel:true, time:'刚刚' });
+    S.unread++;
+    render();
+    toast(`回滚任务已启动（${partial?'partial':'exact'} · 演示），任务中心可追踪`, 'ok');
+    navigate('#/tasks');
+  },
+
+  /* 可用性依据抽屉 */
+  'show-avail'(d){
+    const r = RES.find(x => x.id === Number(d.id));
+    openDialog(`<div class="dialog" style="width:min(460px,calc(100vw - 48px))">
+      <div class="dialog-h">${I('info','sm')} 探测依据 · <span class="mono ellipsis">${esc(r.path.split('/').pop())}</span></div>
+      <div class="dialog-b"><div class="kv">
+        <dt>探测方式</dt><dd>mediafilez 直链构造（免 key，research/p3-cf-download）</dd>
+        <dt>探测结果</dt><dd>${r.avail==='ok' ? 'HTTP 200 · 可获取' : '超时（预算 3s）· 保持乐观标记'}</dd>
+        <dt>期望摘要</dt><dd class="mono tech">murmur2: 3f91…a2 · sha1: b0${r.id}7…e4</dd>
+        <dt>探测时间</dt><dd>计划生成时（14:20，演示）</dd>
+        <dt>失败语义</dt><dd>探测只是可用性辅助；执行期失败走重试 / 整场退出，不进崩溃恢复</dd>
+      </div>
+      <div class="pnote" style="margin-bottom:0">${I('info','sm')}<div><b>注记</b> · 有更新徽标仅提示「目标非最新版」，版本决策归 packwiz CLI（不做独立更新检查）。</div></div></div>
+      <div class="dialog-f"><button class="btn btn-primary btn-sm" data-action="dialog-close">关闭</button></div>
+    </div>`);
+  },
+
+  /* 保留策略设置 */
+  'retention-save'(){
+    const nums = ['rt-commits','rt-days','rt-trash'].map(id => Number($(id).value));
+    if (nums.some(n => !Number.isFinite(n) || n < 0)){
+      toast('err.settings.retention_invalid：数值非法（须为非负数）', 'err'); return;
+    }
+    toast('保留策略已保存（演示）· 下次 GC 生效', 'ok');
+  },
+  'retention-demo-invalid'(){
+    $('rt-days').value = '-5';
+    toast('已填入非法值 -5，点「保存」看校验', 'err');
+  },
+  'gc-run'(){
+    TASKS.unshift({ id:'t-gc2', ws:`${WS.p} ↔ ${WS.r}`, type:'空间回收', status:'queued',
+      phase:'等待空闲时段（安全窗口未开 · 自动续排）', progress:0, canCancel:true, time:'刚刚' });
+    S.unread++; render();
+    toast('已建空间回收任务（安全窗口未开 → 排队自动续，不拒绝）', 'ok');
+  },
+};
+
+/* ================= 9. 层渲染（任务中心 + 弹窗） ================= */
+function renderLayers(){
+  let html = '';
+  if (S.dialog) html += `<div class="dialog-wrap" data-action="dialog-backdrop">${S.dialog}</div>`;
+  $('layer-root').innerHTML = html;
+  const badge = $('bell-badge');
+  badge.style.display = S.unread > 0 ? 'flex' : 'none';
+  badge.textContent = S.unread;
+  const jump = $('pb-jump');
+  if (jump.options.length !== BOARDS.length){
+    jump.innerHTML = BOARDS.map((b,i) => `<option value="${i}">${b.id} · ${b.t}</option>`).join('');
+  }
+  jump.value = boardIdx;
+  $('pb-label').innerHTML = `<small>画板</small>${BOARDS[boardIdx].id} · ${BOARDS[boardIdx].t}`;
+}
+
+/* ================= 10. 主渲染 ================= */
+function render(){
+  const rt = parseRoute();
+  const fn = SCREENS[rt.page] || SCREENS['history'];
+  const out = fn(rt);
+  $('tb-title').textContent = out.title;
+  $('tb-sub').textContent = out.sub || '';
+  $('screen').innerHTML = out.html;
+  document.querySelectorAll('.rail-btn').forEach(b => {
+    const nav = b.dataset.nav || '';
+    const on = (nav.startsWith('#/workspaces') && location.hash.startsWith('#/workspaces'))
+      || (nav === '#/settings-retention' && location.hash.startsWith('#/settings'));
+    b.classList.toggle('active', on);
+  });
+  if (location.hash !== BOARDS[boardIdx].r){
+    const bi = BOARDS.findIndex(b => b.r === location.hash);
+    if (bi >= 0) boardIdx = bi;
+  }
+  renderLayers();
+}
+
+/* ================= 11. 事件 ================= */
+document.addEventListener('click', (e) => {
+  if (e.target.dataset && e.target.dataset.action === 'dialog-backdrop'){ closeLayers(); return; }
+  const el = e.target.closest('[data-action],[data-nav]');
+  if (!el) return;
+  if (el.dataset.nav){ navigate(el.dataset.nav); return; }
+  const fn = ACTIONS[el.dataset.action];
+  if (fn){ fn(el.dataset, el); }
+});
+document.addEventListener('keydown', (e) => {
+  const tag = (document.activeElement && document.activeElement.tagName) || '';
+  if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || (document.activeElement && document.activeElement.isContentEditable)) return;
+  if (e.key === 'Escape'){ if (S.dialog){ closeLayers(); } return; }
+  if (e.key === 'ArrowLeft'){ ACTIONS['board-prev'](); }
+  if (e.key === 'ArrowRight'){ ACTIONS['board-next'](); }
+});
+document.addEventListener('change', (e) => {
+  if (e.target.id === 'pb-jump'){ switchBoard(Number(e.target.value)); }
+});
+window.addEventListener('hashchange', render);
+
+/* 回滚任务模拟推进（仅演示） */
+setInterval(() => {
+  let changed = false;
+  TASKS.forEach(t => {
+    if (t.status === 'running' && t.progress < 100){
+      t.progress = Math.min(100, t.progress + 4);
+      if (t.progress >= 100){ t.status = 'done'; t.phase = '回滚完成 · 新回滚记录已生成'; t.canCancel = false; changed = true; }
+    }
+  });
+  if (changed) render();
+}, 1500);
+
+/* ================= 12. 启动 ================= */
+$('theme-btn').innerHTML = I('sun');
+if (!location.hash) location.hash = '#/workspaces/w1/history';
+switchBoard(0);
+function switchBoard(i){
+  boardIdx = i;
+  const b = BOARDS[i];
+  S.dialog = null;
+  if (b.s) b.s();
+  renderLayers();
+  navigate(b.r);
+}
+</script>
+</body>
+</html>
