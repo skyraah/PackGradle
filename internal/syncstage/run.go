@@ -189,6 +189,11 @@ func (r *Run) StageAbs(stagingRel string) (string, error) {
 // StageContent 把 after 内容流式写入暂存副本（原子写）并复核 digest：
 // 落盘后重算 sha256，与 wantDigest 不符即删除副本并返回 ErrDigestMismatch，
 // 不留半成品证据。返回 journal 可引用的暂存相对路径。
+//
+// 复用短路（P2-T14）：暂存副本已存在且 digest 复核相符时直接返回既有路径，
+// 不重写（applying 期动作原语对 staging 期已暂存的同一内容重放本方法——重写
+// 是逐文件 fsync 的纯浪费；幂等重放语义逐字节不变）。digest 复核照常执行：
+// 短路省的是写，不是校验。
 func (r *Run) StageContent(targetRel string, content io.Reader, wantDigest string) (string, error) {
 	if content == nil {
 		return "", errors.New("syncstage: 暂存内容不能为空")
@@ -203,6 +208,12 @@ func (r *Run) StageContent(targetRel string, content io.Reader, wantDigest strin
 	abs, err := r.StageAbs(stagingRel)
 	if err != nil {
 		return "", err
+	}
+	// 复用短路：既有副本复核相符即复用（原子 rename 保证存在的副本必然完整）。
+	if existing, statErr := os.Lstat(abs); statErr == nil && existing.Mode().IsRegular() {
+		if got, _, hashErr := hashFilePath(abs); hashErr == nil && got == wantDigest {
+			return stagingRel, nil
+		}
 	}
 	if err := writeFileAtomic(abs, content); err != nil {
 		return "", err

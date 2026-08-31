@@ -7,6 +7,9 @@ import (
 	"io"
 	"log"
 	"path/filepath"
+	"strings"
+	"sync"
+	"sync/atomic"
 	"time"
 
 	"packgradle/internal/application/ports"
@@ -20,7 +23,8 @@ import (
 // prepared 推到 committed（或 recovery_required）。编排沿 ADR-0004 §5 成功路径：
 //
 //	staged（逐操作前置条件复核 + before CAS 保全 + after 内容暂存复核 + proof）
-//	→ applying（逐操作两段式：先持久化 running 意图再执行文件动作，成功→applied）
+//	→ applying（两段式批量化：批前单事务持久化整批 running 意图，批内文件动作
+//	  有界并行，批后单事务记录整批结果——每操作的意图仍严格先于其动作）
 //	→ verifying（受管范围完整复扫，快照与计划目标一致才过）
 //	→ committed（单 RunInTx：验证快照 + 新 Baseline + SyncCommit + object_refs
 //	  + Relation head + run 终态 + 操作 verified；事务提交成功后才清 staging）。
@@ -29,6 +33,16 @@ import (
 // Commit，run→recovery_required + 任务终态 recovery_required（P1 死值点亮），
 // staging 证据保留。事件只在事务提交后发布（ADR-0004 §6）；事件不负载数据，
 // 进度以任务投影为准（契约 05 §4 D1）。
+//
+// 批量化的恢复安全性（票 #48，ADR-0004 §4 裁决矩阵的本源性）：事务边界按批
+// 摊薄后，崩溃可能留下三种 journal/文件形态，全部落在既有矩阵四路裁决内——
+//   - 批前崩溃：整批 pending（意图事务未提交）→ redo；
+//   - 批中崩溃：已执行操作 running/applied + 目标已达 after digest + 所有权
+//     证明匹配 → 第一行 mark-applied；未执行操作 running + 目标未写 + staging
+//     完整 → 第二行幂等 redo；
+//   - 批后崩溃：整批 applied → mark-applied。
+// 「running 未执行」不是漏洞而是矩阵存在的原因：裁决凭 probe（目标 digest、
+// 暂存证据、所有权证明），不凭操作行状态猜测。
 
 // startApply 在 ConfirmPlan 提交成功后启动引擎协程接管任务（StartScan 先例：
 // ctx WithoutCancel 派生，取消句柄注册进 runner 供 CancelTask 触发）。
@@ -215,7 +229,7 @@ func (a *App) runApply(ctx context.Context, queued model.Task) {
 	}
 	state = model.ApplyRunStaged
 
-	// ---- applying：逐操作两段式（意图先行，文件动作在后） ----
+	// ---- applying：两段式批量化（意图先行不变，事务边界按批摊薄，票 #48） ----
 	applyingStart := time.Now()
 	t.Phase = "applying"
 	t.MessageKey = "msg.task.apply.applying"
@@ -229,21 +243,8 @@ func (a *App) runApply(ctx context.Context, queued model.Task) {
 	}
 	state = model.ApplyRunApplying
 
-	for i := range staged {
-		s := &staged[i]
-		// 取消在操作边界响应：已 started 的操作做完再停（票 #37.6）。
-		if ctx.Err() != nil {
-			failRun(resultCancelled, ctx.Err())
-			return
-		}
-		if err := a.applyOneOperation(ctx, commitCtx, t.TaskID, s, actionsBySide[s.fp.targetSide]); err != nil {
-			failRun(err.resultCode, err.cause)
-			return
-		}
-		t.Completed = i + 1
-		if !advance(t) {
-			return
-		}
+	if !a.runApplyingBatches(ctx, commitCtx, &t, staged, actionsBySide, advance, failRun) {
+		return
 	}
 	timing.ApplyingMs = time.Since(applyingStart).Milliseconds()
 	if err := a.deps.ApplyRuns.AdvanceState(ctx, t.TaskID, model.ApplyRunVerifying, a.nowStr()); err != nil {
@@ -375,6 +376,21 @@ func (a *App) runApply(ctx context.Context, queued model.Task) {
 	_ = a.pub.PublishRelationInvalidated(commitCtx, rel.RelationID)
 }
 
+// applyWorkers 是 staging 与 applying 批内文件动作共用的有界并行度（票 #48：
+// writeFileAtomic 逐文件 fsync 是 staging/applying 相大头，目标路径互斥的操作
+// 可安全并行；票面 4-8 worker 的上限值，多核开发机 16 逻辑 CPU 下实测最优）。
+const applyWorkers = 8
+
+// applyBatchFirst/applyBatchMax 是 applying 的自适应批边界（票 #48）：首批判
+// 最小（运行初期取消/失败时暴露的「running 未执行」形态最少，中断粒度最细，
+// 与 T04 取消边界测试的逐操作语义对齐），此后逐批翻倍摊薄事务开销，上限
+// applyBatchMax。批大小的正确性中立：意图先行的保证来自批边界时序（批内任一
+// 动作在批意图事务提交后才开始），与批大小无关。
+const (
+	applyBatchFirst = 1
+	applyBatchMax   = 32
+)
+
 // stagedOp 是单操作 staging 期产物（journal 引用事实 + applying 执行输入）。
 type stagedOp struct {
 	fp       applyFilePlan
@@ -385,84 +401,367 @@ type stagedOp struct {
 	failErr  error
 }
 
-// stageApplyOperations 逐操作执行 staging：前置条件复核 → before CAS 保全 →
-// after 内容暂存复核 → 所有权证明签发与落盘（ADR-0004 §3：进入 staged 前，
-// 将被覆盖/删除且策略要求保留的旧内容已入 CAS 并完成 hash 复核；暂存副本
-// 落盘即复核 digest）。首个失败即停（后续操作保持未 staging，不落 journal 行），
-// 失败记录在返回切片对应项；取消在操作边界响应。
+// stageOneOperation 执行单操作 staging（串行原语的逐操作体）：前置条件复核 →
+// before CAS 保全 → after 内容暂存复核 → 所有权证明签发与落盘（ADR-0004 §3：
+// 进入 staged 前，将被覆盖/删除且策略要求保留的旧内容已入 CAS 并完成 hash
+// 复核；暂存副本落盘即复核 digest）。失败记录在返回值的 failCode/failErr。
+func stageOneOperation(ctx context.Context, a *App, run *syncstage.Run, relationID string,
+	fp applyFilePlan, snaps map[model.Side]model.ObservedSnapshot,
+	rootBySide map[model.Side]string) stagedOp {
+
+	s := stagedOp{fp: fp}
+	if fp.blockedCode != "" {
+		s.failCode, s.failErr = fp.blockedCode, fmt.Errorf("操作不可执行（%s）", fp.blockedCode)
+		return s
+	}
+	if code := verifyApplyPreconditions(fp.op, snaps, rootBySide); code != "" {
+		s.failCode, s.failErr = code, fmt.Errorf("前置条件在磁盘上不成立（%s）", code)
+		return s
+	}
+	// before-content CAS 保全：modify/delete 且 recoverability 策略要求时
+	// 先落 CAS 并独立复核（PreserveBeforeContent 失败零引用）。
+	if fp.action == applyActionModify || fp.action == applyActionDelete {
+		if syncstage.RequiresCASBackup(fp.recoverability) {
+			ref, preserved, err := syncstage.PreserveBeforeContent(ctx, a.deps.CAS,
+				filepath.Join(fp.root, filepath.FromSlash(fp.targetRel)), fp.recoverability)
+			if err != nil {
+				s.failCode, s.failErr = applyResultCode(err), err
+				return s
+			}
+			if preserved {
+				s.casRef = &ports.ObjectRefRow{
+					Algorithm: ref.Algorithm, Digest: ref.Digest,
+					Purpose: objectRefPurposeBefore, Size: ref.Size,
+				}
+			}
+		}
+	}
+	// after 内容暂存（create/modify）：暂存副本镜像目标路径，StageContent
+	// 原子落盘 + digest 复核，失败即删零残留。目标已达成（幂等重放）跳过。
+	if fp.action == applyActionCreate || fp.action == applyActionModify {
+		if !fp.targetReady {
+			reader, closer, err := a.afterContentReader(ctx, fp)
+			if err != nil {
+				s.failCode, s.failErr = resultContentUnavailable, err
+				return s
+			}
+			tempRel, stageErr := run.StageContent(fp.targetRel, reader, fp.afterDigest)
+			closer()
+			if stageErr != nil {
+				s.failCode, s.failErr = applyResultCode(stageErr), stageErr
+				return s
+			}
+			s.tempRel = tempRel
+		}
+	}
+	// 所有权证明：签发后落暂存证据（proofs/<op_id>.json），与 journal 列副本互验。
+	proof, err := run.IssueProof(relationID, fp.op.ID, fp.targetRel, fp.beforeDigest, fp.afterDigest)
+	if err != nil {
+		s.failCode, s.failErr = resultProofInvalid, err
+		return s
+	}
+	if err := run.SaveProof(proof); err != nil {
+		s.failCode, s.failErr = applyResultCode(err), err
+		return s
+	}
+	s.proof = proof
+	return s
+}
+
+// stageApplyOperations 有界并行执行 staging（P2-T14）：逐操作工作互相独立——
+// 各操作只触碰自己的目标/源文件与按操作隔离的暂存/证明路径（计划每资源一
+// 操作，路径互斥），运行密钥只读，CAS Put 按 digest 寻址并发安全。结果按序
+// 回收；首个失败（最低 ordinal）即停：停止派发后续操作，在途操作自然完成
+// （其暂存事实截断出 journal，孤儿文件留在运行目录内，随运行清理回收），
+// 返回切片保持 plans 前缀契约（buildJournalRows）。取消在操作边界响应：
+// 已在途的操作做完（仅暂存，不触目标），未开始的保持未 staging。
 func stageApplyOperations(ctx context.Context, a *App, run *syncstage.Run, relationID string,
 	plans []applyFilePlan, snaps map[model.Side]model.ObservedSnapshot,
 	rootBySide map[model.Side]string) []stagedOp {
 
-	staged := make([]stagedOp, 0, len(plans))
-	appendAndStop := func(s stagedOp) []stagedOp {
-		staged = append(staged, s)
-		return staged
+	results := make([]stagedOp, len(plans))
+	executed := make([]bool, len(plans))
+	var stop atomic.Bool // 首个失败后停止派发（在途操作做完）
+	work := make(chan int)
+	workers := applyWorkers
+	if len(plans) < workers {
+		workers = len(plans)
 	}
-	for _, fp := range plans {
-		s := stagedOp{fp: fp}
+	var wg sync.WaitGroup
+	for w := 0; w < workers; w++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for i := range work {
+				if ctx.Err() != nil || stop.Load() {
+					continue // 未开始的操作保持未 staging
+				}
+				results[i] = stageOneOperation(ctx, a, run, relationID, plans[i], snaps, rootBySide)
+				executed[i] = true
+				if results[i].failCode != "" {
+					stop.Store(true)
+				}
+			}
+		}()
+	}
+	for i := range plans {
+		work <- i
+	}
+	close(work)
+	wg.Wait()
+
+	// 按序组装：截断到首个失败（含取消点）；失败操作以 failed 事实收尾
+	// （buildJournalRows 据此落初始 failed 行并停止建行）。
+	out := make([]stagedOp, 0, len(plans))
+	for i := range plans {
+		if !executed[i] {
+			if ctx.Err() != nil {
+				out = append(out, stagedOp{fp: plans[i], failCode: resultCancelled, failErr: ctx.Err()})
+			}
+			break
+		}
+		out = append(out, results[i])
+		if results[i].failCode != "" {
+			break
+		}
+	}
+	return out
+}
+
+// batchOutcome 是批内单动作的执行事实。started=false 表示「running 意图已
+// 持久化但动作未开始」（取消/失败边界后未执行）——操作行保持 running，
+// 交恢复矩阵按文件事实裁决（redo），不伪装成 applied/failed。
+type batchOutcome struct {
+	started bool
+	res     syncstage.ApplyResult
+	code    string
+	err     error
+}
+
+// runApplyingBatches 执行 applying 相的批量化两段式（票 #48）。逐批：
+//
+//  1. 批边界取消检查（下一批 running 意图尚未持久化，未开始操作保持 pending
+//     ——T04 取消边界测试锁定的形态）；
+//  2. 批前：单事务持久化整批 running 意图（意图先行的批形态：批内任一动作
+//     都在本事务提交后才开始）；失败降级逐操作串行（隔离毒化操作——如触发器
+//     拒绝单一操作的意图，整批回滚后串行路径给出与 T04 一致的失败形态）；
+//  3. 批内：文件动作有界并行（目标路径互斥，原语无共享状态）；
+//  4. 批后：单事务记录整批结果（applied/failed + result_json；未 started 的
+//     操作保持 running）。批后崩溃窗口由裁决矩阵覆盖（见包注释）。
+//
+// 返回 false 表示已 failRun（调用方直接返回）。
+func (a *App) runApplyingBatches(ctx, commitCtx context.Context, t *model.Task,
+	staged []stagedOp, actionsBySide map[model.Side]*syncstage.Actions,
+	advance func(model.Task) bool, failRun func(string, error)) bool {
+
+	taskID := t.TaskID
+	total := len(staged)
+	start := 0
+	size := applyBatchFirst
+	for start < total {
+		// 取消在批边界响应（票 #37.6）：已 started 的操作已在上一批做完，
+		// 本批意图未落、动作未启，未开始的操作保持 pending。
 		if ctx.Err() != nil {
-			s.failCode, s.failErr = resultCancelled, ctx.Err()
-			return appendAndStop(s)
+			failRun(resultCancelled, ctx.Err())
+			return false
 		}
-		if fp.blockedCode != "" {
-			s.failCode, s.failErr = fp.blockedCode, fmt.Errorf("操作不可执行（%s）", fp.blockedCode)
-			return appendAndStop(s)
+		end := start + size
+		if end > total {
+			end = total
 		}
-		if code := verifyApplyPreconditions(fp.op, snaps, rootBySide); code != "" {
-			s.failCode, s.failErr = code, fmt.Errorf("前置条件在磁盘上不成立（%s）", code)
-			return appendAndStop(s)
+		batch := staged[start:end]
+
+		if err := a.persistBatchIntents(ctx, taskID, batch); err != nil {
+			// 批意图事务失败：逐操作串行重放（意图逐个落、动作逐个执行，
+			// 首个失败按 T04 语义收口）。整批已回滚为 pending，毒化操作
+			// （触发器拒 running 等）被隔离为单操作失败。
+			if !a.applyBatchSerially(ctx, commitCtx, t, batch, start, actionsBySide, advance, failRun) {
+				return false
+			}
+			start = end
+			size = nextBatchSize(size)
+			continue
 		}
-		// before-content CAS 保全：modify/delete 且 recoverability 策略要求时
-		// 先落 CAS 并独立复核（PreserveBeforeContent 失败零引用）。
-		if fp.action == applyActionModify || fp.action == applyActionDelete {
-			if syncstage.RequiresCASBackup(fp.recoverability) {
-				ref, preserved, err := syncstage.PreserveBeforeContent(ctx, a.deps.CAS,
-					filepath.Join(fp.root, filepath.FromSlash(fp.targetRel)), fp.recoverability)
-				if err != nil {
-					s.failCode, s.failErr = applyResultCode(err), err
-					return appendAndStop(s)
-				}
-				if preserved {
-					s.casRef = &ports.ObjectRefRow{
-						Algorithm: ref.Algorithm, Digest: ref.Digest,
-						Purpose: objectRefPurposeBefore, Size: ref.Size,
-					}
-				}
+
+		outcomes := a.runBatchActions(ctx, batch, actionsBySide)
+		if err := a.flushBatchResults(commitCtx, taskID, batch, outcomes); err != nil {
+			failRun(applyResultCode(err), fmt.Errorf("批结果落库: %w", err))
+			return false
+		}
+		firstFail := -1
+		executed := 0
+		for i := range outcomes {
+			if outcomes[i].started {
+				executed++
+			}
+			if firstFail < 0 && outcomes[i].err != nil {
+				firstFail = i
 			}
 		}
-		// after 内容暂存（create/modify）：暂存副本镜像目标路径，StageContent
-		// 原子落盘 + digest 复核，失败即删零残留。目标已达成（幂等重放）跳过。
-		if fp.action == applyActionCreate || fp.action == applyActionModify {
-			if !fp.targetReady {
-				reader, closer, err := a.afterContentReader(ctx, fp)
-				if err != nil {
-					s.failCode, s.failErr = resultContentUnavailable, err
-					return appendAndStop(s)
-				}
-				tempRel, stageErr := run.StageContent(fp.targetRel, reader, fp.afterDigest)
-				closer()
-				if stageErr != nil {
-					s.failCode, s.failErr = applyResultCode(stageErr), stageErr
-					return appendAndStop(s)
-				}
-				s.tempRel = tempRel
-			}
+		t.Completed = start + executed
+		if !advance(*t) {
+			return false
 		}
-		// 所有权证明：签发后落暂存证据（proofs/<op_id>.json），与 journal 列副本互验。
-		proof, err := run.IssueProof(relationID, fp.op.ID, fp.targetRel, fp.beforeDigest, fp.afterDigest)
-		if err != nil {
-			s.failCode, s.failErr = resultProofInvalid, err
-			return appendAndStop(s)
+		if firstFail >= 0 {
+			failRun(outcomes[firstFail].code, outcomes[firstFail].err)
+			return false
 		}
-		if err := run.SaveProof(proof); err != nil {
-			s.failCode, s.failErr = applyResultCode(err), err
-			return appendAndStop(s)
-		}
-		s.proof = proof
-		staged = append(staged, s)
+		start = end
+		size = nextBatchSize(size)
 	}
-	return staged
+	return true
+}
+
+// nextBatchSize 返回下一批大小：指数爬坡至 applyBatchMax（运行初期中断粒度
+// 最细，随推进摊薄事务开销）。
+func nextBatchSize(cur int) int {
+	next := cur * 2
+	if next > applyBatchMax {
+		next = applyBatchMax
+	}
+	return next
+}
+
+// persistBatchIntents 在单事务内持久化整批 running 意图（逐操作仍走
+// AdvanceStatus 的追加历史+状态机校验，事务边界按批摊薄——RunInTx 事务域内
+// 仓库自动加入外层事务）。意图先行的批形态不变量：本事务提交后批内才可能
+// 有任何文件动作（探针测试 apply_t14 逐动作断言）。
+func (a *App) persistBatchIntents(ctx context.Context, taskID string, batch []stagedOp) error {
+	return a.deps.Tx.RunInTx(ctx, func(repos ports.Repos) error {
+		for i := range batch {
+			fp := batch[i].fp
+			intent := marshalJSONRaw(map[string]string{"intent": "apply", "action": fp.action, "target": fp.targetRel})
+			if err := repos.Journal.AdvanceStatus(ctx, taskID, fp.op.ID,
+				model.OperationStatusRunning, a.nowStr(), intent); err != nil {
+				return fmt.Errorf("操作 %s 持久化 running 意图: %w", fp.op.ID, err)
+			}
+		}
+		return nil
+	})
+}
+
+// applyBatchSerially 是批意图事务失败后的串行降级路径：与 T04 逐操作两段式
+// 完全同构（applyOneOperation：意图单事务→动作→结果单事务）。返回 false 表示
+// 已 failRun。
+func (a *App) applyBatchSerially(ctx, commitCtx context.Context, t *model.Task,
+	batch []stagedOp, base int, actionsBySide map[model.Side]*syncstage.Actions,
+	advance func(model.Task) bool, failRun func(string, error)) bool {
+
+	for i := range batch {
+		// 取消在操作边界响应：已 started 的操作做完再停（票 #37.6）。
+		if ctx.Err() != nil {
+			failRun(resultCancelled, ctx.Err())
+			return false
+		}
+		s := &batch[i]
+		if err := a.applyOneOperation(ctx, commitCtx, t.TaskID, s, actionsBySide[s.fp.targetSide]); err != nil {
+			failRun(err.resultCode, err.cause)
+			return false
+		}
+		t.Completed = base + i + 1
+		if !advance(*t) {
+			return false
+		}
+	}
+	return true
+}
+
+// runBatchActions 有界并行执行批内文件动作（票 #48 次矛盾）。安全边界：
+// 目标路径互斥（计划每资源一操作），syncstage 原语无共享状态（运行密钥只读）；
+// 取消/首个失败后未开始的动作不再启动（已 started 做完，票 #37.6）。
+func (a *App) runBatchActions(ctx context.Context, batch []stagedOp,
+	actionsBySide map[model.Side]*syncstage.Actions) []batchOutcome {
+
+	outcomes := make([]batchOutcome, len(batch))
+	var abort atomic.Bool
+	work := make(chan int)
+	workers := applyWorkers
+	if len(batch) < workers {
+		workers = len(batch)
+	}
+	var wg sync.WaitGroup
+	for w := 0; w < workers; w++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for i := range work {
+				if ctx.Err() != nil || abort.Load() {
+					continue // 未 started：操作行保持 running，恢复矩阵裁决
+				}
+				s := &batch[i]
+				o := batchOutcome{started: true}
+				var content io.Reader
+				if s.fp.action == applyActionCreate || s.fp.action == applyActionModify {
+					// 批路径内容恒取 staging 期已复核的暂存副本（s.tempRel 或
+					// targetReady 时动作为 already_applied 不消费内容）：不再打开
+					// 源文件。暂存副本丢失的退化路径安全——StageContent 以空内容
+					// 落盘即被自身 digest 复核拒绝（副本已删、目标未触碰），操作
+					// 以 digest_mismatch 进恢复面，绝不写坏目标。
+					content = strings.NewReader("")
+				}
+				res, execErr := applyActionRunner(actionsBySide[s.fp.targetSide], s.fp.action, s.proof, content)
+				if execErr != nil {
+					o.code, o.err = applyResultCode(execErr), execErr
+				} else {
+					o.res = res
+				}
+				if o.err != nil {
+					abort.Store(true) // 失败即停：批内未 started 的动作不再启动
+				}
+				outcomes[i] = o
+			}
+		}()
+	}
+	for i := range batch {
+		work <- i
+	}
+	close(work)
+	wg.Wait()
+	return outcomes
+}
+
+// flushBatchResults 在单事务内记录整批动作结果：成功→applied（outcome 摘要），
+// 失败→failed+result_json（首个失败驱动 failRun，其余失败如实入账），未
+// started 的操作跳过（保持 running）。commitCtx 落库：取消不连带记账失败。
+// 事务失败即恢复面（结果未落库的崩溃窗口由矩阵 mark-applied/redo 覆盖）。
+func (a *App) flushBatchResults(ctx context.Context, taskID string, batch []stagedOp,
+	outcomes []batchOutcome) error {
+
+	hasWork := false
+	for i := range outcomes {
+		if outcomes[i].started {
+			hasWork = true
+			break
+		}
+	}
+	if !hasWork {
+		return nil
+	}
+	return a.deps.Tx.RunInTx(ctx, func(repos ports.Repos) error {
+		for i := range outcomes {
+			o := outcomes[i]
+			if !o.started {
+				continue
+			}
+			if o.err != nil {
+				detail := marshalJSONRaw(map[string]string{"code": o.code, "detail": o.err.Error()})
+				if err := repos.Journal.AdvanceStatus(ctx, taskID, batch[i].fp.op.ID,
+					model.OperationStatusFailed, a.nowStr(), detail); err != nil {
+					return fmt.Errorf("操作 %s 推进 failed: %w", batch[i].fp.op.ID, err)
+				}
+				if err := repos.Journal.MarkResult(ctx, taskID, batch[i].fp.op.ID, detail); err != nil {
+					return fmt.Errorf("操作 %s 记录结果: %w", batch[i].fp.op.ID, err)
+				}
+				continue
+			}
+			outcome := marshalJSONRaw(map[string]string{"outcome": string(o.res.Outcome)})
+			if err := repos.Journal.AdvanceStatus(ctx, taskID, batch[i].fp.op.ID,
+				model.OperationStatusApplied, a.nowStr(), outcome); err != nil {
+				return fmt.Errorf("操作 %s 推进 applied: %w", batch[i].fp.op.ID, err)
+			}
+		}
+		return nil
+	})
 }
 
 // applyOpError 是操作级失败的携带结果码的错误（failRun 据此记原因）。
@@ -473,10 +772,10 @@ type applyOpError struct {
 
 func (e *applyOpError) Error() string { return e.cause.Error() }
 
-// applyOneOperation 执行单个已 staged 操作（ADR-0004 §2 逐操作两段式）：
-// 先持久化 running 意图（操作行 + 追加历史，意图先行的铁律——意图写失败时
-// 绝不执行文件动作），再执行文件动作（幂等原语，重放安全），成功→applied，
-// 失败→failed + result。
+// applyOneOperation 执行单个已 staged 操作（ADR-0004 §2 逐操作两段式，票 #48
+// 起为批意图事务失败后的串行降级路径）：先持久化 running 意图（操作行 + 追加
+// 历史，意图先行的铁律——意图写失败时绝不执行文件动作），再执行文件动作
+// （幂等原语，重放安全），成功→applied，失败→failed + result。
 func (a *App) applyOneOperation(ctx, commitCtx context.Context, taskID string, s *stagedOp,
 	act *syncstage.Actions) *applyOpError {
 
