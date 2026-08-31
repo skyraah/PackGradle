@@ -14,6 +14,7 @@ export type {
     ActionAvailabilityDTO,
     ApplyOperationDTO,
     ApplyOperationPageDTO,
+    ApplyRunDTO,
     ChangeDTO,
     ChangesPageDTO,
     ChangesSummaryDTO,

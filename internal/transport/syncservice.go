@@ -307,3 +307,15 @@ func (s *SyncService) GetCommit(relationID, commitID string) (CommitDTO, error) 
 	}
 	return commitDTO(v), nil
 }
+
+// AcknowledgeRecovery 人工确认恢复收口（契约 05 §3.4；票 #38）：前置
+// run=recovery_required（否则 err.recovery.not_required），效果 acknowledged_at
+// 落库 + 关系复位 healthy（头基线不动、不建 SyncCommit），发布
+// relation_invalidated 引导重扫；返回确认后的工作区投影。已确认重入幂等返回。
+func (s *SyncService) AcknowledgeRecovery(taskID string) (WorkspaceDTO, error) {
+	v, err := s.app.AcknowledgeRecovery(context.Background(), taskID)
+	if err != nil {
+		return WorkspaceDTO{}, err
+	}
+	return workspaceDTO(v), nil
+}

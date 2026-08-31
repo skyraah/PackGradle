@@ -51,6 +51,10 @@ type Application interface {
 	ListApplyOperations(ctx context.Context, input view.ListApplyOperationsInput) (view.ApplyOperationPage, error)
 	ListCommits(ctx context.Context, relationID string, page ports.PageRequest) (view.CommitPage, error)
 	GetCommit(ctx context.Context, relationID, commitID string) (view.CommitView, error)
+	// AcknowledgeRecovery 人工确认恢复收口（契约 05 §3.4；票 #38）：
+	// 前置 run=recovery_required，acknowledged_at 落库 + 关系复位 healthy，
+	// 头基线不动、不建 Commit，发布 relation_invalidated 引导重扫。
+	AcknowledgeRecovery(ctx context.Context, taskID string) (view.WorkspaceView, error)
 }
 
 var _ Application = (*App)(nil)
