@@ -1,6 +1,7 @@
 package syncstage
 
 import (
+	"bytes"
 	"crypto/hmac"
 	"crypto/rand"
 	"crypto/sha256"
@@ -163,6 +164,10 @@ func (r *Run) VerifyOwnershipProof(p OwnershipProof) error {
 // SaveProof 把证明序列化存入运行暂存目录（proofs/<operation_id>.json，原子写）。
 // 只保存能通过本校验的证明——暂存目录里不出现无效证据。与 journal 的
 // ownership_proof_json 副本可互验。
+//
+// 同内容跳写（P2-T14）：既有文件字节完全一致时不再重写（staging 期已落盘的
+// 证明在 applying 期动作原语的 recordProof 重放——重写同一内容是逐文件 fsync
+// 的纯浪费；落盘事实不变）。字节不一致（含文件缺失）照常原子覆盖。
 func (r *Run) SaveProof(p OwnershipProof) error {
 	if err := r.VerifyOwnershipProof(p); err != nil {
 		return err
@@ -172,6 +177,9 @@ func (r *Run) SaveProof(p OwnershipProof) error {
 		return fmt.Errorf("syncstage: 序列化证明失败: %w", err)
 	}
 	path := filepath.Join(r.dir, proofsDir, p.OperationID+proofExt)
+	if existing, readErr := os.ReadFile(path); readErr == nil && bytes.Equal(existing, data) {
+		return nil
+	}
 	if err := writeFileAtomic(path, strings.NewReader(string(data))); err != nil {
 		return err
 	}
