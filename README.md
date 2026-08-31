@@ -1,6 +1,8 @@
 # Pack Gradle
 
-一个用于在 packwiz 项目与 Prism Launcher 实例之间进行同步的桌面工具/CLI。旨在为您提供更健康的modpack项目管理模式。
+一个用于在 packwiz 项目与 Prism Launcher 实例之间进行同步的桌面工具/CLI。
+
+旨在为您提供更健康的modpack项目管理模式。
 
 ## 概览
 
