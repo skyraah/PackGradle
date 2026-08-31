@@ -128,6 +128,25 @@ async function queryAndCommit(dirtyIDs: string[]): Promise<void> {
             nextTasks.set(prev.task_id, prev)
         }
     }
+    // 冷启动发现（T13 B 口径走查发现补，票 #45）：应用重启后上轮缓存不存在，
+    // 恢复门内的恢复任务既不在活跃列表也无从保留——任务中心「处理恢复」入口断链。
+    // 以查询 API 为事实源（契约 05 §5）：GetApplyRun 最近运行 → GetTask 重读，
+    // 经上方 recovery_required 例外放行入缓存；失败不阻塞本轮，等对账重试。
+    for (const w of wss) {
+        if (w.relation.health !== 'recovery_required') continue
+        const known = [...nextTasks.values()].some(
+            t => t.relation_id === w.relation.relation_id && t.status === 'recovery_required',
+        )
+        if (known) continue
+        try {
+            const run = await SyncService.GetApplyRun(w.relation.relation_id)
+            if (!run?.task_id) continue
+            const t = await SyncService.GetTask(run.task_id)
+            if (t && t.status === 'recovery_required') nextTasks.set(t.task_id, t)
+        } catch (e) {
+            console.warn('[syncCache] 恢复任务发现失败', w.relation.relation_id, e)
+        }
+    }
 
     workspaces.value = wss
     tasks.value = nextTasks

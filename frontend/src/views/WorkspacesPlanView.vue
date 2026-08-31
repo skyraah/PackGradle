@@ -177,6 +177,21 @@ async function submitResolutions(): Promise<void> {
     }
 }
 
+// 无冲突草稿自动推进（T13 B 口径走查发现修，票 #45）：纯 UI 流程中 0 冲突草稿
+// 没有决议入口（冲突决议控件仅 draft 且有冲突时开放），「应用同步」永远不可达。
+// 无冲突即无决议需要——自动提交空决议走既有 ResolvePlan 产生全新 resolved 计划
+// （router.replace 导航复用）；用户仍需显式点「应用同步」，计划不可编辑语义不变。
+watch(plan, p => {
+    if (
+        p?.status === 'draft' &&
+        (p.conflicts?.length ?? 0) === 0 &&
+        !frozen.value &&
+        !resolving.value
+    ) {
+        void submitResolutions()
+    }
+})
+
 // —— 停用态的推进动作（availability 唯一门控，逻辑收敛于 utils/plans）——
 // stale 主操作「重新扫描并生成新计划」（UX §7.5）：发起扫描后回列表页，扫描完成
 // 由列表行入口继续 PrepareSync；「用当前快照重新生成」适用策略修改后快照仍新鲜的场景。

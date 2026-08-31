@@ -51,6 +51,13 @@ function statusLabel(status: string): string {
     return t('tasks.status.' + status)
 }
 
+// 导航前收起抽屉（T13 B 口径走查发现修，票 #45）：处理恢复/查看计划/查看工作区
+// 都是跨页动作，Sheet 遮罩不收起会盖在目标页上
+function goTo(target: string): void {
+    open.value = false
+    void router.push(target)
+}
+
 // 状态徽标：ok=绿 / 进行中=secondary / 需注意=琥珀 / 异常=destructive（与工作区列表同画板）
 const statusTones: Record<string, { variant: 'default' | 'secondary' | 'destructive' | 'outline'; class?: string }> = {
     queued: { variant: 'secondary' },
@@ -181,7 +188,7 @@ async function cancelTask(task: TaskDTO): Promise<void> {
                                 v-if="task.status === 'recovery_required'"
                                 size="xs"
                                 variant="outline"
-                                @click="router.push('/workspaces/' + task.relation_id + '/recoveries/' + task.task_id)"
+                                @click="goTo('/workspaces/' + task.relation_id + '/recoveries/' + task.task_id)"
                             >
                                 {{ t('tasks.recoverAction') }}
                             </Button>
@@ -189,11 +196,11 @@ async function cancelTask(task: TaskDTO): Promise<void> {
                                 v-if="task.plan_id"
                                 size="xs"
                                 variant="outline"
-                                @click="router.push('/workspaces/' + task.relation_id + '/plans/' + task.plan_id)"
+                                @click="goTo('/workspaces/' + task.relation_id + '/plans/' + task.plan_id)"
                             >
                                 {{ t('tasks.viewPlan') }}
                             </Button>
-                            <Button size="xs" variant="outline" @click="router.push('/workspaces/' + task.relation_id + '/changes')">
+                            <Button size="xs" variant="outline" @click="goTo('/workspaces/' + task.relation_id + '/changes')">
                                 {{ t('tasks.viewWorkspace') }}
                             </Button>
                         </div>
