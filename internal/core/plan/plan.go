@@ -31,6 +31,11 @@ type BuildInput struct {
 	// （保守：未声明 exact 的计划按部分完成对待），显式非法值报错。
 	RequestedExactness model.Exactness
 	ExpiresAt          time.Time
+	// PreserveMaxBytes 是大文件保全阈值（ADR-0007 §7，票 #64；0＝不限）：
+	// 非 mod 覆盖/删除行的旧内容超过阈值时操作行固化 preserve_skip=true
+	//（「旧版本不留存」警示 + 引擎跳过 before 保全）。判定口径共享
+	// model.ShouldSkipPreserve；未设置（负值）按 0=不限处理。
+	PreserveMaxBytes int64
 }
 
 // 校验错误。Resolve 拒绝的输入以 error 返回，不 panic。
@@ -143,6 +148,7 @@ func BuildDraft(in BuildInput) (model.SyncPlan, error) {
 		summarizeOps(ops, in.Project, in.Runtime)
 
 	sortAndNumberOperations(ops)
+	markPreserveSkip(ops, in)
 
 	out := model.SyncPlan{
 		SchemaVersion:              model.CurrentSchemaVersion,
@@ -177,7 +183,16 @@ func BuildDraft(in BuildInput) (model.SyncPlan, error) {
 // Resolve 校验 resolutions 恰好覆盖 draft 的全部冲突后应用选择，生成 resolved plan。
 // project/runtime 快照用于生成 resolution 操作的前置条件；Resolve 不修改 draft，
 // 也不假设快照仍与 draft 一致（不一致时前置条件会在 Apply 阶段拦截）。
-func Resolve(draft model.SyncPlan, project, runtime model.ObservedSnapshot, resolutions []model.Resolution) (model.SyncPlan, error) {
+// preserveMaxBytes 是大文件保全阈值（与 BuildDraft.PreserveMaxBytes 同源，ADR-0007
+// §7；可变参数缺省 0=不限，生产路径恒显式传入）：决议生成的操作行在决议时点
+// 重新做 preserve_skip 判定——决议可能改变目标侧，旧内容所在侧随选择而变，
+// 不能照抄 draft 标记。
+func Resolve(draft model.SyncPlan, project, runtime model.ObservedSnapshot, resolutions []model.Resolution,
+	preserveMaxBytes ...int64) (model.SyncPlan, error) {
+	threshold := int64(0)
+	if len(preserveMaxBytes) > 0 {
+		threshold = preserveMaxBytes[0]
+	}
 	conflictByResource := make(map[model.ResourceID]model.Conflict, len(draft.Conflicts))
 	for _, c := range draft.Conflicts {
 		conflictByResource[c.ResourceID] = c
@@ -253,6 +268,7 @@ func Resolve(draft model.SyncPlan, project, runtime model.ObservedSnapshot, reso
 		}
 	}
 	sortAndNumberOperations(ops)
+	markPreserveSkip(ops, BuildInput{PreserveMaxBytes: threshold})
 
 	out := model.SyncPlan{
 		SchemaVersion:              draft.SchemaVersion,
@@ -359,6 +375,49 @@ func newOperation(kind model.OperationKind, id model.ResourceID, preconditions [
 		ResourceID:    id,
 		Preconditions: preconditions,
 		Reversible:    true,
+	}
+}
+
+// operationTargetSide 返回操作的作用侧（旧内容所在侧）。
+func operationTargetSide(kind model.OperationKind) string {
+	switch kind {
+	case model.OpWriteRuntime, model.OpRemoveRuntime:
+		return sideRuntime
+	case model.OpWriteProject, model.OpRemoveProject:
+		return sideProject
+	default:
+		return ""
+	}
+}
+
+// markPreserveSkip 大文件保全阈值判定（ADR-0007 §7，票 #64；契约 06 §3.7）：
+// 覆盖（write）与删除（remove）操作的目标侧旧内容为非 mod 资源且超过
+// preserve_max_bytes（0＝不限）时，操作行固化 preserve_skip=true——确认页
+// 「旧版本不留存」警示的判定源，执行引擎据此跳过 before 保全（照常写，
+// 旧版本不留 CAS）。旧内容字节数取目标侧前置条件期望内容（与 stale 判定
+// 同一证据源）。restore 侧计划行判定由票 #60 复用 model.ShouldSkipPreserve。
+// 判定只改操作行标记、不改 PlanDigest 的输入语义（digest 随计划整体计算，
+// 同输入同 digest 的确定性不变）。
+func markPreserveSkip(ops []model.PlannedOperation, in BuildInput) {
+	if in.PreserveMaxBytes <= 0 {
+		return // 显式 0＝不限（负值按同口径防御）
+	}
+	for i := range ops {
+		op := &ops[i]
+		kind := normalize.KindOfResourceID(op.ResourceID)
+		target := operationTargetSide(op.Kind)
+		if target == "" {
+			continue
+		}
+		for _, pre := range op.Preconditions {
+			if pre.Side != target || pre.Existence != existencePresent || pre.Expected == nil {
+				continue
+			}
+			if model.ShouldSkipPreserve(kind, pre.Expected.Size, in.PreserveMaxBytes) {
+				op.PreserveSkip = true
+			}
+			break
+		}
 	}
 }
 

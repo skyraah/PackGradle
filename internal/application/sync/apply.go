@@ -419,9 +419,12 @@ func stageOneOperation(ctx context.Context, a *App, run *syncstage.Run, relation
 		return s
 	}
 	// before-content CAS 保全：modify/delete 且 recoverability 策略要求时
-	// 先落 CAS 并独立复核（PreserveBeforeContent 失败零引用）。
+	// 先落 CAS 并独立复核（PreserveBeforeContent 失败零引用）。大文件保全
+	// 阈值（ADR-0007 §7，票 #64）：计划行固化 preserve_skip=true 的操作跳过
+	// 保全——prepare 时点已按 model.ShouldSkipPreserve 判定（计划即契约），
+	// 照常同步写、旧版本不留 CAS；回滚对象缺失走既有降级分支，零新增枚举。
 	if fp.action == applyActionModify || fp.action == applyActionDelete {
-		if syncstage.RequiresCASBackup(fp.recoverability) {
+		if !fp.op.PreserveSkip && syncstage.RequiresCASBackup(fp.recoverability) {
 			ref, preserved, err := syncstage.PreserveBeforeContent(ctx, a.deps.CAS,
 				filepath.Join(fp.root, filepath.FromSlash(fp.targetRel)), fp.recoverability)
 			if err != nil {

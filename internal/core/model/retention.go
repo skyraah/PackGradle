@@ -70,3 +70,21 @@ func ValidateRetention(r RetentionSettings) (field string, ok bool) {
 		return "", true
 	}
 }
+
+// ShouldSkipPreserve 报告单文件是否超过大文件保全阈值（ADR-0007 §7，票 #64）：
+// 非 mod 资源且旧内容字节数 > preserveMaxBytes（显式 0＝不限）→ 不做 before
+// 保全（照常同步写，旧版本不留 CAS；回滚零新增枚举，对象缺失走 ADR-0006 §2
+// 既有降级分支 user_object_required）。
+//
+// 这是两侧计划行 preserve_skip 判定的唯一口径：sync 侧计划构建（core/plan）
+// 与 restore 侧计划构建（票 #60 消费）都调用本导出函数；执行引擎同样以计划行
+// 的固化标记为准（计划即契约）。
+func ShouldSkipPreserve(kind ResourceKind, sizeBytes, preserveMaxBytes int64) bool {
+	if preserveMaxBytes == PreserveMaxUnlimited {
+		return false
+	}
+	if kind == ResourceMod {
+		return false // mod 走重取通道，本就不做 before 保全（架构 §8.2）
+	}
+	return sizeBytes > preserveMaxBytes
+}

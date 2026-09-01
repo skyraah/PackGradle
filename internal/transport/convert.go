@@ -281,6 +281,7 @@ func planDTO(v view.SyncPlanView) SyncPlanDTO {
 		ops = append(ops, OperationDTO{
 			ID: op.ID, Kind: string(op.Kind), ResourceID: string(op.ResourceID),
 			Preconditions: preconds, Reversible: op.Reversible,
+			PreserveSkip: op.PreserveSkip,
 		})
 	}
 	conflicts := make([]ConflictDTO, 0, len(v.Conflicts))

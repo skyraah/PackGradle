@@ -295,6 +295,11 @@ type PlannedOperation struct {
 	Preconditions []Precondition `json:"preconditions"`
 	Reversible    bool           `json:"reversible"`
 	ObjectRefs    []ContentRef   `json:"object_refs,omitempty"`
+	// PreserveSkip 是「旧版本不留存」标记（ADR-0007 §7，票 #64；契约 06 §3.7）：
+	// 非 mod 单文件超过 preserve_max_bytes 阈值 → 不做 before 保全（照常写，
+	// 旧版本不留 CAS；回滚对象缺失走既有降级分支）。判定口径=model.ShouldSkipPreserve，
+	// prepare 时点固化进计划（计划即契约，执行引擎不再重算）。
+	PreserveSkip bool `json:"preserve_skip,omitempty"`
 }
 
 // ConfirmationRequirement 由 resolved plan 的最终操作推导（架构文档 §6.5）。

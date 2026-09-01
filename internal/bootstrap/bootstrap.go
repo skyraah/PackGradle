@@ -11,8 +11,8 @@ import (
 	"packgradle/internal/adapters/filesystem"
 	"packgradle/internal/adapters/packwiz"
 	"packgradle/internal/adapters/prism"
-	projectapp "packgradle/internal/application/project"
 	"packgradle/internal/application/ports"
+	projectapp "packgradle/internal/application/project"
 	runtimeapp "packgradle/internal/application/runtime"
 	settingsapp "packgradle/internal/application/settings"
 	syncapp "packgradle/internal/application/sync"
@@ -76,21 +76,25 @@ func build(root string, retention ports.RetentionSettingsStore) (*Stack, error) 
 	fingerprinter := filesystem.NewFingerprinter()
 	endpoints := sqlite.NewEndpointRepository(db)
 	app, err := syncapp.New(syncapp.AppDeps{
-		Endpoints:     endpoints,
-		Relations:     sqlite.NewRelationRepository(db),
-		Snapshots:     sqlite.NewSnapshotRepository(db),
-		Baselines:     sqlite.NewBaselineRepository(db),
-		Plans:         sqlite.NewPlanRepository(db),
-		Tasks:         sqlite.NewTaskRepository(db),
-		Mappings:      sqlite.NewMappingRepository(db),
-		Preparations:  sqlite.NewPreparationRepository(db),
-		HashCache:     sqlite.NewHashCacheRepository(db),
-		Events:        sqlite.NewEventRepository(db),
-		ApplyRuns:     sqlite.NewApplyRunRepository(db),
-		Journal:       sqlite.NewOperationJournalRepository(db),
-		Commits:       sqlite.NewCommitRepository(db),
-		CAS:           cas,
-		StagingRoot:   layout.StagingDir,
+		Endpoints:    endpoints,
+		Relations:    sqlite.NewRelationRepository(db),
+		Snapshots:    sqlite.NewSnapshotRepository(db),
+		Baselines:    sqlite.NewBaselineRepository(db),
+		Plans:        sqlite.NewPlanRepository(db),
+		Tasks:        sqlite.NewTaskRepository(db),
+		Mappings:     sqlite.NewMappingRepository(db),
+		Preparations: sqlite.NewPreparationRepository(db),
+		HashCache:    sqlite.NewHashCacheRepository(db),
+		Events:       sqlite.NewEventRepository(db),
+		ApplyRuns:    sqlite.NewApplyRunRepository(db),
+		Journal:      sqlite.NewOperationJournalRepository(db),
+		Commits:      sqlite.NewCommitRepository(db),
+		CAS:          cas,
+		StagingRoot:  layout.StagingDir,
+		// 保留策略设置（ADR-0007 §8，票 #64）：retention 非 nil 时供
+		// PrepareSync 的 preserve_skip 阈值与 GC 引擎五键读取；nil（headless
+		// Build）退默认值。
+		Retention:     retention,
 		Tx:            sqlite.NewUnitOfWork(db),
 		Publisher:     transport.NewEventBridge(),
 		ProjectScan:   packwiz.New(),

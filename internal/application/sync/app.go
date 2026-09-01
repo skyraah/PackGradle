@@ -6,6 +6,7 @@ package sync
 import (
 	"context"
 	"fmt"
+	"log"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -82,6 +83,10 @@ type AppDeps struct {
 	// 满足 syncstage.ContentStore），StagingRoot 是按运行隔离的暂存根目录。
 	CAS         syncstage.ContentStore
 	StagingRoot string
+	// Retention 是保留策略设置存取（config.toml [retention]，ADR-0007 §8，票 #64）。
+	// 可选：nil（headless 无设置面）时用 model.DefaultRetention()——PrepareSync
+	// 的 preserve_skip 阈值与 GC 引擎的五键读取都经 retentionSettings() 收口。
+	Retention ports.RetentionSettingsStore
 	// Tx 是多步元数据写入的单事务边界（ADR-0003）；CreateRelation 走 RunInTx。
 	Tx            ports.UnitOfWork
 	Publisher     ports.EventPublisher // 事件出口（transport 桥），可为 nil
@@ -198,6 +203,21 @@ func New(deps AppDeps) (*App, error) {
 func (a *App) taskRunner() *task.Runner { return a.runner }
 
 func (a *App) nowStr() string { return a.deps.Now().UTC().Format(time.RFC3339) }
+
+// retentionSettings 读取保留策略五键（ADR-0007 §8）：设置存取端口缺失
+//（headless Build）或读取失败时退默认值——GC 是机会主义后台任务，设置面
+// 故障不阻断产品主链路，引擎下轮再取。
+func (a *App) retentionSettings() model.RetentionSettings {
+	if a.deps.Retention == nil {
+		return model.DefaultRetention()
+	}
+	s, err := a.deps.Retention.Retention()
+	if err != nil {
+		log.Printf("gc: 读取保留设置失败（退默认值）: %v", err)
+		return model.DefaultRetention()
+	}
+	return s
+}
 
 func (a *App) relationGate(relationID string) *sync.Mutex {
 	v, _ := a.startGate.LoadOrStore(relationID, &sync.Mutex{})
