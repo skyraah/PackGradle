@@ -104,9 +104,9 @@ func dnlMetafile(m dnlMod, v dnlVersion) string {
 // dnlChainEnv 是 -download 链的运行环境。
 type dnlChainEnv struct {
 	app          syncapp.Application
-	projectRoot  string // 项目端绝对路径（链内先造夹具再登记关系）
-	instanceDir  string // 实例目录绝对路径
-	cdnFlag      string // -cdn 值（main 已保证非空：外部给定或自动拉起注入）
+	projectRoot  string         // 项目端绝对路径（链内先造夹具再登记关系）
+	instanceDir  string         // 实例目录绝对路径
+	cdnFlag      string         // -cdn 值（main 已保证非空：外部给定或自动拉起注入）
 	managed      *cdnproc.Serve // 自动拉起的假 CDN 进程句柄（Close 归 main）
 	pgfixtureBin string
 	work         string // 工作目录（夹具）
@@ -311,7 +311,7 @@ func runDownloadChain(env dnlChainEnv) error {
 		cut := int64(len(ver["b4"].bytes) / 3)
 		d.script(s, b4Path, "装半截断流脚本",
 			cdnproc.Step{Body: ver["b4"].bytes, TruncateAt: int(cut)}, // 首发声明全长只发 1/3 后断流
-			cdnproc.Step206(ver["b4"].bytes, cut)) // 续传请求给 206 余下部分
+			cdnproc.Step206(ver["b4"].bytes, cut))                     // 续传请求给 206 余下部分
 		d.applyRound(ctx, s, nil, "续传轮 apply")
 		d.want(s, d.lastTaskStatus, model.TaskStatusSucceeded, "续传轮收口")
 		d.want(s, d.lastTaskOutcome, model.TaskOutcomeExact, "续传后 exact 收口")

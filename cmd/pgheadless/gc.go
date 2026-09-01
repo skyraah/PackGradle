@@ -49,6 +49,19 @@ const (
 	gcWindowProbeTimeout = 30 * time.Second
 )
 
+// gcChainStats 是 -gc 链路的度量产物（p3-perf-run/1 记录的 gc 段；票 #66
+// -metrics 消费，pgfixture -eval 评 GC ≤30s 新门槛）。GCTotalMS 为 CLI 通道
+// RequestGC → 任务终态的全墙钟（main 打点）；断言计数随 -gc 链填充。
+type gcChainStats struct {
+	Kind                  string `json:"kind"`
+	Probes                bool   `json:"probes"`
+	GCTotalMS             int64  `json:"gc_total_ms"`
+	Tombstones            int    `json:"tombstones"`
+	AliveCommits          int    `json:"alive_commits"`
+	AuditViolations       int    `json:"audit_violations"`
+	OldestVerifiedObjects int    `json:"oldest_verified_objects"`
+}
+
 // runRevive 执行 -revive：解压回收站副本回 objects 并把隔离行置回 ready
 // （ADR-0007 §5「GC 误收的最后一道保险」，两步幂等可重入）。
 func runRevive(dataRoot, digest string) {
@@ -145,11 +158,11 @@ func applyOneCommit(ctx context.Context, app syncapp.Application, rel view.Relat
 // runGCChain 执行 -gc 验收链（acceptance:gc 主链，验收规格 §6 之 2/3）：
 // CLI 通道触发 GC → 全部断言。probes=true 时先落三红线正例夹具
 //（keep_commits=5 场景，进程前经 -keep-commits 5 写入配置）。
-func runGCChain(ctx context.Context, stack *bootstrap.Stack, app syncapp.Application, rel view.RelationView, projectRoot string) error {
+func runGCChain(ctx context.Context, stack *bootstrap.Stack, app syncapp.Application, rel view.RelationView, projectRoot string, stats *gcChainStats) error {
 	probes := os.Getenv("PGHEADLESS_GC_PROBES") == "1"
 
 	// ---- 正例夹具（keep_commits=5 场景）----
-	var probeA, probeB string   // 恢复引用/staged 绑定保护的观察 digest
+	var probeA, probeB string    // 恢复引用/staged 绑定保护的观察 digest
 	var planBaseDigests []string // 正例①活跃计划 base 基线引用的对象
 	if probes {
 		if err := seedGCProbes(ctx, stack, app, rel, projectRoot, &probeA, &probeB, &planBaseDigests); err != nil {
@@ -229,6 +242,9 @@ func runGCChain(ctx context.Context, stack *bootstrap.Stack, app syncapp.Applica
 	if err != nil {
 		return fmt.Errorf("最老存活提交 %s 可回滚复验: %w", oldest.CommitID, err)
 	}
+	if stats != nil {
+		stats.OldestVerifiedObjects = verified
+	}
 	fmt.Printf("== 断言②最老存活可回滚 == commit=%s 对象=%d 全部 ready 且逐字节复验通过\n", oldest.CommitID, verified)
 
 	// 正例①：活跃计划 base 基线引用的对象 GC 后一律存活（ADR-0007 §4
@@ -247,6 +263,11 @@ func runGCChain(ctx context.Context, stack *bootstrap.Stack, app syncapp.Applica
 	}
 
 	// 正例收尾：续跑后 ②③ 的观察 digest 应已被回收（解除保护后成候选）。
+	if stats != nil {
+		stats.Tombstones = page.PrunedBeforeCount
+		stats.AliveCommits = len(commits.Items)
+		stats.AuditViolations = len(findings)
+	}
 	if probes {
 		for name, digest := range map[string]string{"staged绑定": probeA, "recovery引用": probeB} {
 			state, err := gcObjectState(stack.DB, digest)

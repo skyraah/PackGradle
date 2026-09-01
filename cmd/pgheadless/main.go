@@ -61,6 +61,9 @@ func main() {
 	restore := flag.Bool("restore", false, "回滚四场景断言链（P3 票 #60：exact 经 CAS / 补全就绪面 / partial+dirty / 重做语义；需 -plain-mods 夹具）")
 	cdnURL := flag.String("cdn", "", "假 CDN BaseURL（票 #66 验收缝，如 http://127.0.0.1:PORT/files）：下载引擎与 CF 探测指向假 CDN 进程（pgfixture -serve），零真网；空 = 生产 CDN 前缀")
 	downloadChain := flag.Bool("download", false, "假 CDN 五场景断言链（票 #66 acceptance:download：成功链/探测降标/failed 可重入/剔除语义/续传；零真网。独立 fixture 与数据目录；-cdn 为空时自动拉起 pgfixture -serve）")
+	restoreTarget := flag.Bool("restore-target", false, "restore 强杀目标进程（票 #66 acceptance:recovery:restore）：建夹具历史（c1/c2）→ PrepareRestore(最老提交) → ConfirmRestorePlan → 轮询至 committed；stdout 相位标记供 pgrecovery killwindow 观察（-cdn 为空时自动拉起假 CDN 进程）")
+	restoreCold := flag.Bool("restore-cold", false, "3000 fixture restore 冷链路度量（票 #66 acceptance:perf：漂移删全部受管文本 → restore c1 → committed exact；-metrics 记 restore 段，pgfixture -eval 评 restore 冷 ≤30s/内存 <256MiB）")
+	setAuthorized := flag.Int("set-authorized", -1, "设置工作区授权开关后退出（票 #66 L1 数据准备：1=开启快速更新授权，0=关闭；需 -data 与 -project/-instance 指向既有关系）")
 	pgfixtureBin := flag.String("pgfixture", filepath.Join("bin", "pgfixture.exe"), "pgfixture 可执行文件（-download 自动拉起假 CDN 进程用）")
 	dlWork := flag.String("download-work", filepath.Join("build", "download"), "-download 链工作目录（夹具）")
 	dlRecord := flag.String("record", "", "-download 记录 JSON 路径（空=自动 docs/acceptance/records/p3-download-<date>-<host>.json；\"-\"=不落盘）")
@@ -69,6 +72,11 @@ func main() {
 	// -revive 只需数据根，不需 fixture 端点。
 	if *revive != "" {
 		runRevive(*dataRoot, *revive)
+		return
+	}
+	// 票 #66：-set-authorized L1 数据准备面（BuildWithRetention 装配 Settings）。
+	if *setAuthorized >= 0 {
+		runSetAuthorized(*dataRoot, *projectRoot, *instanceDir, *setAuthorized == 1)
 		return
 	}
 	if *projectRoot == "" || *instanceDir == "" {
@@ -121,9 +129,9 @@ func main() {
 		dlOpts.Backoff = func(int) time.Duration { return time.Millisecond }
 		dlOpts.Sleep = func(context.Context, time.Duration) error { return nil }
 		fmt.Printf("== -cdn == 下载引擎/CF 探测 → %s（快退避验收缝）\n", *cdnURL)
-	} else if *downloadChain {
+	} else if *downloadChain || *restoreTarget {
 		s, err := cdnproc.StartServe(*pgfixtureBin, "127.0.0.1:0")
-		fatalOn(err, "拉起假 CDN 进程（-download 自动管理）")
+		fatalOn(err, "拉起假 CDN 进程（验收链自动管理）")
 		defer s.Close()
 		dnlManagedCDN = s
 		*cdnURL = s.URL()
@@ -150,8 +158,19 @@ func main() {
 	}
 	if *gcRun {
 		rel0 := ensureRelation(ctx, app, projectAbs, instanceAbs)
-		if err := runGCChain(ctx, stack, app, rel0, projectAbs); err != nil {
+		gcStats := &gcChainStats{Kind: "gc", Probes: os.Getenv("PGHEADLESS_GC_PROBES") == "1"}
+		gcStart := time.Now()
+		if err := runGCChain(ctx, stack, app, rel0, projectAbs, gcStats); err != nil {
 			log.Fatalf("-gc 链路失败: %v", err)
+		}
+		gcStats.GCTotalMS = time.Since(gcStart).Milliseconds()
+		fmt.Printf("== -gc 计时 == %d ms（门槛 ≤30s，验收规格 §7）\n", gcStats.GCTotalMS)
+		if *metricsPath != "" {
+			writeMetrics(*metricsPath, metricsRecord{
+				Schema: "p3-perf-run/1", CapturedAt: time.Now().UTC().Format(time.RFC3339),
+				ProjectRoot: projectAbs, InstanceDir: instanceAbs, DataRoot: root,
+				Machine: newMachineInfo(), GC: gcStats,
+			})
 		}
 		return
 	}
@@ -161,10 +180,40 @@ func main() {
 	if *downloadChain {
 		if err := runDownloadChain(dnlChainEnv{
 			app: app, projectRoot: projectAbs, instanceDir: instanceAbs, cdnFlag: *cdnURL,
-			managed: dnlManagedCDN,
+			managed:      dnlManagedCDN,
 			pgfixtureBin: *pgfixtureBin, work: *dlWork, recordPath: *dlRecord,
 		}); err != nil {
 			log.Fatalf("-download 链路失败: %v", err)
+		}
+		return
+	}
+
+	// 票 #66：-restore-target restore 强杀目标链（pgrecovery -mode restore 的
+	// 子进程面；夹具骨架由链内生成——先夹具后登记关系）。
+	if *restoreTarget {
+		cdn := dnlManagedCDN
+		if cdn == nil && *cdnURL != "" {
+			cdn = cdnproc.Attach(*cdnURL) // 外部假 CDN（pgrecovery harness 供给）
+		}
+		if err := runRestoreTarget(ctx, app, projectAbs, instanceAbs, cdn); err != nil {
+			log.Fatalf("-restore-target 链路失败: %v", err)
+		}
+		return
+	}
+
+	// 票 #66：-restore-cold perf 链（独立模；漂移 + restore c1 + 度量）。
+	if *restoreCold {
+		rel0 := ensureRelation(ctx, app, projectAbs, instanceAbs)
+		stats, err := runRestoreCold(ctx, app, rel0, instanceAbs)
+		if err != nil {
+			log.Fatalf("-restore-cold 链路失败: %v", err)
+		}
+		if *metricsPath != "" {
+			writeMetrics(*metricsPath, metricsRecord{
+				Schema: "p3-perf-run/1", CapturedAt: time.Now().UTC().Format(time.RFC3339),
+				ProjectRoot: projectAbs, InstanceDir: instanceAbs, DataRoot: root,
+				Machine: newMachineInfo(), Restore: stats,
+			})
 		}
 		return
 	}
@@ -234,7 +283,7 @@ func main() {
 	if *metricsPath != "" {
 		rec := metricsRecord{
 			// T09：p1-perf-run/1 → p2-perf-run/1（-apply 时追加 apply 段）
-			Schema:      "p2-perf-run/1",
+			Schema:      "p3-perf-run/1",
 			CapturedAt:  time.Now().UTC().Format(time.RFC3339),
 			ProjectRoot: projectAbs,
 			InstanceDir: instanceAbs,
@@ -366,17 +415,19 @@ type hashDelta struct {
 }
 
 type metricsRecord struct {
-	Schema       string           `json:"schema"`
-	CapturedAt   string           `json:"captured_at"`
-	ProjectRoot  string           `json:"project_root"`
-	InstanceDir  string           `json:"instance_dir"`
-	DataRoot     string           `json:"data_root"`
-	Machine      machineInfo      `json:"machine"`
-	ScanPhasesMS scanPhasesMS     `json:"scan_phases_ms"`
-	ScanTotalMS  int64            `json:"scan_total_ms"`
-	RunTotalMS   int64            `json:"run_total_ms"`
-	HashCache    hashDelta        `json:"hash_cache"`
-	Apply        *applyChainStats `json:"apply,omitempty"` // 仅 -apply 链路成功时非空
+	Schema       string             `json:"schema"`
+	CapturedAt   string             `json:"captured_at"`
+	ProjectRoot  string             `json:"project_root"`
+	InstanceDir  string             `json:"instance_dir"`
+	DataRoot     string             `json:"data_root"`
+	Machine      machineInfo        `json:"machine"`
+	ScanPhasesMS scanPhasesMS       `json:"scan_phases_ms"`
+	ScanTotalMS  int64              `json:"scan_total_ms"`
+	RunTotalMS   int64              `json:"run_total_ms"`
+	HashCache    hashDelta          `json:"hash_cache"`
+	Apply        *applyChainStats   `json:"apply,omitempty"`   // 仅 -apply 链路成功时非空
+	Restore      *restoreChainStats `json:"restore,omitempty"` // 仅 -restore-cold 链路（票 #66）
+	GC           *gcChainStats      `json:"gc,omitempty"`      // 仅 -gc 链路（票 #66）
 }
 
 func writeMetrics(path string, rec metricsRecord) {
@@ -391,6 +442,47 @@ func writeMetrics(path string, rec metricsRecord) {
 		log.Fatalf("写入 metrics 失败: %v", err)
 	}
 	fmt.Printf("== metrics ==\n%s\n", b)
+}
+
+// runSetAuthorized 设置工作区授权开关（票 #66 L1 数据准备：授权模式开态）。
+// 走 SettingsService（BuildWithRetention 装配）——与前端同一条 wire 面。
+func runSetAuthorized(dataRoot, projectRoot, instanceDir string, enabled bool) {
+	root := dataRoot
+	if root == "" {
+		var err error
+		root, err = store.DefaultRoot()
+		if err != nil {
+			log.Fatalf("定位用户数据目录失败: %v", err)
+		}
+	}
+	retentionMgr, err := appconfig.NewConfigManagerAtLoaded(filepath.Join(root, "config.toml"))
+	if err != nil {
+		log.Fatalf("读取配置失败: %v", err)
+	}
+	stack, err := bootstrap.BuildWithDownloadOptions(root, retentionMgr, download.Options{})
+	if err != nil {
+		log.Fatalf("装配失败: %v", err)
+	}
+	defer stack.Close()
+	if stack.Settings == nil {
+		log.Fatalf("Settings 未装配（数据根缺 config.toml？）")
+	}
+	ctx := context.Background()
+	rel0 := ensureRelation(ctx, stack.App, mustAbs(projectRoot), mustAbs(instanceDir))
+	ws, err := stack.Settings.SetWorkspaceAuthorized(rel0.RelationID, enabled)
+	if err != nil {
+		log.Fatalf("SetWorkspaceAuthorized 失败: %v", err)
+	}
+	fmt.Printf("== -set-authorized == 关系 %s authorized=%v（投影 authorized_apply=%v）\n",
+		rel0.RelationID, enabled, ws.AuthorizedApply)
+}
+
+func mustAbs(p string) string {
+	a, err := filepath.Abs(p)
+	if err != nil {
+		log.Fatalf("解析绝对路径 %s: %v", p, err)
+	}
+	return a
 }
 
 func hostName() string {
