@@ -12,7 +12,7 @@
   },
   "cdn": {
     "mode": "managed",
-    "base_url": "http://127.0.0.1:6158/files"
+    "base_url": "http://127.0.0.1:8367/files"
   },
   "scenarios": [
     {
@@ -30,9 +30,9 @@
         "历史追加不改写（新头 kind=restore，c2/c1 原样） ✓"
       ],
       "evidence": {
-        "c1": "commit_01M1FAZ5XE34CSB7PT9T0RJ8YR",
-        "c2": "commit_01M1FAZ66JF5W0PQ7NMD6G03GY",
-        "restore": "commit_01M1FAZ6DFDSSV7NKZSRGK4VN9"
+        "c1": "commit_01M1FBFAH2RA0QMBEYR3V28NT6",
+        "c2": "commit_01M1FBFAQG1E1HTEC29T7SRR68",
+        "restore": "commit_01M1FBFAY13Y20ZEVSA3P5WYSD"
       }
     },
     {
@@ -62,9 +62,9 @@
         "重试后 dl-mod-a = v1 字节 ✓"
       ],
       "evidence": {
-        "failed_task": "task_01M1FAZ6NBXCEJHFGYB3ZS87MC",
+        "failed_task": "task_01M1FBFB6EHT5FTZ8F33659SGJ",
         "problem": "err.download.rate_limited",
-        "retry_task": "task_01M1FAZ6RQR51ZRZFA9E3W3XFH"
+        "retry_task": "task_01M1FBFB9RD0W3D11TPNDRQWRS"
       }
     },
     {

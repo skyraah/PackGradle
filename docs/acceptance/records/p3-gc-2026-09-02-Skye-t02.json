@@ -1,8 +1,8 @@
 {
   "schema": "p3-perf-run/1",
-  "captured_at": "2026-09-01T20:36:10Z",
-  "project_root": "C:\\project\\pg-p3-t66\\build\\gc\\fixture\\project",
-  "instance_dir": "C:\\project\\pg-p3-t66\\build\\gc\\fixture\\instance",
+  "captured_at": "2026-09-01T20:46:20Z",
+  "project_root": "C:\\project\\pg-p3-pr\\build\\gc\\fixture\\project",
+  "instance_dir": "C:\\project\\pg-p3-pr\\build\\gc\\fixture\\instance",
   "data_root": "build/gc/data",
   "machine": {
     "host": "Skye",
@@ -27,7 +27,7 @@
   "gc": {
     "kind": "gc",
     "probes": false,
-    "gc_total_ms": 210,
+    "gc_total_ms": 213,
     "tombstones": 20,
     "alive_commits": 5,
     "audit_violations": 0,
