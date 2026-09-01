@@ -683,7 +683,7 @@ func (a *App) completeRecoveredRun(ctx context.Context, active model.Task, run m
 
 	active.Status = model.TaskStatusSucceeded
 	active.Phase = "done"
-	active.MessageKey = "msg.task.apply.succeeded"
+	active.MessageKey = taskProgressKey(active.Kind, "succeeded")
 	active.Completed = len(ops)
 	active.Total = len(ops)
 	active.CommitID = commitID
@@ -710,7 +710,7 @@ func (a *App) blockRecoveredRun(ctx context.Context, active model.Task, run mode
 	}
 	if active.Status == model.TaskStatusQueued || active.Status == model.TaskStatusRunning {
 		active.Status = model.TaskStatusRecoveryRequired
-		active.MessageKey = "msg.task.apply.recovery_required"
+		active.MessageKey = taskProgressKey(active.Kind, "recovery_required")
 		active.Problem = &model.Problem{Code: CodeRecoveryInProgress, Detail: cause.Error()}
 		if _, err := a.runner.Update(ctx, active); err != nil {
 			log.Printf("recovery: 任务 %s 恢复终态落库失败: %v", active.TaskID, err)

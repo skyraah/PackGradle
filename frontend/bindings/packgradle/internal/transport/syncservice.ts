@@ -49,6 +49,16 @@ export function ConfirmPlan(input: $models.ConfirmPlanDTO): $CancellablePromise<
 }
 
 /**
+ * ConfirmRestorePlan 确认 resolved 回滚计划并创建 restore 任务（契约 06 §3.4；
+ * 票 #60）：确认即建 tasks(kind=restore, queued) + apply_runs(prepared)，引擎
+ * 协程接管执行（ApplyRestore 不上 wire，Q1）。幂等重入返回既有 TaskDTO；
+ * failed 终局可重入建新运行；上一运行已 committed → err.plan.apply_not_reentrant。
+ */
+export function ConfirmRestorePlan(input: $models.ConfirmRestorePlanDTO): $CancellablePromise<$models.TaskDTO> {
+    return $Call.ByID(3356938010, input);
+}
+
+/**
  * CreateRelation 消费预检并创建 Relation。
  */
 export function CreateRelation(preparationID: string): $CancellablePromise<$models.RelationDTO> {

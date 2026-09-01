@@ -169,6 +169,14 @@ func (r *Run) DlDir() string { return filepath.Join(r.dir, dlDirName) }
 // （files/<target_rel>，斜杠形态）；该值即 journal 的 temp_relative_path。
 // 目标路径非法（逃逸）时返回 ErrPathEscape。
 func (r *Run) TempRelFor(targetRel string) (string, error) {
+	return StagedRel(targetRel)
+}
+
+// StagedRel 返回目标 root-relative 路径对应的暂存副本相对路径
+// （files/<target_rel>，斜杠形态；TempRelFor 的无句柄形态）。供不开运行句柄的
+// 调用方按同一形状计算暂存路径（restore 执行器消费计划暂存锚上的用户补全
+// 字节，票 #60）；目标路径非法（逃逸）时返回 ErrPathEscape。
+func StagedRel(targetRel string) (string, error) {
 	clean, err := normalizeRelative(targetRel)
 	if err != nil {
 		return "", err

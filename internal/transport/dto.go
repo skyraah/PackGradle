@@ -560,6 +560,13 @@ type ResolveRestorePlanDTO struct {
 	SkipResourceIDs    []string `json:"skip_resource_ids"`   // 逐资源 skip 决议，固化于 resolved plan
 }
 
+// ConfirmRestorePlanDTO 是回滚确认输入（契约 06 §3.4；票 #60）。成功返回
+// TaskDTO（kind=restore，status=queued，PlanID 字段回填）；幂等重入返回既有
+// 任务；failed 终局重入建新运行；committed 后 err.plan.apply_not_reentrant。
+type ConfirmRestorePlanDTO struct {
+	PlanID string `json:"plan_id"`
+}
+
 // StageUserObjectDTO 是用户对象补全输入：读字节→按 expected_digest 校验→暂存
 //（暂存路径不透出，契约 06 §3.5）。
 type StageUserObjectDTO struct {

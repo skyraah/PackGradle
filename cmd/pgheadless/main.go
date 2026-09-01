@@ -52,6 +52,7 @@ func main() {
 	gcRun := flag.Bool("gc", false, "RequestGC → 等终态 → 墓碑/存活/引用图不变式断言链（票 #64 acceptance:gc 主链）")
 	revive := flag.String("revive", "", "从回收站人工复活指定 digest（票 #64 CLI 形态；解压回 objects 并置回 ready）")
 	keepCommits := flag.Int("keep-commits", 0, "写入 config.toml [retention] keep_commits 后继续（0=不动配置；验收 K=3 保底用）")
+	restore := flag.Bool("restore", false, "回滚四场景断言链（P3 票 #60：exact 经 CAS / 补全就绪面 / partial+dirty / 重做语义；需 -plain-mods 夹具）")
 	flag.Parse()
 
 	// -revive 只需数据根，不需 fixture 端点。
@@ -71,6 +72,13 @@ func main() {
 	fatalOn(err, "解析项目根绝对路径")
 	instanceAbs, err := filepath.Abs(*instanceDir)
 	fatalOn(err, "解析实例目录绝对路径")
+
+	// -restore 链路种子文件须在首次扫描前落位（受管 config 面入基线）。
+	if *restore {
+		if err := rstSeedFiles(projectAbs, filepath.Join(instanceAbs, "minecraft")); err != nil {
+			log.Fatalf("-restore 种子文件写入失败: %v", err)
+		}
+	}
 
 	root := *dataRoot
 	if root == "" {
@@ -158,6 +166,10 @@ func main() {
 		}
 		applyStats = stats
 		fmt.Println("headless -apply 链路完成（ConfirmPlan → committed 断言全过）")
+	} else if *restore {
+		if err := runRestoreChain(ctx, app, rel, projectAbs, instanceAbs, root); err != nil {
+			log.Fatalf("-restore 链路失败: %v", err)
+		}
 	} else if *resolve {
 		resolved, err := app.ResolvePlan(ctx, view.ResolvePlanInput{
 			PlanID:      plan.PlanID,
