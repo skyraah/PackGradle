@@ -136,6 +136,17 @@ func LoadConfigFrom(path string) (Config, error) {
 	return cfg, nil
 }
 
+// NewConfigManagerAtLoaded 用指定路径构造配置管理器并读取磁盘配置（票 #64：
+// headless 验收链与产品同语义——路径可注入且初值来自磁盘，写入的
+// [retention] 键对同一进程内的设置端口读者可见）。
+func NewConfigManagerAtLoaded(path string) (*ConfigManager, error) {
+	cfg, err := LoadConfigFrom(path)
+	if err != nil {
+		return nil, err
+	}
+	return &ConfigManager{path: path, cfg: cfg}, nil
+}
+
 // NewConfigManagerAt 用指定路径构造配置管理器（不读取磁盘），供测试注入
 func NewConfigManagerAt(path string) *ConfigManager {
 	return &ConfigManager{path: path}

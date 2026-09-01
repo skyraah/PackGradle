@@ -51,6 +51,7 @@ func (a *App) startApply(t model.Task) {
 	a.runner.RegisterCancel(t.TaskID, cancel)
 	go func() {
 		defer a.runner.UnregisterCancel(t.TaskID)
+		defer a.kickGC() // 运行收口（committed/failed/recovery_required）= 窗口复查事件
 		a.runApply(applyCtx, t)
 	}()
 }
@@ -374,6 +375,10 @@ func (a *App) runApply(ctx context.Context, queued model.Task) {
 		return
 	}
 	_ = a.pub.PublishRelationInvalidated(commitCtx, rel.RelationID)
+
+	// 触发通道②（票 #64，ADR-0007 §3）：提交收口后廉价检查关系占用，
+	// 超容量锚点 C 才建 GC 任务（幂等单飞；异步不阻塞收口）。
+	a.maybeScheduleGCAfterCommit(commitCtx, rel.RelationID)
 }
 
 // applyWorkers 是 staging 与 applying 批内文件动作共用的有界并行度（票 #48：

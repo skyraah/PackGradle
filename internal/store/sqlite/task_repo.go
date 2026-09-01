@@ -233,6 +233,27 @@ ORDER BY created_at DESC, id DESC LIMIT 1`, relationID, kind).Scan(&id)
 	return t, true, nil
 }
 
+// FindActiveByKind 查找全局（跨关系，含 relation_id IS NULL）指定类别的活跃
+// 任务（status IN ('queued','running')，created_at DESC + id DESC 取 1）。
+// GC 全局单飞的 DB 侧守卫（票 #64）。
+func (r *TaskRepository) FindActiveByKind(ctx context.Context, kind string) (model.Task, bool, error) {
+	var id string
+	err := r.db.QueryRowContext(ctx, `
+SELECT id FROM tasks WHERE kind=? AND status IN ('queued','running')
+ORDER BY created_at DESC, id DESC LIMIT 1`, kind).Scan(&id)
+	if err == sql.ErrNoRows {
+		return model.Task{}, false, nil
+	}
+	if err != nil {
+		return model.Task{}, false, fmt.Errorf("sqlite: 查找全局活跃 %s 任务: %w", kind, err)
+	}
+	t, err := r.Get(ctx, id)
+	if err != nil {
+		return model.Task{}, false, err
+	}
+	return t, true, nil
+}
+
 // ListActiveAll 返回全部 queued/running 任务（启动恢复用，id 升序）。
 func (r *TaskRepository) ListActiveAll(ctx context.Context) ([]model.Task, error) {
 	rows, err := r.db.QueryContext(ctx,
