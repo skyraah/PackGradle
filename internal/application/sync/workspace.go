@@ -147,13 +147,16 @@ func (a *App) GetWorkspace(ctx context.Context, relationID string) (view.Workspa
 		}
 	}
 
-	// apply_sync（契约 05 §1）：在既有三动作之上注册，计划面按可应用计划推导
+	// apply_sync（契约 05 §1）：在既有三动作之上注册，计划面按可应用计划推导；
+	// prepare_restore（契约 06 §1；票 #59）：三条件推导（无活跃任务 ∧ 非
+	// recovery_required ∧ scan ready），原因码已在 PrepareRestore 同码强制。
 	face, err := a.planReadinessForRelation(ctx, rel, proj, rt)
 	if err != nil {
 		return view.WorkspaceView{}, err
 	}
 	availability := append(deriveAvailability(string(rel.Health), state.ScanState, hasActiveTask),
-		deriveApplySyncAvailability(string(rel.Health), state.ScanState, hasActiveTask, face))
+		deriveApplySyncAvailability(string(rel.Health), state.ScanState, hasActiveTask, face),
+		derivePrepareRestoreAvailability(string(rel.Health), state.ScanState, hasActiveTask))
 
 	w := view.WorkspaceView{
 		SchemaVersion:   model.CurrentSchemaVersion,

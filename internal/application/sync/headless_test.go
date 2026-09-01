@@ -133,7 +133,8 @@ func makeFixtures(t *testing.T) (projectRoot, instanceDir, dataRoot string) {
 }
 
 // newStack 用真实组件装配应用（headless：不启动 Wails，事件桥为 nil）。
-func newStack(t *testing.T, dataRoot string) (*syncapp.App, *sql.DB) {
+// tune 可选注入（票 #59 探测用例注入 Probes；既有调用零波及）。
+func newStack(t *testing.T, dataRoot string, tune ...func(*syncapp.AppDeps)) (*syncapp.App, *sql.DB) {
 	t.Helper()
 	layout, err := store.EnsureLayout(dataRoot)
 	if err != nil {
@@ -151,7 +152,7 @@ func newStack(t *testing.T, dataRoot string) (*syncapp.App, *sql.DB) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	app, err := syncapp.New(syncapp.AppDeps{
+	deps := syncapp.AppDeps{
 		Endpoints:     sqlite.NewEndpointRepository(db),
 		Relations:     sqlite.NewRelationRepository(db),
 		Snapshots:     sqlite.NewSnapshotRepository(db),
@@ -175,7 +176,11 @@ func newStack(t *testing.T, dataRoot string) (*syncapp.App, *sql.DB) {
 		EndpointPaths: filesystem.PathNormalizer{},
 		IDs:           ids.New,
 		Now:           time.Now,
-	})
+	}
+	for _, fn := range tune {
+		fn(&deps)
+	}
+	app, err := syncapp.New(deps)
 	if err != nil {
 		t.Fatal(err)
 	}

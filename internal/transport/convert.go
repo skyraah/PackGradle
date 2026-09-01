@@ -114,7 +114,7 @@ func rebindPreparationDTO(v view.RebindPreparationView) RebindPreparationDTO {
 	return RebindPreparationDTO{
 		SchemaVersion: v.SchemaVersion, PreparationID: v.PreparationID,
 		CreatedAt: v.CreatedAt, ExpiresAt: v.ExpiresAt, Side: v.Side,
-		Checks: checks,
+		Checks:      checks,
 		OldEndpoint: endpointDTO(v.OldEndpoint), NewEndpoint: endpointDTO(v.NewEndpoint),
 		FingerprintChanged: v.FingerprintChanged, BaselineInheritance: v.BaselineInheritance,
 		InvalidatedPlanCount: v.InvalidatedPlanCount,
@@ -387,5 +387,63 @@ func retentionSettingsDTO(v view.RetentionSettingsView) RetentionSettingsDTO {
 		RelationCapacityBytes: v.RelationCapacityBytes,
 		PreserveMaxBytes:      v.PreserveMaxBytes,
 		TrashDays:             v.TrashDays,
+	}
+}
+
+// ---- 回滚计划面投影转换（契约 06 §3；票 #59）----
+
+func restoreBlockedItemDTO(v view.RestoreBlockedItemView) RestoreBlockedItemDTO {
+	return RestoreBlockedItemDTO{
+		ResourceID:   v.ResourceID,
+		RelativePath: v.RelativePath,
+		Marker:       v.Marker,
+	}
+}
+
+func restorePlanItemDTO(v view.RestorePlanItemView) RestorePlanItemDTO {
+	return RestorePlanItemDTO{
+		ResourceID:     string(v.ResourceID),
+		RelativePath:   v.RelativePath,
+		ChangeKind:     v.ChangeKind,
+		Marker:         string(v.Marker),
+		MarkerReason:   v.MarkerReason,
+		Skipped:        v.Skipped,
+		Staged:         v.Staged,
+		DeletionWarn:   v.DeletionWarn,
+		PreserveSkip:   v.PreserveSkip,
+		Availability:   v.Availability,
+		NewerAvailable: v.NewerAvailable,
+		ExpectedDigest: v.ExpectedDigest,
+	}
+}
+
+func restorePlanDTO(v view.RestorePlanView) RestorePlanDTO {
+	items := make([]RestorePlanItemDTO, 0, len(v.Items))
+	for _, it := range v.Items {
+		items = append(items, restorePlanItemDTO(it))
+	}
+	blocked := make([]RestoreBlockedItemDTO, 0, len(v.BlockedBy))
+	for _, b := range v.BlockedBy {
+		blocked = append(blocked, restoreBlockedItemDTO(b))
+	}
+	reqs := make([]ConfirmationRequirementDTO, 0, len(v.ConfirmationRequirements))
+	for _, r := range v.ConfirmationRequirements {
+		reqs = append(reqs, ConfirmationRequirementDTO{
+			Code: r.Code, Severity: r.Severity, ResourceCount: r.ResourceCount,
+		})
+	}
+	return RestorePlanDTO{
+		SchemaVersion:            v.SchemaVersion,
+		PlanID:                   v.PlanID,
+		RelationID:               v.RelationID,
+		TargetCommitID:           v.TargetCommitID,
+		Status:                   v.Status,
+		ExactFeasible:            v.ExactFeasible,
+		BlockedBy:                blocked,
+		Items:                    items,
+		RequestedExactness:       v.RequestedExactness,
+		ConfirmationRequirements: reqs,
+		ExpiresAt:                v.ExpiresAt,
+		CreatedAt:                v.CreatedAt,
 	}
 }

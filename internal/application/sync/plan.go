@@ -114,6 +114,11 @@ func (a *App) ResolvePlan(ctx context.Context, input view.ResolvePlanInput) (vie
 	if err != nil {
 		return view.SyncPlanView{}, errs.New(CodePlanNotFound, input.PlanID)
 	}
+	// 计划类别门禁（票 #59）：本方法是 sync/initialize 计划的决议入口；restore
+	// 计划归 ResolveRestorePlan。跨类计划按 not_found 同一口径，不泄露形状。
+	if draft.Kind != model.PlanSync && draft.Kind != model.PlanInitialize {
+		return view.SyncPlanView{}, errs.New(CodePlanNotFound, input.PlanID)
+	}
 	if draft.Status != model.PlanDraft {
 		return view.SyncPlanView{}, errs.New(CodePlanStale, input.PlanID)
 	}

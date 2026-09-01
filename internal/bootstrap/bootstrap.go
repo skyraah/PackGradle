@@ -11,12 +11,13 @@ import (
 	"packgradle/internal/adapters/filesystem"
 	"packgradle/internal/adapters/packwiz"
 	"packgradle/internal/adapters/prism"
-	projectapp "packgradle/internal/application/project"
 	"packgradle/internal/application/ports"
+	projectapp "packgradle/internal/application/project"
 	runtimeapp "packgradle/internal/application/runtime"
 	settingsapp "packgradle/internal/application/settings"
 	syncapp "packgradle/internal/application/sync"
 	"packgradle/internal/core/ids"
+	"packgradle/internal/download"
 	"packgradle/internal/store"
 	"packgradle/internal/store/objectstore"
 	"packgradle/internal/store/sqlite"
@@ -75,6 +76,14 @@ func build(root string, retention ports.RetentionSettingsStore) (*Stack, error) 
 	hasher := filesystem.NewHasher()
 	fingerprinter := filesystem.NewFingerprinter()
 	endpoints := sqlite.NewEndpointRepository(db)
+	// CF 探测引擎（契约 06 §5；票 #59）：直链构造与 HTTP 通道复用下载引擎
+	//（ADR-0008），生产默认参数（并发/超时经 Options 可配，探测预算为编译期
+	// 常量）；构造无网络副作用。
+	probes, err := download.New(download.Options{})
+	if err != nil {
+		db.Close()
+		return nil, fmt.Errorf("bootstrap: 装配 CF 探测引擎: %w", err)
+	}
 	app, err := syncapp.New(syncapp.AppDeps{
 		Endpoints:     endpoints,
 		Relations:     sqlite.NewRelationRepository(db),
@@ -91,6 +100,7 @@ func build(root string, retention ports.RetentionSettingsStore) (*Stack, error) 
 		Commits:       sqlite.NewCommitRepository(db),
 		CAS:           cas,
 		StagingRoot:   layout.StagingDir,
+		Probes:        probes,
 		Tx:            sqlite.NewUnitOfWork(db),
 		Publisher:     transport.NewEventBridge(),
 		ProjectScan:   packwiz.New(),

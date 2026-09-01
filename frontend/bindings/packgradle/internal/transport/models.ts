@@ -506,6 +506,128 @@ export interface ResolvePlanDTO {
 }
 
 /**
+ * ResolveRestorePlanDTO 是回滚决议输入（ADR-0006 §3：无冲突决议面）。
+ */
+export interface ResolveRestorePlanDTO {
+    "plan_id": string;
+
+    /**
+     * exact|allow_partial（沿 P2 枚举；空值缺省 allow_partial）
+     */
+    "requested_exactness": string;
+
+    /**
+     * 逐资源 skip 决议，固化于 resolved plan
+     */
+    "skip_resource_ids": string[] | null;
+}
+
+/**
+ * RestoreBlockedItemDTO 是 exact 阻塞清单行（draft 时点 exact_infeasible 证据，
+ * ADR-0006 §4）。
+ */
+export interface RestoreBlockedItemDTO {
+    "resource_id": string;
+    "relative_path": string;
+    "marker": string;
+}
+
+/**
+ * RestorePlanDTO 是回滚计划投影（Status 沿 sync_plans CHECK 读取时投影；
+ * ExactFeasible 为实时就绪面，非 draft 静态标记）。
+ */
+export interface RestorePlanDTO {
+    "schema_version": number;
+    "plan_id": string;
+    "relation_id": string;
+    "target_commit_id": string;
+
+    /**
+     * draft|resolved|confirmed|applied|expired|stale
+     */
+    "status": string;
+    "exact_feasible": boolean;
+    "blocked_by": RestoreBlockedItemDTO[] | null;
+    "items": RestorePlanItemDTO[] | null;
+
+    /**
+     * resolved 后回填 exact|allow_partial
+     */
+    "requested_exactness"?: string;
+
+    /**
+     * 恒非空（restore_acknowledge）
+     */
+    "confirmation_requirements": ConfirmationRequirementDTO[] | null;
+    "expires_at": string;
+    "created_at": string;
+}
+
+/**
+ * RestorePlanItemDTO 是回滚计划单资源行。Marker 枚举
+ * restorable_from_cas|redownload_required|user_object_required|unrecoverable
+ * （delete 行不占四标记）；MarkerReason 仅 user_object_required 行
+ * （no_redownload_info|cf_unavailable|hash_format_unsupported）；Skipped/Staged
+ * 为读取时实时投影；Availability 仅 redownload_required 行（ok|unknown）；
+ * ExpectedDigest 仅 user_object_required 行（验收入库的目标摘要）。
+ */
+export interface RestorePlanItemDTO {
+    "resource_id": string;
+    "relative_path": string;
+
+    /**
+     * create|modify|delete
+     */
+    "change_kind": string;
+
+    /**
+     * delete 行为空串
+     */
+    "marker": string;
+    "marker_reason"?: string;
+    "skipped": boolean;
+    "staged": boolean;
+
+    /**
+     * 手放 mod 删除＝「不可重取」警示（ADR-0006 §5）
+     */
+    "deletion_warn"?: boolean;
+
+    /**
+     * 「旧版本不留存」警示位（判定归票 #64）
+     */
+    "preserve_skip"?: boolean;
+
+    /**
+     * ok|unknown，仅 redownload_required 行
+     */
+    "availability"?: string;
+
+    /**
+     * 仅 ok 行；仅提示，版本决策归 packwiz
+     */
+    "newer_available"?: boolean;
+
+    /**
+     * user_object_required 行验收入库目标摘要
+     */
+    "expected_digest"?: string;
+}
+
+/**
+ * RestorePrepareDTO 是准备回滚输入（Q4：目标 baseline 后端由 commit 推导，
+ * 不收 baseline id）。
+ */
+export interface RestorePrepareDTO {
+    "relation_id": string;
+
+    /**
+     * 任意历史提交（含 restore 提交=重做）；head 合法（空差异计划）
+     */
+    "commit_id": string;
+}
+
+/**
  * RetentionSettingsDTO 是保留策略设置投影（config.toml [retention] 承载，
  * ADR-0007 §2/§7/§8；K=3 硬保底固定不可调，不设键）。
  */
@@ -561,6 +683,20 @@ export interface SnapshotSummaryDTO {
     "captured_at": string;
     "snapshot_digest": string;
     "resource_count": number;
+}
+
+/**
+ * StageUserObjectDTO 是用户对象补全输入：读字节→按 expected_digest 校验→暂存
+ * （暂存路径不透出，契约 06 §3.5）。
+ */
+export interface StageUserObjectDTO {
+    "plan_id": string;
+    "resource_id": string;
+
+    /**
+     * 本地绝对路径
+     */
+    "source_path": string;
 }
 
 /**

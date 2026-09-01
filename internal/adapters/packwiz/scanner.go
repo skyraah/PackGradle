@@ -140,6 +140,13 @@ func (s *Scanner) Scan(ctx context.Context, root string, opts ports.ScanOptions)
 		if meta.Filename != "" {
 			metadata[model.MetaFilename] = meta.Filename
 		}
+		// CF file-id：免钥匙直链重取信息（票 #59 回滚判定「重取性看数据不看出身」
+		// 的数据前提；与展示名/文件名同类的非 digest 元数据，永不进入语义摘要）。
+		if cf, ok := meta.Update["curseforge"]; ok {
+			if v := anyToString(cf["file-id"]); v != "" {
+				metadata[model.MetaCFFileID] = v
+			}
+		}
 
 		obs = append(obs, model.ResourceObservation{
 			ResourceID: id,
