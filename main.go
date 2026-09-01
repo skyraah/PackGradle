@@ -51,12 +51,14 @@ func main() {
 		log.Printf("迁移旧版项目关联配置失败: %v", err)
 	}
 
-	// 新架构（P1 只读核心）装配：SQLite 迁移失败必须阻止启动写操作
+	// 新架构（P1 只读核心）装配：SQLite 迁移失败必须阻止启动写操作。
+	// 保留设置端口接同一 ConfigManager（config.toml [retention]，契约 06 §3.6），
+	// SettingsService 随栈装配（票 #57）。
 	newStackRoot, err := store.DefaultRoot()
 	if err != nil {
 		log.Fatalf("定位用户数据目录失败: %v", err)
 	}
-	newStack, err := bootstrap.Build(newStackRoot)
+	newStack, err := bootstrap.BuildWithRetention(newStackRoot, config)
 	if err != nil {
 		log.Fatalf("新架构初始化失败: %v", err)
 	}
@@ -64,7 +66,8 @@ func main() {
 
 	// 创建 Wails 应用。'Bind' 中注册的 Go 服务方法可供前端直接调用。
 	// 新旧并存：legacy 三服务保持既有行为（已冻结）；SyncService 为 P1 只读核心出口，
-	// ProjectService/RuntimeService 为端点管理出口（/sources、/runtimes 页）。
+	// ProjectService/RuntimeService 为端点管理出口（/sources、/runtimes 页），
+	// SettingsService 为设置/开关域出口（契约 06 §2）。
 	app := application.New(application.Options{
 		Name:        "PackGradle",
 		Description: "packwiz 与 Prism Launcher 整合包开发环境工具",
@@ -75,6 +78,7 @@ func main() {
 			application.NewService(newStack.Service),
 			application.NewService(newStack.ProjectService),
 			application.NewService(newStack.RuntimeService),
+			application.NewService(newStack.Settings),
 		},
 		MarshalError: marshalError,
 		Assets: application.AssetOptions{

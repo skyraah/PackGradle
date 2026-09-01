@@ -5,8 +5,13 @@ import (
 	"path/filepath"
 	"sync"
 
+	"packgradle/internal/core/model"
 	"packgradle/internal/errs"
 )
+
+// CodeSettingsRetentionInvalid 是保留设置越界错误码（契约 06 §10：
+// {0}=字段名，整体拒绝；加载层与写入层共用，文案由前端 locale 提供）。
+const CodeSettingsRetentionInvalid = "err.settings.retention_invalid"
 
 // ProjectEntry 是持久化在配置文件中的一个 packwiz 项目
 type ProjectEntry struct {
@@ -29,6 +34,18 @@ type legacyDirLink struct {
 	InstanceDir string `toml:"instance_dir"`
 }
 
+// RetentionConfig 是 config.toml [retention] 段的原始承载（ADR-0007 §8，票 #57）。
+// 指针字段区分「未写」（nil → 默认值）与显式写 0——preserve_max_bytes=0＝不限，
+// 是合法的显式取值（ADR-0007 §7），不能与未写混淆。编码器跳过 nil 指针，
+// 未配置过的段不落盘。
+type RetentionConfig struct {
+	KeepCommits           *int   `toml:"keep_commits"`
+	KeepDays              *int   `toml:"keep_days"`
+	RelationCapacityBytes *int64 `toml:"relation_capacity_bytes"`
+	PreserveMaxBytes      *int64 `toml:"preserve_max_bytes"`
+	TrashDays             *int   `toml:"trash_days"`
+}
+
 // Config 是持久化在 %AppData%\PackGradle\config.toml 中的应用全局配置。
 // 项目相关的配置（实例关联、目录同步关联）存放于各项目目录下的 packgradle.toml，
 // 不进入全局配置。
@@ -43,6 +60,8 @@ type Config struct {
 	PrismInstancesDir string `toml:"prism_instances_dir"`
 	// 用户自行填写的 CurseForge API Key（用于按需查询 mod 版本等）
 	CurseforgeApiKey string `toml:"curseforge_api_key"`
+	// 保留策略设置（ADR-0007 §8；范围校验见 Retention/SetRetention）
+	Retention RetentionConfig `toml:"retention"`
 	// 旧版字段（v1）：项目 ↔ 实例关联与目录同步关联，启动时一次性迁移到项目级配置后清空
 	LegacyLinks    []legacyLink    `toml:"links"`
 	LegacyDirLinks []legacyDirLink `toml:"dir_links"`
@@ -186,6 +205,67 @@ func (m *ConfigManager) SetPrismInstancesDir(dir string) error {
 	}
 	m.cfg.PrismInstancesDir = dir
 	return m.save()
+}
+
+// Retention 读取并归一保留策略设置（加载层校验，ADR-0007 §8；契约 06 §3.6）：
+// 未写键取默认值；任一键越界整体拒绝，返回 err.settings.retention_invalid
+// （{0}=字段名）。满足 ports.RetentionSettingsStore（settings 应用层端口）。
+func (m *ConfigManager) Retention() (model.RetentionSettings, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.cfg.Retention.materialize()
+}
+
+// SetRetention 校验后整体替换 [retention] 五键并落盘（写入层与加载层同款校验，
+// 契约 06 §3.6）。任一键越界整体拒绝（不落任何键），返回 err.settings.retention_invalid。
+func (m *ConfigManager) SetRetention(s model.RetentionSettings) (model.RetentionSettings, error) {
+	if field, ok := model.ValidateRetention(s); !ok {
+		return model.RetentionSettings{}, errs.New(CodeSettingsRetentionInvalid, field)
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.cfg.Retention = retentionConfigOf(s)
+	if err := m.save(); err != nil {
+		return model.RetentionSettings{}, err
+	}
+	return s, nil
+}
+
+// materialize 把原始 [retention] 段归一为设置值：nil 键取默认，越界整体拒绝。
+func (r RetentionConfig) materialize() (model.RetentionSettings, error) {
+	out := model.DefaultRetention()
+	if r.KeepCommits != nil {
+		out.KeepCommits = *r.KeepCommits
+	}
+	if r.KeepDays != nil {
+		out.KeepDays = *r.KeepDays
+	}
+	if r.RelationCapacityBytes != nil {
+		out.RelationCapacityBytes = *r.RelationCapacityBytes
+	}
+	if r.PreserveMaxBytes != nil {
+		out.PreserveMaxBytes = *r.PreserveMaxBytes
+	}
+	if r.TrashDays != nil {
+		out.TrashDays = *r.TrashDays
+	}
+	if field, ok := model.ValidateRetention(out); !ok {
+		return model.RetentionSettings{}, errs.New(CodeSettingsRetentionInvalid, field)
+	}
+	return out, nil
+}
+
+// retentionConfigOf 把设置值写回原始段（五键全量非 nil，落盘显式化）。
+func retentionConfigOf(s model.RetentionSettings) RetentionConfig {
+	keepCommits, keepDays, trashDays := s.KeepCommits, s.KeepDays, s.TrashDays
+	capacity, preserveMax := s.RelationCapacityBytes, s.PreserveMaxBytes
+	return RetentionConfig{
+		KeepCommits:           &keepCommits,
+		KeepDays:              &keepDays,
+		RelationCapacityBytes: &capacity,
+		PreserveMaxBytes:      &preserveMax,
+		TrashDays:             &trashDays,
+	}
 }
 
 // MigrateLegacyProjectConfigs 将旧版全局 config.toml 中的 [[links]] / [[dir_links]]

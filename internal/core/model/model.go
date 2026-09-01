@@ -191,16 +191,19 @@ const (
 
 // Relation 是一条本机 Project <-> Runtime 关系（聚合根）。
 type Relation struct {
-	SchemaVersion  int            `json:"schema_version"`
-	RelationID     string         `json:"relation_id"` // rel_ 前缀
-	ProjectID      string         `json:"project_id"`
-	RuntimeID      string         `json:"runtime_id"`
-	PolicySet      string         `json:"policy_set"`
-	Revision       int            `json:"revision"`
-	Health         RelationHealth `json:"health"`
-	HeadBaselineID string         `json:"head_baseline_id,omitempty"`
-	HeadCommitID   string         `json:"head_commit_id,omitempty"`
-	CreatedAt      string         `json:"created_at"`
+	SchemaVersion int            `json:"schema_version"`
+	RelationID    string         `json:"relation_id"` // rel_ 前缀
+	ProjectID     string         `json:"project_id"`
+	RuntimeID     string         `json:"runtime_id"`
+	PolicySet     string         `json:"policy_set"`
+	Revision      int            `json:"revision"`
+	Health        RelationHealth `json:"health"`
+	HeadBaselineID string        `json:"head_baseline_id,omitempty"`
+	HeadCommitID   string        `json:"head_commit_id,omitempty"`
+	// AuthorizedApply 是工作区级授权开关（schema v6 列，ADR-0005 §4；契约 06 §3.6）。
+	// 开启后非冲突操作免逐次确认；恢复期开关值保留（入口由 recovery 门禁挡）。
+	AuthorizedApply bool   `json:"authorized_apply"`
+	CreatedAt       string `json:"created_at"`
 }
 
 // PreparationCheck 是 Relation 创建预检的单项结果。

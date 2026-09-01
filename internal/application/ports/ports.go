@@ -95,6 +95,20 @@ type RelationRepository interface {
 	// UpdateHeadCommit 设置关系头提交引用（Phase 2 Apply committed 收口写，
 	// redesign §6.6 步骤 5：与新 Baseline/Commit/object refs 同一事务）。空串清除。
 	UpdateHeadCommit(ctx context.Context, id, commitID string) error
+	// UpdateAuthorizedApply 切换工作区授权开关（schema v6 列；契约 06 §3.6，票 #57）。
+	// 只写列不做门禁（恢复期开关值保留，入口由 recovery 门禁挡）；关系不存在返回 ErrNotFound。
+	UpdateAuthorizedApply(ctx context.Context, id string, enabled bool) error
+}
+
+// RetentionSettingsStore 是保留策略设置的存取端口（config.toml [retention] 承载，
+// ADR-0007 §8；appconfig.ConfigManager 实现）。默认值/范围校验由实现方承担
+// （加载层与写入层同款，契约 06 §3.6）：单键越界返回携带字段名的
+// err.settings.retention_invalid 结构化错误。
+type RetentionSettingsStore interface {
+	// Retention 读取并归一保留设置：未写键取默认值，越界键整体拒绝。
+	Retention() (model.RetentionSettings, error)
+	// SetRetention 校验后整体替换五键并持久化，返回生效值。
+	SetRetention(s model.RetentionSettings) (model.RetentionSettings, error)
 }
 
 // SnapshotRepository 持久化不可变观察快照。

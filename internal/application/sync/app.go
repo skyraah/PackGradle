@@ -55,6 +55,9 @@ type Application interface {
 	// 前置 run=recovery_required，acknowledged_at 落库 + 关系复位 healthy，
 	// 头基线不动、不建 Commit，发布 relation_invalidated 引导重扫。
 	AcknowledgeRecovery(ctx context.Context, taskID string) (view.WorkspaceView, error)
+	// SetWorkspaceAuthorized 切换工作区授权开关（契约 06 §3.6；票 #57）：
+	// 写 relations.authorized_apply 列，返回更新后工作区投影。
+	SetWorkspaceAuthorized(ctx context.Context, relationID string, enabled bool) (view.WorkspaceView, error)
 }
 
 var _ Application = (*App)(nil)

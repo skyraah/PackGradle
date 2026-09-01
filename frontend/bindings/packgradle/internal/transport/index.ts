@@ -3,10 +3,12 @@
 
 import * as ProjectService from "./projectservice.js";
 import * as RuntimeService from "./runtimeservice.js";
+import * as SettingsService from "./settingsservice.js";
 import * as SyncService from "./syncservice.js";
 export {
     ProjectService,
     RuntimeService,
+    SettingsService,
     SyncService
 };
 
@@ -49,12 +51,14 @@ export type {
     RepresentationDTO,
     ResolutionDTO,
     ResolvePlanDTO,
+    RetentionSettingsDTO,
     RuntimeCandidateDTO,
     SnapshotSummaryDTO,
     SyncPlanDTO,
     TaskDTO,
     TaskPageDTO,
     UpdateMappingPolicyDTO,
+    UpdateRetentionSettingsDTO,
     WorkspaceDTO,
     WorkspaceFeaturesDTO,
     WorkspacePageDTO,

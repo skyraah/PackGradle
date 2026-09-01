@@ -156,11 +156,12 @@ func (a *App) GetWorkspace(ctx context.Context, relationID string) (view.Workspa
 		deriveApplySyncAvailability(string(rel.Health), state.ScanState, hasActiveTask, face))
 
 	w := view.WorkspaceView{
-		SchemaVersion: model.CurrentSchemaVersion,
-		Relation:      relationView(rel, proj, rt),
-		State:         state,
-		Features:      workspaceFeatures(),
-		Availability:  availability,
+		SchemaVersion:   model.CurrentSchemaVersion,
+		Relation:        relationView(rel, proj, rt),
+		State:           state,
+		Features:        workspaceFeatures(),
+		Availability:    availability,
+		AuthorizedApply: rel.AuthorizedApply,
 	}
 	if okP {
 		w.LatestProjectSnapshot = snapshotSummary(snapP)
@@ -169,6 +170,18 @@ func (a *App) GetWorkspace(ctx context.Context, relationID string) (view.Workspa
 		w.LatestRuntimeSnapshot = snapshotSummary(snapR)
 	}
 	return w, nil
+}
+
+// SetWorkspaceAuthorized 切换工作区授权开关（契约 06 §3.6；票 #57）：写
+// relations.authorized_apply 后返回更新后的工作区投影（WorkspaceDTO 开关值与
+// 既有字段同源一致）。开关存储与判定解耦：恢复期开关值保留、入口由既有
+// err.recovery.in_progress 门禁挡（CONTEXT.md 授权模式词条）；免确认编排
+// （confirmation_requirements 为空 ∧ authorized）归前端快速更新编排，不在本用例。
+func (a *App) SetWorkspaceAuthorized(ctx context.Context, relationID string, enabled bool) (view.WorkspaceView, error) {
+	if err := a.deps.Relations.UpdateAuthorizedApply(ctx, relationID, enabled); err != nil {
+		return view.WorkspaceView{}, errs.New(CodeRelationNotFound, relationID)
+	}
+	return a.GetWorkspace(ctx, relationID)
 }
 
 func snapshotAfterTask(ok bool, snap model.ObservedSnapshot, t model.Task) bool {

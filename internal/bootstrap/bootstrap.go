@@ -12,7 +12,9 @@ import (
 	"packgradle/internal/adapters/packwiz"
 	"packgradle/internal/adapters/prism"
 	projectapp "packgradle/internal/application/project"
+	"packgradle/internal/application/ports"
 	runtimeapp "packgradle/internal/application/runtime"
+	settingsapp "packgradle/internal/application/settings"
 	syncapp "packgradle/internal/application/sync"
 	"packgradle/internal/core/ids"
 	"packgradle/internal/store"
@@ -30,11 +32,26 @@ type Stack struct {
 	// ProjectService / RuntimeService 是端点管理用例出口（/sources、/runtimes 页）。
 	ProjectService *transport.ProjectService
 	RuntimeService *transport.RuntimeService
+	// SettingsService 是设置/开关域出口（契约 06 §2；票 #57）：保留设置 +
+	// 授权开关。仅 BuildWithRetention 装配（headless 工具无设置面）。
+	Settings *transport.SettingsService
 }
 
 // Build 在指定用户数据根目录装配新栈。
 // 迁移失败直接返回错误（调用方不得启动写操作——架构文档 §8.3）。
 func Build(root string) (*Stack, error) {
+	return build(root, nil)
+}
+
+// BuildWithRetention 同 Build，另接保留设置存取端口（config.toml [retention]
+// 承载，appconfig.ConfigManager 实现）装配 SettingsService（契约 06 §2/§3.6；
+// 票 #57）。GUI 主程序使用；headless 工具（无设置面）沿用 Build。
+func BuildWithRetention(root string, retention ports.RetentionSettingsStore) (*Stack, error) {
+	return build(root, retention)
+}
+
+// build 是装配主体：retention 非 nil 时额外装配 SettingsService。
+func build(root string, retention ports.RetentionSettingsStore) (*Stack, error) {
 	layout, err := store.EnsureLayout(root)
 	if err != nil {
 		return nil, fmt.Errorf("bootstrap: 初始化用户数据目录: %w", err)
@@ -121,6 +138,17 @@ func Build(root string) (*Stack, error) {
 		db.Close()
 		return nil, fmt.Errorf("bootstrap: 装配运行实例端点用例: %w", err)
 	}
+	// 设置域用例（契约 06 §2/§3.6；票 #57）：保留设置端口为 nil（headless）时跳过，
+	// SettingsService 保持未装配。
+	var settingsSvc *transport.SettingsService
+	if retention != nil {
+		settingsApp, err := settingsapp.New(settingsapp.Deps{Retention: retention})
+		if err != nil {
+			db.Close()
+			return nil, fmt.Errorf("bootstrap: 装配设置用例: %w", err)
+		}
+		settingsSvc = transport.NewSettingsService(settingsApp, app)
+	}
 	return &Stack{
 		Layout:         layout,
 		DB:             db,
@@ -128,6 +156,7 @@ func Build(root string) (*Stack, error) {
 		Service:        transport.NewSyncService(app),
 		ProjectService: transport.NewProjectService(projectSvc),
 		RuntimeService: transport.NewRuntimeService(runtimeSvc),
+		Settings:       settingsSvc,
 	}, nil
 }
 

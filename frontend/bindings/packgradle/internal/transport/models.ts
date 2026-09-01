@@ -506,6 +506,39 @@ export interface ResolvePlanDTO {
 }
 
 /**
+ * RetentionSettingsDTO 是保留策略设置投影（config.toml [retention] 承载，
+ * ADR-0007 §2/§7/§8；K=3 硬保底固定不可调，不设键）。
+ */
+export interface RetentionSettingsDTO {
+    "schema_version": number;
+
+    /**
+     * 默认 20，范围 5–200
+     */
+    "keep_commits": number;
+
+    /**
+     * 默认 90，范围 7–365
+     */
+    "keep_days": number;
+
+    /**
+     * 默认 1 GiB，范围 128 MiB–20 GiB
+     */
+    "relation_capacity_bytes": number;
+
+    /**
+     * 默认 32 MiB，范围 1 MiB–512 MiB；0＝不限
+     */
+    "preserve_max_bytes": number;
+
+    /**
+     * 默认 7，范围 1–90
+     */
+    "trash_days": number;
+}
+
+/**
  * RuntimeCandidateDTO 是运行实例发现候选（registered 按 adapter identity 幂等判定）。
  */
 export interface RuntimeCandidateDTO {
@@ -610,6 +643,19 @@ export interface UpdateMappingPolicyDTO {
 }
 
 /**
+ * UpdateRetentionSettingsDTO 是保留设置写输入：五键整体替换（设置页表单全量
+ * 提交）。单键范围校验，越界 → err.settings.retention_invalid（{0}=字段名），
+ * 整体拒绝（不落任何键）。
+ */
+export interface UpdateRetentionSettingsDTO {
+    "keep_commits": number;
+    "keep_days": number;
+    "relation_capacity_bytes": number;
+    "preserve_max_bytes": number;
+    "trash_days": number;
+}
+
+/**
  * WorkspaceDTO 是工作区详情。
  */
 export interface WorkspaceDTO {
@@ -620,6 +666,12 @@ export interface WorkspaceDTO {
     "availability": ActionAvailabilityDTO[] | null;
     "latest_project_snapshot"?: SnapshotSummaryDTO | null;
     "latest_runtime_snapshot"?: SnapshotSummaryDTO | null;
+
+    /**
+     * AuthorizedApply 是工作区授权开关投影（relations.authorized_apply，schema v6；
+     * 契约 06 §3.6：只增不删，票 #57）。
+     */
+    "authorized_apply": boolean;
 }
 
 /**
