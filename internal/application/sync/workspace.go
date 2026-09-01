@@ -160,7 +160,8 @@ func (a *App) GetWorkspace(ctx context.Context, relationID string) (view.Workspa
 	availability := append(deriveAvailability(string(rel.Health), state.ScanState, hasActiveTask),
 		deriveApplySyncAvailability(string(rel.Health), state.ScanState, hasActiveTask, face),
 		deriveQuickUpdateAvailability(string(rel.Health), state.ScanState, hasActiveTask, rel.AuthorizedApply),
-		derivePrepareRestoreAvailability(string(rel.Health), state.ScanState, hasActiveTask))
+		derivePrepareRestoreAvailability(string(rel.Health), state.ScanState, hasActiveTask),
+		deriveApplyRestoreAvailability(string(rel.Health), state.ScanState, hasActiveTask))
 
 	w := view.WorkspaceView{
 		SchemaVersion:   model.CurrentSchemaVersion,

@@ -360,6 +360,18 @@ func (s *SyncService) GetRestorePlan(planID string) (RestorePlanDTO, error) {
 	return restorePlanDTO(v), nil
 }
 
+// ConfirmRestorePlan 确认 resolved 回滚计划并创建 restore 任务（契约 06 §3.4；
+// 票 #60）：确认即建 tasks(kind=restore, queued) + apply_runs(prepared)，引擎
+// 协程接管执行（ApplyRestore 不上 wire，Q1）。幂等重入返回既有 TaskDTO；
+// failed 终局可重入建新运行；上一运行已 committed → err.plan.apply_not_reentrant。
+func (s *SyncService) ConfirmRestorePlan(input ConfirmRestorePlanDTO) (TaskDTO, error) {
+	v, err := s.app.ConfirmRestorePlan(context.Background(), view.ConfirmRestorePlanInput{PlanID: input.PlanID})
+	if err != nil {
+		return TaskDTO{}, err
+	}
+	return taskDTO(v), nil
+}
+
 // StageUserObject 用户对象补全（契约 06 §3.5）：draft/resolved 均可补全；
 // 按 expected_digest 验收不符 → err.userobject.hash_mismatch（{0}=期望摘要，
 // 可重试）。成功返回更新后的 RestorePlanDTO（该行 staged=true）。

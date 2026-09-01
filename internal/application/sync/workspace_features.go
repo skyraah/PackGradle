@@ -12,13 +12,15 @@ import (
 // 条目，前端不渲染入口（Phase 3 能力，硬约束 2）。
 
 // availability 动作名（与契约 03 §2.1 / 契约 06 §1 action 枚举一致；
-// quick_update 为票 #62 新增，prepare_restore 为票 #59 新增）。
+// quick_update 为票 #62 新增，prepare_restore 为票 #59 新增，apply_restore
+// 为票 #60 新增——restore_apply 能力点亮的动作面注册）。
 const (
 	actionScan           = "scan"
 	actionPrepareSync    = "prepare_sync"
 	actionApplySync      = "apply_sync"
 	actionQuickUpdate    = "quick_update"
 	actionPrepareRestore = "prepare_restore"
+	actionApplyRestore   = "apply_restore"
 	actionRebind         = "rebind"
 )
 
@@ -26,14 +28,14 @@ const (
 // restore_preview/restore_apply 点亮，materialization_modes 增 download）。
 func workspaceFeatures() view.WorkspaceFeaturesView {
 	return view.WorkspaceFeaturesView{
-		Scan:                 true,
-		SyncPreview:          true,
-		SyncApply:            true, // ConfirmPlan/Apply 全链路点亮（T03）
-		ConflictInspection:   true,
-		ConflictResolution:   "choose_side",
-		HistoryView:          true,                         // ListCommits/GetCommit（T03 契约面，消费票落地）
-		RestorePreview:       true,                         // PrepareRestore→计划面点亮（票 #59；Confirm 归票 #60）
-		RestoreApply:         true,                         // 契约 06 §1 P3 固定值；apply_restore 动作注册归票 #60
+		Scan:               true,
+		SyncPreview:        true,
+		SyncApply:          true, // ConfirmPlan/Apply 全链路点亮（T03）
+		ConflictInspection: true,
+		ConflictResolution: "choose_side",
+		HistoryView:        true,   // ListCommits/GetCommit（T03 契约面，消费票落地）
+		RestorePreview:     true,   // PrepareRestore→计划面点亮（票 #59）
+		RestoreApply:       true,   // ConfirmRestorePlan→restore 运行全链路点亮（票 #60）
 		// MaterializationModes（契约 06 §3.7，票 #63）：download 物化点亮（CF
 		// 免钥匙直链，ADR-0008）；v1 模式选用为后端推导，无用户选择面。
 		MaterializationModes: []string{"copy", "download"},
@@ -107,6 +109,26 @@ func deriveQuickUpdateAvailability(health, scanState string, hasActiveTask, auth
 // 原因码优先级沿推导表列序：already_running → in_progress → incomplete。
 func derivePrepareRestoreAvailability(health, scanState string, hasActiveTask bool) view.ActionAvailabilityView {
 	a := view.ActionAvailabilityView{Action: actionPrepareRestore, Available: false}
+	switch {
+	case hasActiveTask:
+		a.ReasonCode = CodeRelationScanRunning
+	case health == string(model.HealthRecoveryRequired):
+		a.ReasonCode = CodeRecoveryInProgress
+	case scanState != "ready":
+		a.ReasonCode = CodeScanIncomplete
+	default:
+		a.Available = true
+	}
+	return a
+}
+
+// deriveApplyRestoreAvailability 注册 apply_restore 推导行（票 #60：ConfirmRestorePlan
+// 执行通道的动作面）。沿 #59 prepare_restore 前例镜像：同款三条件推导（无活跃
+// 任务 ∧ 非 recovery_required ∧ scan ready），原因码同序——契约 06 §1 availability
+// 表未单列 apply_restore 行为，注册面按前例镜像不加码；确认入口自身的计划态
+// 校验（resolved/stale/expired/failed 重入）由 ConfirmRestorePlan 同码强制。
+func deriveApplyRestoreAvailability(health, scanState string, hasActiveTask bool) view.ActionAvailabilityView {
+	a := view.ActionAvailabilityView{Action: actionApplyRestore, Available: false}
 	switch {
 	case hasActiveTask:
 		a.ReasonCode = CodeRelationScanRunning

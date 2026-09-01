@@ -69,6 +69,10 @@ type Application interface {
 	// StageUserObject 用户对象补全：字节进 staging 绑 plan 不进 CAS，凭
 	// expected_digest 验收，不改标记只改就绪面。
 	StageUserObject(ctx context.Context, input view.StageUserObjectInput) (view.RestorePlanView, error)
+	// ConfirmRestorePlan 回滚确认（契约 06 §3.4；票 #60）：确认即建 kind=restore
+	// 任务与 apply_runs(prepared) 运行，引擎协程接管执行；幂等口径对齐
+	// ConfirmPlan，failed 终局可重入，committed 后 err.plan.apply_not_reentrant。
+	ConfirmRestorePlan(ctx context.Context, input view.ConfirmRestorePlanInput) (view.TaskView, error)
 }
 
 var _ Application = (*App)(nil)

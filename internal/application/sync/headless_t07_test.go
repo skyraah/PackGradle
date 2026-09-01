@@ -30,8 +30,9 @@ func assertAvailability(t *testing.T, avail []view.ActionAvailabilityView, actio
 	t.Fatalf("availability 缺少动作 %s: %+v", action, avail)
 }
 
-// assertRestoreActionRegistration 校验 restore 动作注册面（契约 06 §1；票 #59）：
-// prepare_restore 随 P3 点亮注册；apply_restore 归票 #60，不出现在 availability。
+// assertRestoreActionRegistration 校验 restore 动作注册面（契约 06 §1；
+// prepare_restore 随票 #59 点亮注册；apply_restore 随票 #60 ConfirmRestorePlan
+// 执行通道点亮注册，沿 prepare_restore 前例镜像推导）。
 func assertRestoreActionRegistration(t *testing.T, avail []view.ActionAvailabilityView) {
 	t.Helper()
 	var hasPrepare, hasApply bool
@@ -46,8 +47,8 @@ func assertRestoreActionRegistration(t *testing.T, avail []view.ActionAvailabili
 	if !hasPrepare {
 		t.Fatalf("P3 应注册 prepare_restore: %+v", avail)
 	}
-	if hasApply {
-		t.Fatal("apply_restore 归票 #60，不应出现在 availability")
+	if !hasApply {
+		t.Fatal("票 #60 应注册 apply_restore")
 	}
 }
 
@@ -126,9 +127,10 @@ func TestHeadlessWorkspaceFeaturesAndAvailability(t *testing.T) {
 	if len(page.Items) != 1 {
 		t.Fatalf("工作区列表应 1 项，得到 %d", len(page.Items))
 	}
-	// P3：availability 六动作 = scan/prepare_sync/rebind/apply_sync/quick_update/
-	// prepare_restore（quick_update 票 #62、prepare_restore 票 #59 随点亮注册）
-	if page.Items[0].Features.Scan != true || len(page.Items[0].Availability) != 6 {
+	// P3：availability 七动作 = scan/prepare_sync/rebind/apply_sync/quick_update/
+	// prepare_restore/apply_restore（quick_update 票 #62、prepare_restore 票 #59、
+	// apply_restore 票 #60 随点亮注册）
+	if page.Items[0].Features.Scan != true || len(page.Items[0].Availability) != 7 {
 		t.Fatalf("列表项未内嵌 features/availability: %+v", page.Items[0])
 	}
 

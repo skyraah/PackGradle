@@ -430,6 +430,9 @@ type stagedOp struct {
 	skipCode  string
 	skipArgs  []string
 	skipCause string
+	// failArgs 是硬失败行的原因码插值参数（restore 执行器专用：下载失败的
+	// err.download.* args，票 #60；apply 侧恒 nil）。
+	failArgs []string
 }
 
 // stageOneOperation 执行单操作 staging（串行原语的逐操作体）：前置条件复核 →

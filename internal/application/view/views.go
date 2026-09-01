@@ -498,6 +498,13 @@ type StageUserObjectInput struct {
 	SourcePath string `json:"source_path"` // 本地绝对路径
 }
 
+// ConfirmRestorePlanInput 是回滚确认输入（契约 06 §3.4；票 #60）。成功返回
+// TaskView（kind=restore，status=queued，PlanID 回填）；幂等重入返回既有任务，
+// failed 终局重入建新运行。
+type ConfirmRestorePlanInput struct {
+	PlanID string `json:"plan_id"`
+}
+
 // RestoreBlockedItemView 是 exact 阻塞清单行（draft 时点 exact_infeasible 证据，
 // ADR-0006 §4）。
 type RestoreBlockedItemView struct {
