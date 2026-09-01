@@ -1,6 +1,6 @@
 {
   "schema": "p3-perf-run/1",
-  "captured_at": "2026-09-01T20:27:55Z",
+  "captured_at": "2026-09-01T20:36:25Z",
   "project_root": "C:\\project\\pg-p3-t66\\build\\perf\\fixture\\project",
   "instance_dir": "C:\\project\\pg-p3-t66\\build\\perf\\fixture\\instance",
   "data_root": "build/perf/data",
@@ -12,13 +12,13 @@
     "cpus": 16
   },
   "scan_phases_ms": {
-    "project_scan": 46,
-    "runtime_scan": 2856,
-    "normalize": 9,
-    "persist": 23
+    "project_scan": 44,
+    "runtime_scan": 2830,
+    "normalize": 10,
+    "persist": 21
   },
-  "scan_total_ms": 2941,
-  "run_total_ms": 3100,
+  "scan_total_ms": 2913,
+  "run_total_ms": 3099,
   "hash_cache": {
     "hits": 0,
     "misses": 2700,

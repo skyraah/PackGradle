@@ -1,6 +1,6 @@
 {
   "schema": "p3-perf-run/1",
-  "captured_at": "2026-09-01T20:30:30Z",
+  "captured_at": "2026-09-01T20:39:37Z",
   "project_root": "C:\\project\\pg-p3-t66\\build\\perf\\fixture\\project",
   "instance_dir": "C:\\project\\pg-p3-t66\\build\\perf\\fixture\\instance",
   "data_root": "build/perf/data",
@@ -27,7 +27,7 @@
   "gc": {
     "kind": "gc",
     "probes": false,
-    "gc_total_ms": 8362,
+    "gc_total_ms": 8095,
     "tombstones": 8,
     "alive_commits": 20,
     "audit_violations": 0,

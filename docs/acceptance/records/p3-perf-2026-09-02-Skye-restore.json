@@ -1,6 +1,6 @@
 {
   "schema": "p3-perf-run/1",
-  "captured_at": "2026-09-01T20:29:23Z",
+  "captured_at": "2026-09-01T20:38:36Z",
   "project_root": "C:\\project\\pg-p3-t66\\build\\perf\\fixture\\project",
   "instance_dir": "C:\\project\\pg-p3-t66\\build\\perf\\fixture\\instance",
   "data_root": "build/perf/data",
@@ -27,24 +27,24 @@
   "restore": {
     "kind": "restore",
     "operation_count": 4800,
-    "prepare_ms": 359,
+    "prepare_ms": 388,
     "phases_ms": {
-      "staging": 21636,
-      "applying": 14138,
-      "verifying": 13074
+      "staging": 34905,
+      "applying": 14235,
+      "verifying": 12948
     },
     "staging_download_ms": 0,
     "download_note": "无 redownload 行（perf 夹具 mod 声明 hash 为占位值，零网络口径）——download 相位只记录不设门槛",
-    "restore_total_ms": 51723,
-    "chain_total_ms": 51807,
+    "restore_total_ms": 64892,
+    "chain_total_ms": 65020,
     "peak_memory_delta": {
       "metric": "go_runtime_memstats_sys_peak_delta",
-      "baseline_bytes": 66277376,
-      "peak_bytes": 70799360,
-      "delta_bytes": 4521984,
-      "delta_mib": 4.3125,
-      "peak_heap_inuse_bytes": 41492480,
-      "samples": 504,
+      "baseline_bytes": 66015232,
+      "peak_bytes": 74862592,
+      "delta_bytes": 8847360,
+      "delta_mib": 8.4375,
+      "peak_heap_inuse_bytes": 41803776,
+      "samples": 631,
       "note": "runtime.ReadMemStats 按 GetTask 轮询间隔（~100ms）+ 终态补充采样；增量 = apply 段 Sys 峰值 − ConfirmPlan 前基线"
     }
   }
