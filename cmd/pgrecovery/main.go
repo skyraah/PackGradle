@@ -44,14 +44,16 @@ const codeRecoveryInProgress = "err.recovery.in_progress"
 
 func main() {
 	var (
-		rounds      = flag.Int("rounds", 5, "强杀轮数（验收规格 §2.1 固定 5）")
-		seed        = flag.Int64("seed", 20260831, "强杀调度随机种子（目标相位+延迟，入记录可重放）")
+		mode        = flag.String("mode", "apply", "注入模式：apply（P2，票 #41）| restore（P3，票 #66 restore 运行强杀）")
+		rounds      = flag.Int("rounds", 5, "强杀轮数（验收规格固定 5）")
+		seed        = flag.Int64("seed", 20260901, "强杀调度随机种子（目标相位+延迟，入记录可重放）")
 		mods        = flag.Int("mods", 6, "fixture mod 数")
 		textFiles   = flag.Int("text-files", 120, "fixture 受管文本文件数（加大以展宽相位窗口）")
 		fixtureSeed = flag.Int64("fixture-seed", 20260830, "fixture 生成种子（确定性生成器）")
 		headlessBin = flag.String("pgheadless", filepath.Join("bin", "pgheadless.exe"), "pgheadless 可执行文件（apply 子进程与复跑）")
+		pgfixtureBn = flag.String("pgfixture", filepath.Join("bin", "pgfixture.exe"), "pgfixture 可执行文件（restore 模式拉起假 CDN 进程）")
 		work        = flag.String("work", filepath.Join("build", "recovery"), "harness 工作目录（逐轮逐次尝试新建 fixture/数据目录）")
-		recordPath  = flag.String("record", "", "逐轮记录 JSON 输出路径（空=自动 docs/acceptance/records/p2-recovery-<date>-<host>.json；\"-\"=不落盘）")
+		recordPath  = flag.String("record", "", "逐轮记录 JSON 输出路径（空=按模式自动命名 docs/acceptance/records/；\"-\"=不落盘）")
 		killWindow  = flag.Duration("kill-window", 120*time.Second, "等待目标相位标记的总时限（超时仍强杀）")
 	)
 	flag.Parse()
@@ -60,7 +62,24 @@ func main() {
 		os.Exit(2)
 	}
 	if *rounds != 5 {
-		fmt.Fprintf(os.Stderr, "警告：验收规格 §2.1 固定 5 轮，当前 -rounds=%d（仅调试用）\n", *rounds)
+		fmt.Fprintf(os.Stderr, "警告：验收规格固定 5 轮，当前 -rounds=%d（仅调试用）\n", *rounds)
+	}
+
+	if *mode == "restore" {
+		// 票 #66：acceptance:recovery:restore——restore 运行强杀注入。
+		runRestoreMode(restoreOptions{
+			rounds:      *rounds,
+			seed:        *seed,
+			mods:        *mods,
+			textFiles:   *textFiles,
+			fixtureSeed: *fixtureSeed,
+			headlessBin: *headlessBin,
+			pgfixtureBin: *pgfixtureBn,
+			work:        filepath.Join(*work + "-restore"),
+			recordPath:  *recordPath,
+			killWindow:  *killWindow,
+		})
+		return
 	}
 
 	rec := newRecord(*seed, *fixtureSeed, *mods, *textFiles)

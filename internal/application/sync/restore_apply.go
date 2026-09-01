@@ -556,6 +556,8 @@ func deriveRestoreFilePlans(plan model.SyncPlan, base *model.SyncBaseline,
 // 由 staging 期整场 failed 终局（restore 无剔除语义）。返回错误仅表示 ctx 取消。
 func (a *App) fetchRestoreDownloads(ctx context.Context, run *syncstage.Run, plans []applyFilePlan) error {
 	reqs := make([]download.Request, 0, len(plans))
+	// idxByReq 是 req → 所属 plans 下标（结果回填行用；outcomes 归集另用
+	// kByReq——见下）。
 	idxByReq := make(map[download.Request]int, len(plans))
 	for i := range plans {
 		fp := &plans[i]
@@ -581,8 +583,15 @@ func (a *App) fetchRestoreDownloads(ctx context.Context, run *syncstage.Run, pla
 		return nil
 	}
 
-	// 结果按 req 值归集（onResult 在引擎 worker goroutine 上回调，乱序且禁止
-	// 并发写 plans）；每请求恰好回调一次（引擎契约）。
+	// 结果归集需要两个映射：req 在 reqs 数组中的下标 k（outcomes 归集——
+	// onResult 乱序回调）与 req 所属 plans 的下标（结果回填行）。此前只有
+	// idxByReq（plans 索引）且在 onResult 里误用作 outcomes 下标——当 dl 行
+	// 的 plans 索引 ≥ len(reqs) 时越界（票 #66 restore 强杀 harness 触发；
+	// #60 单测的 dl 行恰靠前被掩盖）。
+	kByReq := make(map[download.Request]int, len(reqs))
+	for k := range reqs {
+		kByReq[reqs[k]] = k
+	}
 	type dlOutcome struct {
 		res *download.Result
 		err error
@@ -590,7 +599,7 @@ func (a *App) fetchRestoreDownloads(ctx context.Context, run *syncstage.Run, pla
 	outcomes := make([]dlOutcome, len(reqs))
 	fetchErr := a.deps.Downloads.FetchAll(ctx, run.DlDir(), reqs,
 		func(req download.Request, res *download.Result, ferr error) {
-			outcomes[idxByReq[req]] = dlOutcome{res: res, err: ferr}
+			outcomes[kByReq[req]] = dlOutcome{res: res, err: ferr}
 		})
 	for k, o := range outcomes {
 		fp := &plans[idxByReq[reqs[k]]]

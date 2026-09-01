@@ -1,0 +1,377 @@
+{
+  "schema": "p3-recovery-restore/1",
+  "ticket": "skyraah/PackGradle#66",
+  "spec": "docs/acceptance/p3-acceptance-spec.md §4 回滚中断强杀（P2 §2.1 四不变式照用 + restore 特有两条）",
+  "date": "2026-09-02",
+  "machine": {
+    "host": "Skye",
+    "os": "windows",
+    "arch": "amd64",
+    "go_version": "go1.26.5",
+    "cpus": 16
+  },
+  "seed": 20260901,
+  "cdn": {
+    "mode": "managed",
+    "base_url": "http://127.0.0.1:4596/files"
+  },
+  "fixture": {
+    "seed": 20260830,
+    "mods": 6,
+    "text_files": 120,
+    "managed_files": 126,
+    "note": "pgheadless -restore-target 自含夹具（双侧 120 受管文本 + 6 个 CF 声明 mod 经假 CDN 下载入基线）；restore 前删 3 个运行端 jar 作 redownload 行漂移"
+  },
+  "rounds_fixed": 5,
+  "procedure": "每轮：全新轮目录 → pgheadless -restore-target 子进程（自建夹具历史 c1/c2 → PrepareRestore(最老提交) → == ConfirmRestorePlan == armed 行）→ armed 后种子调度目标相位（轮 1-3 洗牌保证 staging 下载/applying/verifying 全覆盖，4-5 随机补采）标记出现后随机延迟 taskkill /F 真强杀 → 重启（bootstrap.Build 共享启动路径，RecoverInterruptedTasks 同步恢复裁决）→ 再重启两次核对幂等 → 四不变式 + restore 特有两条逐轮断言；recovery_required 轮以 AcknowledgeRecovery 收口后复跑 -restore-target 至 committed。armed 前击杀（killed_before_confirm）按同目标相位减半延迟重试。",
+  "rounds": [
+    {
+      "round": 1,
+      "schedule": "staging",
+      "attempts": [
+        {
+          "index": 1,
+          "target_phase": "staging",
+          "kill_delay_ms": 156,
+          "outcome": "killed",
+          "kill": {
+            "verified": true,
+            "taskkill_output": "成功: 已终止 PID 为 47372 的进程。",
+            "landed_phase": "staging",
+            "markers": [
+              {
+                "marker": "phase=staging",
+                "ms": 2750
+              }
+            ]
+          }
+        }
+      ],
+      "attempt_count": 1,
+      "chain": [
+        "commit_01M1FANRTRZ5G0HFM3QYACMD65",
+        "commit_01M1FANSTHEGTBTDEAA0RTZX0E"
+      ],
+      "verdict": "recovery_required",
+      "closure_path": "acknowledge_rerestore_committed",
+      "kill": {
+        "verified": true,
+        "taskkill_output": "成功: 已终止 PID 为 47372 的进程。",
+        "landed_phase": "staging",
+        "markers": [
+          {
+            "marker": "phase=staging",
+            "ms": 2750
+          }
+        ]
+      },
+      "new_commit": "commit_01M1FANVSAYZ9BXAJ46RZDHPBW",
+      "staging_part_files": 0,
+      "remaining_diff_after_ack": {
+        "total": 126,
+        "create_count": 0,
+        "modify_count": 0,
+        "delete_count": 3,
+        "conflict_count": 0,
+        "init_choice_count": 0
+      },
+      "i1_no_partial_illusion": true,
+      "i2_rescan_diff_zero_after_closure": true,
+      "i3_gate_and_rerestore": true,
+      "i4_repeat_recovery_idempotent": true,
+      "r5_no_false_committed": true,
+      "r6_history_append_only": true
+    },
+    {
+      "round": 2,
+      "schedule": "applying",
+      "attempts": [
+        {
+          "index": 1,
+          "target_phase": "applying",
+          "kill_delay_ms": 638,
+          "outcome": "killed",
+          "kill": {
+            "verified": true,
+            "taskkill_output": "成功: 已终止 PID 为 40124 的进程。",
+            "landed_phase": "verifying",
+            "markers": [
+              {
+                "marker": "phase=staging",
+                "ms": 2510
+              },
+              {
+                "marker": "phase=applying",
+                "ms": 3114
+              },
+              {
+                "marker": "phase=verifying",
+                "ms": 3314
+              }
+            ]
+          }
+        }
+      ],
+      "attempt_count": 1,
+      "chain": [
+        "commit_01M1FANX6GZRYVF65AJ4P1VMR1",
+        "commit_01M1FANY595BTYZT0FZA78K5YY"
+      ],
+      "verdict": "recovery_required",
+      "closure_path": "acknowledge_rerestore_committed",
+      "kill": {
+        "verified": true,
+        "taskkill_output": "成功: 已终止 PID 为 40124 的进程。",
+        "landed_phase": "verifying",
+        "markers": [
+          {
+            "marker": "phase=staging",
+            "ms": 2510
+          },
+          {
+            "marker": "phase=applying",
+            "ms": 3114
+          },
+          {
+            "marker": "phase=verifying",
+            "ms": 3314
+          }
+        ]
+      },
+      "op_status_tally": {
+        "applied": 83
+      },
+      "new_commit": "commit_01M1FAP0YHJHPKEFRVTZAF1EKC",
+      "staging_part_files": 0,
+      "remaining_diff_after_ack": {
+        "total": 126,
+        "create_count": 0,
+        "modify_count": 0,
+        "delete_count": 0,
+        "conflict_count": 0,
+        "init_choice_count": 0
+      },
+      "i1_no_partial_illusion": true,
+      "i2_rescan_diff_zero_after_closure": true,
+      "i3_gate_and_rerestore": true,
+      "i4_repeat_recovery_idempotent": true,
+      "r5_no_false_committed": true,
+      "r6_history_append_only": true
+    },
+    {
+      "round": 3,
+      "schedule": "verifying",
+      "attempts": [
+        {
+          "index": 1,
+          "target_phase": "verifying",
+          "kill_delay_ms": 40,
+          "outcome": "killed",
+          "kill": {
+            "verified": true,
+            "taskkill_output": "成功: 已终止 PID 为 59744 的进程。",
+            "landed_phase": "verifying",
+            "markers": [
+              {
+                "marker": "phase=staging",
+                "ms": 2457
+              },
+              {
+                "marker": "phase=applying",
+                "ms": 2982
+              },
+              {
+                "marker": "phase=verifying",
+                "ms": 3285
+              }
+            ]
+          }
+        }
+      ],
+      "attempt_count": 1,
+      "chain": [
+        "commit_01M1FAP2AC3HQBZRBVWPDPKW36",
+        "commit_01M1FAP38Z3RT6QC35J96F8HWB"
+      ],
+      "verdict": "committed",
+      "closure_path": "auto_committed",
+      "kill": {
+        "verified": true,
+        "taskkill_output": "成功: 已终止 PID 为 59744 的进程。",
+        "landed_phase": "verifying",
+        "markers": [
+          {
+            "marker": "phase=staging",
+            "ms": 2457
+          },
+          {
+            "marker": "phase=applying",
+            "ms": 2982
+          },
+          {
+            "marker": "phase=verifying",
+            "ms": 3285
+          }
+        ]
+      },
+      "op_status_tally": {
+        "verified": 83
+      },
+      "new_commit": "commit_01M1FAP4HV7Q6BDYYXJAGSFM6C",
+      "staging_part_files": 0,
+      "i1_no_partial_illusion": true,
+      "i2_rescan_diff_zero_after_closure": true,
+      "i3_gate_and_rerestore": true,
+      "i4_repeat_recovery_idempotent": true,
+      "r5_no_false_committed": true,
+      "r6_history_append_only": true
+    },
+    {
+      "round": 4,
+      "schedule": "verifying",
+      "attempts": [
+        {
+          "index": 1,
+          "target_phase": "verifying",
+          "kill_delay_ms": 55,
+          "outcome": "killed",
+          "kill": {
+            "verified": true,
+            "taskkill_output": "成功: 已终止 PID 为 48020 的进程。",
+            "landed_phase": "verifying",
+            "markers": [
+              {
+                "marker": "phase=staging",
+                "ms": 2567
+              },
+              {
+                "marker": "phase=applying",
+                "ms": 3184
+              },
+              {
+                "marker": "phase=verifying",
+                "ms": 3386
+              }
+            ]
+          }
+        }
+      ],
+      "attempt_count": 1,
+      "chain": [
+        "commit_01M1FAP618S4K8WE09PRJE13B1",
+        "commit_01M1FAP713KCWWHM3G31A0R29G"
+      ],
+      "verdict": "recovery_required",
+      "closure_path": "acknowledge_rerestore_committed",
+      "kill": {
+        "verified": true,
+        "taskkill_output": "成功: 已终止 PID 为 48020 的进程。",
+        "landed_phase": "verifying",
+        "markers": [
+          {
+            "marker": "phase=staging",
+            "ms": 2567
+          },
+          {
+            "marker": "phase=applying",
+            "ms": 3184
+          },
+          {
+            "marker": "phase=verifying",
+            "ms": 3386
+          }
+        ]
+      },
+      "op_status_tally": {
+        "applied": 83
+      },
+      "new_commit": "commit_01M1FAP9V2T2RH3YBGR5STEEYC",
+      "staging_part_files": 0,
+      "remaining_diff_after_ack": {
+        "total": 126,
+        "create_count": 0,
+        "modify_count": 0,
+        "delete_count": 0,
+        "conflict_count": 0,
+        "init_choice_count": 0
+      },
+      "i1_no_partial_illusion": true,
+      "i2_rescan_diff_zero_after_closure": true,
+      "i3_gate_and_rerestore": true,
+      "i4_repeat_recovery_idempotent": true,
+      "r5_no_false_committed": true,
+      "r6_history_append_only": true
+    },
+    {
+      "round": 5,
+      "schedule": "applying",
+      "attempts": [
+        {
+          "index": 1,
+          "target_phase": "applying",
+          "kill_delay_ms": 133,
+          "outcome": "killed",
+          "kill": {
+            "verified": true,
+            "taskkill_output": "成功: 已终止 PID 为 5324 的进程。",
+            "landed_phase": "applying",
+            "markers": [
+              {
+                "marker": "phase=staging",
+                "ms": 2598
+              },
+              {
+                "marker": "phase=applying",
+                "ms": 3109
+              }
+            ]
+          }
+        }
+      ],
+      "attempt_count": 1,
+      "chain": [
+        "commit_01M1FAPB7TQQ8VXS1X68CJYPQK",
+        "commit_01M1FAPC7RQM7ASHWCNCQ9DABY"
+      ],
+      "verdict": "recovery_required",
+      "closure_path": "acknowledge_rerestore_committed",
+      "kill": {
+        "verified": true,
+        "taskkill_output": "成功: 已终止 PID 为 5324 的进程。",
+        "landed_phase": "applying",
+        "markers": [
+          {
+            "marker": "phase=staging",
+            "ms": 2598
+          },
+          {
+            "marker": "phase=applying",
+            "ms": 3109
+          }
+        ]
+      },
+      "op_status_tally": {
+        "applied": 83
+      },
+      "new_commit": "commit_01M1FAPEWT4GVBSV526N06AB6Y",
+      "staging_part_files": 0,
+      "remaining_diff_after_ack": {
+        "total": 126,
+        "create_count": 0,
+        "modify_count": 0,
+        "delete_count": 0,
+        "conflict_count": 0,
+        "init_choice_count": 0
+      },
+      "i1_no_partial_illusion": true,
+      "i2_rescan_diff_zero_after_closure": true,
+      "i3_gate_and_rerestore": true,
+      "i4_repeat_recovery_idempotent": true,
+      "r5_no_false_committed": true,
+      "r6_history_append_only": true
+    }
+  ],
+  "verdict": {
+    "all_pass": true
+  }
+}
