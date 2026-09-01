@@ -123,8 +123,9 @@ func rebindPreparationDTO(v view.RebindPreparationView) RebindPreparationDTO {
 
 func workspaceDTO(v view.WorkspaceView) WorkspaceDTO {
 	out := WorkspaceDTO{
-		SchemaVersion: v.SchemaVersion,
-		Relation:      relationDTO(v.Relation),
+		SchemaVersion:   v.SchemaVersion,
+		Relation:        relationDTO(v.Relation),
+		AuthorizedApply: v.AuthorizedApply,
 		State: WorkspaceStateDTO{
 			ScanState: v.State.ScanState, BaselineState: v.State.BaselineState,
 			DiffState: v.State.DiffState, RelationHealth: v.State.RelationHealth,
@@ -374,4 +375,17 @@ func commitPageDTO(v view.CommitPage) CommitPageDTO {
 		items = append(items, commitSummaryDTO(c))
 	}
 	return CommitPageDTO{SchemaVersion: v.SchemaVersion, Items: items, NextCursor: v.NextCursor}
+}
+
+// ---- 设置域投影转换（契约 06 §3.6；票 #57）----
+
+func retentionSettingsDTO(v view.RetentionSettingsView) RetentionSettingsDTO {
+	return RetentionSettingsDTO{
+		SchemaVersion:         v.SchemaVersion,
+		KeepCommits:           v.KeepCommits,
+		KeepDays:              v.KeepDays,
+		RelationCapacityBytes: v.RelationCapacityBytes,
+		PreserveMaxBytes:      v.PreserveMaxBytes,
+		TrashDays:             v.TrashDays,
+	}
 }

@@ -133,6 +133,9 @@ type WorkspaceDTO struct {
 	Availability          []ActionAvailabilityDTO `json:"availability"`
 	LatestProjectSnapshot *SnapshotSummaryDTO     `json:"latest_project_snapshot,omitempty"`
 	LatestRuntimeSnapshot *SnapshotSummaryDTO     `json:"latest_runtime_snapshot,omitempty"`
+	// AuthorizedApply 是工作区授权开关投影（relations.authorized_apply，schema v6；
+	// 契约 06 §3.6：只增不删，票 #57）。
+	AuthorizedApply bool `json:"authorized_apply"`
 }
 
 // WorkspacePageDTO 是工作区分页。
@@ -495,4 +498,28 @@ type CommitPageDTO struct {
 	SchemaVersion int                `json:"schema_version"`
 	Items         []CommitSummaryDTO `json:"items"`
 	NextCursor    string             `json:"next_cursor,omitempty"`
+}
+
+// ---- 设置域 DTO（契约 06 §3.6；票 #57）----
+
+// RetentionSettingsDTO 是保留策略设置投影（config.toml [retention] 承载，
+// ADR-0007 §2/§7/§8；K=3 硬保底固定不可调，不设键）。
+type RetentionSettingsDTO struct {
+	SchemaVersion         int   `json:"schema_version"`
+	KeepCommits           int   `json:"keep_commits"`            // 默认 20，范围 5–200
+	KeepDays              int   `json:"keep_days"`               // 默认 90，范围 7–365
+	RelationCapacityBytes int64 `json:"relation_capacity_bytes"` // 默认 1 GiB，范围 128 MiB–20 GiB
+	PreserveMaxBytes      int64 `json:"preserve_max_bytes"`      // 默认 32 MiB，范围 1 MiB–512 MiB；0＝不限
+	TrashDays             int   `json:"trash_days"`              // 默认 7，范围 1–90
+}
+
+// UpdateRetentionSettingsDTO 是保留设置写输入：五键整体替换（设置页表单全量
+// 提交）。单键范围校验，越界 → err.settings.retention_invalid（{0}=字段名），
+// 整体拒绝（不落任何键）。
+type UpdateRetentionSettingsDTO struct {
+	KeepCommits           int   `json:"keep_commits"`
+	KeepDays              int   `json:"keep_days"`
+	RelationCapacityBytes int64 `json:"relation_capacity_bytes"`
+	PreserveMaxBytes      int64 `json:"preserve_max_bytes"`
+	TrashDays             int   `json:"trash_days"`
 }

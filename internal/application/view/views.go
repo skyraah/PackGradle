@@ -107,6 +107,9 @@ type WorkspaceView struct {
 	Availability          []ActionAvailabilityView `json:"availability"`
 	LatestProjectSnapshot *SnapshotSummaryView     `json:"latest_project_snapshot,omitempty"`
 	LatestRuntimeSnapshot *SnapshotSummaryView     `json:"latest_runtime_snapshot,omitempty"`
+	// AuthorizedApply 是工作区授权开关投影（relations.authorized_apply，schema v6；
+	// 契约 06 §3.6：只增不删，票 #57）。
+	AuthorizedApply bool `json:"authorized_apply"`
 }
 
 // WorkspaceFeaturesView 表达当前版本/平台实现的能力（契约 03 §2.1；架构 §10.4）。
@@ -435,4 +438,27 @@ type RebindPreparationView struct {
 // TaskView（kind=apply，status=queued，PlanID 回填）；幂等重入返回既有任务。
 type ConfirmPlanInput struct {
 	PlanID string `json:"plan_id"`
+}
+
+// ---- 设置域投影（契约 06 §3.6；票 #57）----
+
+// RetentionSettingsView 是保留策略设置投影（config.toml [retention] 承载，
+// ADR-0007 §2/§7/§8）。
+type RetentionSettingsView struct {
+	SchemaVersion         int   `json:"schema_version"`
+	KeepCommits           int   `json:"keep_commits"`            // 默认 20，范围 5–200
+	KeepDays              int   `json:"keep_days"`               // 默认 90，范围 7–365
+	RelationCapacityBytes int64 `json:"relation_capacity_bytes"` // 默认 1 GiB，范围 128 MiB–20 GiB
+	PreserveMaxBytes      int64 `json:"preserve_max_bytes"`      // 默认 32 MiB，范围 1 MiB–512 MiB；0＝不限
+	TrashDays             int   `json:"trash_days"`              // 默认 7，范围 1–90
+}
+
+// UpdateRetentionSettingsInput 是保留设置写输入：五键整体替换（设置页表单全量
+// 提交），单键越界整体拒绝（err.settings.retention_invalid，{0}=字段名）。
+type UpdateRetentionSettingsInput struct {
+	KeepCommits           int   `json:"keep_commits"`
+	KeepDays              int   `json:"keep_days"`
+	RelationCapacityBytes int64 `json:"relation_capacity_bytes"`
+	PreserveMaxBytes      int64 `json:"preserve_max_bytes"`
+	TrashDays             int   `json:"trash_days"`
 }

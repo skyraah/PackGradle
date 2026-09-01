@@ -22,7 +22,7 @@ func NewRelationRepository(db *sql.DB) *RelationRepository {
 }
 
 // relationColumns 是 relations 表的读取列清单（与 scanRelation 对应）。
-const relationColumns = `id, project_id, runtime_id, policy_set, revision, health, head_baseline_id, head_commit_id, created_at`
+const relationColumns = `id, project_id, runtime_id, policy_set, revision, health, head_baseline_id, head_commit_id, authorized_apply, created_at`
 
 // scanRelation 把一行 relations 列扫描为 model.Relation。
 func scanRelation(scan func(...any) error) (model.Relation, error) {
@@ -30,24 +30,26 @@ func scanRelation(scan func(...any) error) (model.Relation, error) {
 		rel          model.Relation
 		headBaseline sql.NullString
 		headCommit   sql.NullString
+		authorized   int
 	)
 	if err := scan(&rel.RelationID, &rel.ProjectID, &rel.RuntimeID, &rel.PolicySet,
-		&rel.Revision, &rel.Health, &headBaseline, &headCommit, &rel.CreatedAt); err != nil {
+		&rel.Revision, &rel.Health, &headBaseline, &headCommit, &authorized, &rel.CreatedAt); err != nil {
 		return model.Relation{}, err
 	}
 	rel.SchemaVersion = model.CurrentSchemaVersion
 	rel.HeadBaselineID = headBaseline.String
 	rel.HeadCommitID = headCommit.String
+	rel.AuthorizedApply = authorized != 0
 	return rel, nil
 }
 
 // Create 写入新关系；project/runtime 配对重复（UNIQUE(project_id, runtime_id)）返回 ErrDuplicate。
 func (r *RelationRepository) Create(ctx context.Context, rel model.Relation) error {
 	_, err := r.db.ExecContext(ctx, `
-INSERT INTO relations(id, project_id, runtime_id, policy_set, revision, health, head_baseline_id, head_commit_id, created_at)
-VALUES(?,?,?,?,?,?,?,?,?)`,
+INSERT INTO relations(id, project_id, runtime_id, policy_set, revision, health, head_baseline_id, head_commit_id, authorized_apply, created_at)
+VALUES(?,?,?,?,?,?,?,?,?,?)`,
 		rel.RelationID, rel.ProjectID, rel.RuntimeID, rel.PolicySet, rel.Revision, rel.Health,
-		nullString(rel.HeadBaselineID), nullString(rel.HeadCommitID), rel.CreatedAt)
+		nullString(rel.HeadBaselineID), nullString(rel.HeadCommitID), boolToInt(rel.AuthorizedApply), rel.CreatedAt)
 	if err != nil {
 		if isUniqueViolation(err) {
 			return fmt.Errorf("sqlite: 创建 Relation %s: %w", rel.RelationID, ErrDuplicate)
@@ -162,6 +164,21 @@ func (r *RelationRepository) UpdateHeadCommit(ctx context.Context, id, commitID 
 	}
 	if n, err := res.RowsAffected(); err == nil && n == 0 {
 		return fmt.Errorf("sqlite: 更新 Relation %s 提交引用: %w", id, ErrNotFound)
+	}
+	return nil
+}
+
+// UpdateAuthorizedApply 切换工作区授权开关（schema v6 列；契约 06 §3.6，票 #57）。
+// 只写列不做门禁：恢复期开关值保留，入口由既有 err.recovery.in_progress 挡。
+// 关系不存在返回 ErrNotFound。
+func (r *RelationRepository) UpdateAuthorizedApply(ctx context.Context, id string, enabled bool) error {
+	res, err := r.db.ExecContext(ctx,
+		"UPDATE relations SET authorized_apply=? WHERE id=?", boolToInt(enabled), id)
+	if err != nil {
+		return fmt.Errorf("sqlite: 更新 Relation %s 授权开关: %w", id, err)
+	}
+	if n, err := res.RowsAffected(); err == nil && n == 0 {
+		return fmt.Errorf("sqlite: 更新 Relation %s 授权开关: %w", id, ErrNotFound)
 	}
 	return nil
 }

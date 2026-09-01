@@ -105,12 +105,13 @@ func TestSchemaV5ColumnContract(t *testing.T) {
 	db := openTestDB(t)
 	ctx := context.Background()
 
-	// 目标版本断言：本票交付 schema v5（动态断言 + 显式钉版双保险）
-	if SchemaVersion() != 5 {
-		t.Fatalf("SchemaVersion() = %d, 期望 5", SchemaVersion())
+	// 目标版本断言：Migrate 恒迁至最新版。v5 交付时钉 5（票 #34），v6 起随
+	// 版本演进更新（票 #57）；本测试的 v5 列契约断言在最新版上仍然成立。
+	if SchemaVersion() != 6 {
+		t.Fatalf("SchemaVersion() = %d, 期望 6", SchemaVersion())
 	}
-	if v := userVersion(t, db); v != 5 {
-		t.Fatalf("user_version = %d, 期望 5", v)
+	if v := userVersion(t, db); v != SchemaVersion() {
+		t.Fatalf("user_version = %d, 期望 %d", v, SchemaVersion())
 	}
 
 	// plan_confirmations 增列 consumed_at（确认令牌消费标记）
@@ -256,8 +257,9 @@ func TestMigrateV4ToV5RebuildsJournal(t *testing.T) {
 	if err := Migrate(ctx, db, filepath.Join(dir, "backup")); err != nil {
 		t.Fatalf("v4→v5 迁移失败: %v", err)
 	}
-	if v := userVersion(t, db); v != 5 {
-		t.Fatalf("迁移后 user_version = %d, 期望 5", v)
+	// Migrate 迁至最新版（票 #57 起 v5→v6 继续前推）；重建与 CHECK 断言不受影响。
+	if v := userVersion(t, db); v != SchemaVersion() {
+		t.Fatalf("迁移后 user_version = %d, 期望 %d", v, SchemaVersion())
 	}
 
 	// 重建不丢数据：既有行原样保留
@@ -278,8 +280,8 @@ func TestMigrateV4ToV5RebuildsJournal(t *testing.T) {
 	if err := Migrate(ctx, db, filepath.Join(dir, "backup")); err != nil {
 		t.Fatalf("重复 Migrate 应幂等: %v", err)
 	}
-	if v := userVersion(t, db); v != 5 {
-		t.Errorf("重复迁移后 user_version = %d, 期望 5", v)
+	if v := userVersion(t, db); v != SchemaVersion() {
+		t.Errorf("重复迁移后 user_version = %d, 期望 %d", v, SchemaVersion())
 	}
 
 	// 重建后 events 表与 append-only 触发器在位

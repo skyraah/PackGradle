@@ -1,0 +1,202 @@
+package transport_test
+
+// SettingsService 三方法 transport 端到端测试（契约 06 §2/§3.6，票 #57）：
+// 走 bootstrap.BuildWithRetention 的生产装配（设置端口接真实 appconfig，
+// 授权开关接真实 SQLite 栈），覆盖 AC 四点：读默认、写合法、越界拒绝、
+// 开关切换后 WorkspaceDTO 投影一致。不启动 Wails。
+
+import (
+	"os"
+	"path/filepath"
+	"testing"
+
+	"packgradle/internal/appconfig"
+	"packgradle/internal/bootstrap"
+	"packgradle/internal/core/model"
+	"packgradle/internal/errs"
+	"packgradle/internal/transport"
+)
+
+// newSettingsFixture 装配真实栈与最小工作区，返回 SettingsService 与
+// SyncService（读投影对照）。
+func newSettingsFixture(t *testing.T) (*transport.SettingsService, *transport.SyncService, string) {
+	t.Helper()
+	base := t.TempDir()
+	projectRoot := filepath.Join(base, "project")
+	instanceDir := filepath.Join(base, "instance", "Collapse")
+	writeFile := func(path, content string) {
+		t.Helper()
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// PrepareRelation blocking 检查的最小面：pack.toml / instance.cfg / minecraft 游戏目录
+	writeFile(filepath.Join(projectRoot, "pack.toml"), "name = \"Collapse\"\n")
+	writeFile(filepath.Join(instanceDir, "instance.cfg"), "[General]\nname=\"Collapse\"\n")
+	writeFile(filepath.Join(instanceDir, "minecraft", "mods", ".keep"), "")
+
+	stack, err := bootstrap.BuildWithRetention(filepath.Join(base, "userdata"),
+		appconfig.NewConfigManagerAt(filepath.Join(base, "config.toml")))
+	if err != nil {
+		t.Fatalf("装配栈失败: %v", err)
+	}
+	t.Cleanup(func() { stack.Close() })
+	if stack.Settings == nil {
+		t.Fatal("BuildWithRetention 应装配 SettingsService")
+	}
+
+	prep, err := stack.App.PrepareRelation(t.Context(), model.PrepareRelationInput{
+		ProjectRoot: projectRoot, RuntimeInstanceDir: instanceDir,
+	})
+	if err != nil {
+		t.Fatalf("PrepareRelation: %v", err)
+	}
+	for _, c := range prep.Checks {
+		if c.Severity == "blocking" && !c.Passed {
+			t.Fatalf("预检 %s 未通过: %s", c.Code, c.Detail)
+		}
+	}
+	rel, err := stack.App.CreateRelation(t.Context(), prep.PreparationID)
+	if err != nil {
+		t.Fatalf("CreateRelation: %v", err)
+	}
+	return stack.Settings, stack.Service, rel.RelationID
+}
+
+// TestSettingsServiceGetRetentionDefaults 读默认：全新配置返回五键默认值
+// （AC「读默认」）。
+func TestSettingsServiceGetRetentionDefaults(t *testing.T) {
+	svc, _, _ := newSettingsFixture(t)
+
+	got, err := svc.GetRetentionSettings()
+	if err != nil {
+		t.Fatalf("GetRetentionSettings: %v", err)
+	}
+	want := model.DefaultRetention()
+	if got.SchemaVersion != model.CurrentSchemaVersion {
+		t.Errorf("schema_version = %d, 期望 %d", got.SchemaVersion, model.CurrentSchemaVersion)
+	}
+	if got.KeepCommits != want.KeepCommits || got.KeepDays != want.KeepDays ||
+		got.RelationCapacityBytes != want.RelationCapacityBytes ||
+		got.PreserveMaxBytes != want.PreserveMaxBytes || got.TrashDays != want.TrashDays {
+		t.Errorf("默认投影不一致: got %+v want %+v", got, want)
+	}
+}
+
+// TestSettingsServiceUpdateRetention 写合法：更新返回写入值，重读持久化一致
+// （AC「写合法」）。
+func TestSettingsServiceUpdateRetention(t *testing.T) {
+	svc, _, _ := newSettingsFixture(t)
+
+	input := transport.UpdateRetentionSettingsDTO{
+		KeepCommits: 10, KeepDays: 14,
+		RelationCapacityBytes: 2 << 30, PreserveMaxBytes: 0, TrashDays: 3,
+	}
+	got, err := svc.UpdateRetentionSettings(input)
+	if err != nil {
+		t.Fatalf("UpdateRetentionSettings: %v", err)
+	}
+	if got.KeepCommits != input.KeepCommits || got.KeepDays != input.KeepDays ||
+		got.RelationCapacityBytes != input.RelationCapacityBytes ||
+		got.PreserveMaxBytes != input.PreserveMaxBytes || got.TrashDays != input.TrashDays {
+		t.Errorf("写后投影不一致: got %+v want %+v", got, input)
+	}
+
+	reread, err := svc.GetRetentionSettings()
+	if err != nil {
+		t.Fatalf("重读失败: %v", err)
+	}
+	if reread != got {
+		t.Errorf("重读不一致: got %+v want %+v", reread, got)
+	}
+}
+
+// TestSettingsServiceUpdateRetentionInvalid 越界拒绝：单键越界整体拒绝，
+// err.settings.retention_invalid {0}=字段名，既有设置不变（AC「越界拒绝」）。
+func TestSettingsServiceUpdateRetentionInvalid(t *testing.T) {
+	svc, _, _ := newSettingsFixture(t)
+
+	// 预写一组合法值
+	legal := transport.UpdateRetentionSettingsDTO{
+		KeepCommits: 8, KeepDays: model.KeepDaysDefault,
+		RelationCapacityBytes: model.RelationCapacityDefault,
+		PreserveMaxBytes:      model.PreserveMaxDefault, TrashDays: model.TrashDaysDefault,
+	}
+	if _, err := svc.UpdateRetentionSettings(legal); err != nil {
+		t.Fatalf("预写合法值失败: %v", err)
+	}
+
+	// keep_days 越界（同请求内其余键合法）→ 整体拒绝
+	bad := legal
+	bad.KeepDays = model.KeepDaysMax + 1
+	got, err := svc.UpdateRetentionSettings(bad)
+	if errs.CodeOf(err) != "err.settings.retention_invalid" {
+		t.Fatalf("越界应返回 err.settings.retention_invalid, got %v", err)
+	}
+	appErr := err.(*errs.AppError)
+	if len(appErr.Args) != 1 || appErr.Args[0] != "keep_days" {
+		t.Errorf("args 应为 [keep_days], got %v", appErr.Args)
+	}
+	if got != (transport.RetentionSettingsDTO{}) {
+		t.Errorf("拒绝时不应返回设置: %+v", got)
+	}
+
+	// 整体拒绝：既有设置保持预写值
+	reread, err := svc.GetRetentionSettings()
+	if err != nil {
+		t.Fatalf("重读失败: %v", err)
+	}
+	if reread.KeepDays != legal.KeepDays || reread.KeepCommits != legal.KeepCommits {
+		t.Errorf("整体拒绝后设置被部分改写: %+v", reread)
+	}
+}
+
+// TestSettingsServiceSetWorkspaceAuthorized 开关切换：WorkspaceDTO 投影一致，
+// 与 SyncService.GetWorkspace 读投影同源同值（AC「开关切换后 WorkspaceDTO 投影
+// 一致」）；不存在关系返回 err.relation.not_found。
+func TestSettingsServiceSetWorkspaceAuthorized(t *testing.T) {
+	svc, sync, relationID := newSettingsFixture(t)
+
+	// 默认关闭
+	def, err := sync.GetWorkspace(relationID)
+	if err != nil {
+		t.Fatalf("GetWorkspace: %v", err)
+	}
+	if def.AuthorizedApply {
+		t.Error("新建工作区 authorized_apply 应默认 false")
+	}
+
+	w, err := svc.SetWorkspaceAuthorized(relationID, true)
+	if err != nil {
+		t.Fatalf("SetWorkspaceAuthorized(true): %v", err)
+	}
+	if !w.AuthorizedApply {
+		t.Error("开启后 WorkspaceDTO.authorized_apply 应为 true")
+	}
+
+	// 切换返回值与 GetWorkspace 读投影一致
+	reread, err := sync.GetWorkspace(relationID)
+	if err != nil {
+		t.Fatalf("读投影失败: %v", err)
+	}
+	if !reread.AuthorizedApply {
+		t.Error("读投影 authorized_apply 应为 true")
+	}
+
+	// 关闭
+	off, err := svc.SetWorkspaceAuthorized(relationID, false)
+	if err != nil {
+		t.Fatalf("SetWorkspaceAuthorized(false): %v", err)
+	}
+	if off.AuthorizedApply {
+		t.Error("关闭后 WorkspaceDTO.authorized_apply 应为 false")
+	}
+
+	// 不存在关系
+	if _, err := svc.SetWorkspaceAuthorized("rel_none", true); errs.CodeOf(err) != "err.relation.not_found" {
+		t.Errorf("不存在关系应返回 err.relation.not_found, got %v", err)
+	}
+}
