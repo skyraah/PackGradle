@@ -348,9 +348,11 @@ func TestFetchAllBatch(t *testing.T) {
 	dir := t.TempDir()
 	var mu sync.Mutex
 	done, failed := 0, 0
-	err := e.FetchAll(t.Context(), dir, reqs, func(req Request, res *Result, ferr error) {
+	seen := make(map[int]bool, len(reqs)) // 回调对位下标全覆盖（重复请求不塌缩的契约面）
+	err := e.FetchAll(t.Context(), dir, reqs, func(k int, req Request, res *Result, ferr error) {
 		mu.Lock()
 		defer mu.Unlock()
+		seen[k] = true
 		if ferr != nil {
 			failed++
 			if errs.CodeOf(ferr) != CodeHashMismatch {
@@ -365,6 +367,11 @@ func TestFetchAllBatch(t *testing.T) {
 	}
 	if done != 7 || failed != 1 {
 		t.Fatalf("应 7 成功 1 失败，实际 %d/%d", done, failed)
+	}
+	for k := range reqs {
+		if !seen[k] {
+			t.Fatalf("reqs[%d] 未回调（对位下标缺失）", k)
+		}
 	}
 	if peak := cdn.MaxInFlight(); peak > 3 {
 		t.Fatalf("并发峰值 %d 超过上限 3", peak)

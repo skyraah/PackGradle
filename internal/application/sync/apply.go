@@ -1040,6 +1040,10 @@ func buildJournalRows(taskID string, plans []applyFilePlan, staged []stagedOp) (
 
 // buildCommitChanges 把已执行操作编译为提交变化行（目标侧前后表示；
 // before 取输入快照目标侧观察，after 取复扫目标侧观察，delete 的 after 为 nil）。
+// 刻意差异（与 restore_apply.go 的 buildRestoreCommitChanges 近复制但不去重）：
+// sync 计划逐资源单操作、op.ResourceID 天然无重复行，直接逐行产出即可；restore
+// 计划按侧建操作、同一资源可有双侧写回，那边才需要 byResource 去重合并——
+// 两函数形状对称是各自计划形态的忠实投影，勿为「统一」互挪逻辑。
 func buildCommitChanges(plans []applyFilePlan, inP, inR, rescanP, rescanR model.ObservedSnapshot) []model.CommitChange {
 	inBySide := map[model.Side]model.ObservedSnapshot{model.SideProject: inP, model.SideRuntime: inR}
 	rescanBySide := map[model.Side]model.ObservedSnapshot{model.SideProject: rescanP, model.SideRuntime: rescanR}

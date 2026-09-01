@@ -370,15 +370,18 @@ func (e *Engine) fetchOnce(ctx context.Context, url, partPath, finalPath string,
 // FetchAll 并发批量取数（并发度 = Options.Concurrency）。
 //
 // onResult 对每个请求恰好回调一次（成功带 Result、失败带已分桶错误），在
-// worker goroutine 上执行，调用方自行串行化。单文件失败不中断批次——sync
-// 失败语义 = 剔出本场照常提交（ADR-0008 §7），接线层据此归集跳过清单。
-// ctx 取消时停止排程新任务、进行中的任务随之中止，返回 ctx.Err()。
-func (e *Engine) FetchAll(ctx context.Context, dir string, reqs []Request, onResult func(req Request, res *Result, err error)) error {
+// worker goroutine 上执行，调用方自行串行化。k 是该请求在 reqs 中的对位下标——
+// 结果记账必须按 k 对位（outcomes[k]），不得以 req 值作 map 键归集：reqs 可含
+// 字段全同的相等请求（同 FileID+Filename+Hash 两行），值语义键会塌缩，两行
+// 结果互覆、一行丢回填。单文件失败不中断批次——sync 失败语义 = 剔出本场
+// 照常提交（ADR-0008 §7），接线层据此归集跳过清单。ctx 取消时停止排程新任务、
+// 进行中的任务随之中止，返回 ctx.Err()。
+func (e *Engine) FetchAll(ctx context.Context, dir string, reqs []Request, onResult func(k int, req Request, res *Result, err error)) error {
 	sem := make(chan struct{}, e.concurrency)
 	var wg sync.WaitGroup
 	cancelled := false
 loop:
-	for _, req := range reqs {
+	for k, req := range reqs {
 		select {
 		case sem <- struct{}{}:
 		case <-ctx.Done():
@@ -386,14 +389,14 @@ loop:
 			break loop
 		}
 		wg.Add(1)
-		go func(req Request) {
+		go func(k int, req Request) {
 			defer wg.Done()
 			defer func() { <-sem }()
 			res, err := e.Fetch(ctx, dir, req)
 			if onResult != nil {
-				onResult(req, res, err)
+				onResult(k, req, res, err)
 			}
-		}(req)
+		}(k, req)
 	}
 	wg.Wait()
 	if cancelled {

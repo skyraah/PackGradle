@@ -27,11 +27,21 @@ const TASK_TERMINAL = new Set(['succeeded', 'failed', 'cancelled', 'recovery_req
 // 界面状态仍由事件 + 受控重查管线刷新，契约 04「不得用页面 loading 推测 Task 完成」）。
 const SCAN_POLL_MS = 500
 
-// waitForTask 轮询 GetTask 直至终态（扫描是长任务，编排必须等它收口才能取新快照）。
+// WAIT_TIMEOUT_MS 是 waitForTask 的总超时：轮询必须有出口——后端任务异常卡住
+// （终态收口失败等）时编排报错交还调用方（沿既有 snackbar 错误路径），不无限
+// 轮询。上限远大于扫描正常耗时（验收口径冷链路秒级），只兜异常面。
+const WAIT_TIMEOUT_MS = 120_000
+
+// waitForTask 轮询 GetTask 直至终态或总超时（扫描是长任务，编排必须等它收口
+// 才能取新快照）。超时抛错由调用方 snackbar 呈现。
 async function waitForTask(taskID: string): Promise<TaskDTO> {
+    const deadline = Date.now() + WAIT_TIMEOUT_MS
     for (;;) {
         const task = await SyncService.GetTask(taskID)
         if (TASK_TERMINAL.has(task.status)) return task
+        if (Date.now() > deadline) {
+            throw new Error(t('workspaces.quickUpdate.waitTimeout'))
+        }
         await new Promise(resolve => setTimeout(resolve, SCAN_POLL_MS))
     }
 }

@@ -27,7 +27,10 @@ func (a *App) fetchDownloadOperations(ctx context.Context, run *syncstage.Run,
 	plans []applyFilePlan) error {
 
 	reqs := make([]download.Request, 0, len(plans))
-	idxByReq := make(map[download.Request]int, len(plans))
+	// plansIdx[k] 是 reqs[k] 所属的 plans 行下标（对位记账）：结果按引擎回调的
+	// 对位下标 k 归集与回填，不以 req 值作 map 键——两操作行的请求字段全同时
+	//（同 FileID+Filename+Hash），值语义键会塌缩、一行静默丢回填。
+	plansIdx := make([]int, 0, len(plans))
 	for i := range plans {
 		fp := &plans[i]
 		if fp.action != applyActionCreate && fp.action != applyActionModify {
@@ -37,7 +40,7 @@ func (a *App) fetchDownloadOperations(ctx context.Context, run *syncstage.Run,
 			continue // 幂等重放 / 非 download / 推导期已判不可执行
 		}
 		reqs = append(reqs, *fp.dlReq)
-		idxByReq[*fp.dlReq] = i
+		plansIdx = append(plansIdx, i)
 	}
 	if len(reqs) == 0 {
 		return nil
@@ -55,19 +58,19 @@ func (a *App) fetchDownloadOperations(ctx context.Context, run *syncstage.Run,
 		return nil
 	}
 
-	// 结果按 req 值归集（onResult 在引擎 worker goroutine 上回调，乱序且禁止
-	// 并发写 plans）；每请求恰好回调一次（引擎契约）。
+	// 结果按对位下标 k 归集（onResult 在引擎 worker goroutine 上回调，乱序且
+	// 禁止并发写 plans；每请求恰好回调一次，k 与 reqs/plansIdx 严格对位——引擎契约）。
 	type dlOutcome struct {
 		res  *download.Result
 		err  error
 	}
 	outcomes := make([]dlOutcome, len(reqs))
 	fetchErr := a.deps.Downloads.FetchAll(ctx, run.DlDir(), reqs,
-		func(req download.Request, res *download.Result, ferr error) {
-			outcomes[idxByReq[req]] = dlOutcome{res: res, err: ferr}
+		func(k int, _ download.Request, res *download.Result, ferr error) {
+			outcomes[k] = dlOutcome{res: res, err: ferr}
 		})
 	for k, o := range outcomes {
-		fp := &plans[idxByReq[reqs[k]]]
+		fp := &plans[plansIdx[k]]
 		switch {
 		case o.err != nil:
 			// 分桶码直作跳过原因（err.download.*；hash_format_unsupported 信号
