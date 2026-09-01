@@ -17,3 +17,16 @@ export async function pickDirectory(title?: string): Promise<string | null> {
     })
     return picked || null
 }
+
+// 选择文件；用户取消返回 null（回滚补全「提供文件」用，契约 06 §3.5，票 #61）。
+// mock 语义与 pickDirectory 同款：dev mock 模式返回模拟路径，不弹系统对话框。
+export async function pickFile(title?: string): Promise<string | null> {
+    if (__DEV__ && isMockEnabled()) return 'C:\\mock\\provided-mod.jar'
+    const picked = await Dialogs.OpenFile({
+        Title: title,
+        CanChooseFiles: true,
+        CanChooseDirectories: false,
+        CanCreateDirectories: false,
+    })
+    return picked || null
+}

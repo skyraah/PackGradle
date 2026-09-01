@@ -152,4 +152,11 @@ export type {
     CommitPageDTO,
     RetentionSettingsDTO,
     UpdateRetentionSettingsDTO,
+    RestorePlanDTO,
+    RestorePlanItemDTO,
+    RestoreBlockedItemDTO,
+    RestorePrepareDTO,
+    ResolveRestorePlanDTO,
+    ConfirmRestorePlanDTO,
+    StageUserObjectDTO,
 } from '../../bindings/packgradle/internal/transport/models'
