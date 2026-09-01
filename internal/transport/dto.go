@@ -118,7 +118,7 @@ type WorkspaceFeaturesDTO struct {
 // ActionAvailabilityDTO 是单动作可用性，由后端按当前状态推导（架构 §10.4）。
 // 前端不得自行推断；不可用动作必须带原因码供 locale 渲染。
 type ActionAvailabilityDTO struct {
-	Action     string   `json:"action"` // scan|prepare_sync|apply_sync|prepare_restore|apply_restore|rebind
+	Action     string   `json:"action"` // scan|prepare_sync|apply_sync|quick_update|prepare_restore|apply_restore|rebind
 	Available  bool     `json:"available"`
 	ReasonCode string   `json:"reason_code,omitempty"`
 	ReasonArgs []string `json:"reason_args,omitempty"`

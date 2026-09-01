@@ -11,11 +11,12 @@ import (
 // feature=false 的动作不注册：availability 不含 prepare_restore/apply_restore
 // 条目，前端不渲染入口（Phase 3 能力，硬约束 2）。
 
-// availability 动作名（与契约 03 §2.1 action 枚举一致）。
+// availability 动作名（与契约 03 §2.1 action 枚举一致；quick_update 为契约 06 §1 新增）。
 const (
 	actionScan        = "scan"
 	actionPrepareSync = "prepare_sync"
 	actionApplySync   = "apply_sync"
+	actionQuickUpdate = "quick_update"
 	actionRebind      = "rebind"
 )
 
@@ -70,6 +71,30 @@ func deriveAvailability(health, scanState string, hasActiveTask bool) []view.Act
 		mk(actionPrepareSync, scanState == "ready" && !hasActiveTask, prepareCode),
 		mk(actionRebind, !hasActiveTask && !recovery, taskBlockedCode),
 	}
+}
+
+// deriveQuickUpdateAvailability 按契约 06 §1 quick_update 推导行计算：授权开关
+// 开启，且无活跃任务、非 recovery_required、scan_state=ready（后三条与
+// prepare_restore 条件同款）。原因码优先级沿票 #62 连举条件序：开关未开启 →
+// err.auth_mode.disabled（新增，授权模式下入口灰置的引导原因）；其余沿用
+// already_running → in_progress → incomplete（同 prepare_sync 口径）。开关
+// 存储与恢复门禁解耦：恢复期间开关值保留、由 in_progress 单独挡（CONTEXT.md
+// 授权模式词条），故 authorized 判定在最前、不与门禁态复合。
+func deriveQuickUpdateAvailability(health, scanState string, hasActiveTask, authorized bool) view.ActionAvailabilityView {
+	a := view.ActionAvailabilityView{Action: actionQuickUpdate, Available: false}
+	switch {
+	case !authorized:
+		a.ReasonCode = CodeAuthModeDisabled
+	case hasActiveTask:
+		a.ReasonCode = CodeRelationScanRunning
+	case health == string(model.HealthRecoveryRequired):
+		a.ReasonCode = CodeRecoveryInProgress
+	case scanState != "ready":
+		a.ReasonCode = CodeScanIncomplete
+	default:
+		a.Available = true
+	}
+	return a
 }
 
 // planReadiness 是 apply_sync availability 的计划面输入（契约 05 §1：存在可应用

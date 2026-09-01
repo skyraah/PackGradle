@@ -61,6 +61,15 @@ const workspacesMappings: RouteRecordRaw = {
     meta: { titleKey: 'nav.workspacesMappings' },
 }
 
+// 工作区详情：设置页（授权模式开关 SetWorkspaceAuthorized，契约 06 §9，票 #62。
+// 入口在工作区列表行操作，不占侧栏导航项）
+const workspacesSettings: RouteRecordRaw = {
+    path: '/workspaces/:id/settings',
+    name: 'workspaces-settings',
+    component: () => import('../views/WorkspacesSettingsView.vue'),
+    meta: { titleKey: 'nav.workspacesSettings' },
+}
+
 // 工作区详情：计划页（PrepareSync/ResolvePlan/GetPlan 只读计划与
 // choose_side 冲突解决，UX 原型 §7.5。无 Apply/History/Restore 入口，票 #21。
 // 入口在工作区列表行操作与变化页头部，不占侧栏导航项）
@@ -129,6 +138,7 @@ const router = createRouter({
         workspacesNew,
         workspacesChanges,
         workspacesMappings,
+        workspacesSettings,
         workspacesPlan,
         workspacesRebind,
         workspacesHistory,

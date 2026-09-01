@@ -67,14 +67,17 @@ func TestHeadlessWorkspaceFeaturesAndAvailability(t *testing.T) {
 		t.Fatalf(`materialization_modes 应为 ["copy"]: %v`, f.MaterializationModes)
 	}
 	// availability：未扫描 → scan/rebind 可用；prepare_sync/apply_sync 因
-	// scan_state 非 ready 不可用（apply_sync 计划面在 ready 之后才判定）
+	// scan_state 非 ready 不可用（apply_sync 计划面在 ready 之后才判定）；
+	// quick_update 已注册（契约 06 §1，票 #62）但开关默认关 → auth_mode.disabled
 	assertNoRestoreActions(t, w.Availability)
 	assertAvailability(t, w.Availability, "scan", true, "")
 	assertAvailability(t, w.Availability, "prepare_sync", false, "err.scan.incomplete")
 	assertAvailability(t, w.Availability, "apply_sync", false, "err.scan.incomplete")
+	assertAvailability(t, w.Availability, "quick_update", false, "err.auth_mode.disabled")
 	assertAvailability(t, w.Availability, "rebind", true, "")
 
-	// 扫描中 → scan/rebind/prepare_sync/apply_sync 均因活跃任务不可用
+	// 扫描中 → scan/rebind/prepare_sync/apply_sync 均因活跃任务不可用；
+	// quick_update 仍报 auth_mode.disabled（开关未开启优先，推导序第一支）
 	tv, err := app.StartScan(ctx, rel.RelationID)
 	if err != nil {
 		t.Fatal(err)
@@ -86,6 +89,7 @@ func TestHeadlessWorkspaceFeaturesAndAvailability(t *testing.T) {
 	assertAvailability(t, wRunning.Availability, "scan", false, "err.scan.already_running")
 	assertAvailability(t, wRunning.Availability, "rebind", false, "err.scan.already_running")
 	assertAvailability(t, wRunning.Availability, "apply_sync", false, "err.scan.already_running")
+	assertAvailability(t, wRunning.Availability, "quick_update", false, "err.auth_mode.disabled")
 
 	waitTask(t, app, tv.TaskID)
 
@@ -101,6 +105,8 @@ func TestHeadlessWorkspaceFeaturesAndAvailability(t *testing.T) {
 	assertAvailability(t, wReady.Availability, "scan", true, "")
 	// 已就绪但尚无 resolved 计划 → apply_sync 因计划面不可用（none_ready，票 #36 新码）
 	assertAvailability(t, wReady.Availability, "apply_sync", false, "err.plan.none_ready")
+	// 就绪但开关未开启 → quick_update 仍灰置（err.auth_mode.disabled，票 #62）
+	assertAvailability(t, wReady.Availability, "quick_update", false, "err.auth_mode.disabled")
 
 	// 列表与详情同构：内嵌 features/availability
 	page, err := app.ListWorkspaces(ctx, ports.PageRequest{Limit: 10})
@@ -110,9 +116,27 @@ func TestHeadlessWorkspaceFeaturesAndAvailability(t *testing.T) {
 	if len(page.Items) != 1 {
 		t.Fatalf("工作区列表应 1 项，得到 %d", len(page.Items))
 	}
-	if page.Items[0].Features.Scan != true || len(page.Items[0].Availability) != 4 {
+	if page.Items[0].Features.Scan != true || len(page.Items[0].Availability) != 5 {
 		t.Fatalf("列表项未内嵌 features/availability: %+v", page.Items[0])
 	}
+
+	// 开关开启（票 #57 SetWorkspaceAuthorized）→ quick_update 随投影点亮：
+	// ready ∧ 无活跃任务 ∧ 健康 ∧ authorized 全满足（票 #62 编排入口的前提面）
+	wOn, err := app.SetWorkspaceAuthorized(ctx, rel.RelationID, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !wOn.AuthorizedApply {
+		t.Fatalf("SetWorkspaceAuthorized 后投影应为 true: %+v", wOn)
+	}
+	wLit, err := app.GetWorkspace(ctx, rel.RelationID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !wLit.AuthorizedApply {
+		t.Fatalf("GetWorkspace 授权开关投影应为 true: %+v", wLit)
+	}
+	assertAvailability(t, wLit.Availability, "quick_update", true, "")
 }
 
 // TestHeadlessHashCacheFileKeyAndStats 命中统计：冷扫描全 miss，热扫描命中

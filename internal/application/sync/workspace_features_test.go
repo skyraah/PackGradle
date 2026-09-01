@@ -99,6 +99,67 @@ func TestDeriveApplySyncAvailability(t *testing.T) {
 	}
 }
 
+// deriveQuickUpdateAvailability 按契约 06 §1 quick_update 推导行逐支断言
+// （票 #62：授权开关未开启 → err.auth_mode.disabled 优先；其余三门禁与
+// prepare_restore 同款，原因码沿 already_running → in_progress → incomplete）。
+func TestDeriveQuickUpdateAvailability(t *testing.T) {
+	recovery := string(model.HealthRecoveryRequired)
+
+	cases := []struct {
+		name          string
+		health        string
+		scanState     string
+		hasActiveTask bool
+		authorized    bool
+		available     bool
+		reason        string
+	}{
+		{
+			name: "开关开启且无活跃任务且非恢复且扫描就绪 → available",
+			health: string(model.HealthHealthy), scanState: "ready", authorized: true,
+			available: true,
+		},
+		{
+			name: "开关未开启 → auth_mode.disabled（连举条件序第一，优先于其余门禁）",
+			health: string(model.HealthHealthy), scanState: "ready", authorized: false,
+			reason: "err.auth_mode.disabled",
+		},
+		{
+			name: "开关未开启且扫描未就绪 → 仍报 auth_mode.disabled（引导先开开关）",
+			health: string(model.HealthHealthy), scanState: "never_scanned", authorized: false,
+			reason: "err.auth_mode.disabled",
+		},
+		{
+			name: "活跃任务占用 → already_running",
+			health: string(model.HealthHealthy), scanState: "ready", hasActiveTask: true, authorized: true,
+			reason: "err.scan.already_running",
+		},
+		{
+			name: "恢复占用 → in_progress（开关值保留，门禁单独挡）",
+			health: recovery, scanState: "ready", authorized: true,
+			reason: "err.recovery.in_progress",
+		},
+		{
+			name: "扫描未就绪 → incomplete",
+			health: string(model.HealthHealthy), scanState: "failed", authorized: true,
+			reason: "err.scan.incomplete",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := deriveQuickUpdateAvailability(tc.health, tc.scanState, tc.hasActiveTask, tc.authorized)
+			if got.Action != "quick_update" {
+				t.Fatalf("action = %s，期望 quick_update", got.Action)
+			}
+			if got.Available != tc.available || got.ReasonCode != tc.reason {
+				t.Fatalf("available=%v reason=%q，期望 available=%v reason=%q",
+					got.Available, got.ReasonCode, tc.available, tc.reason)
+			}
+		})
+	}
+}
+
 // deriveAvailability 按契约 03 §2.1 推导表逐行断言。
 func TestDeriveAvailability(t *testing.T) {
 	recovery := string(model.HealthRecoveryRequired)
