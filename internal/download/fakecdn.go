@@ -64,12 +64,13 @@ type FakeStep struct {
 	Abort bool
 }
 
-// FakeRequest 是一次被假 CDN 记录的请求（Range 头记录即续传证据）。
+// FakeRequest 是一次被假 CDN 记录的请求（Range 头记录即续传证据）。wire 形态
+//（pgfixture -serve 控制面 /__control/requests）snake_case 标签沿契约 02 §6.3。
 type FakeRequest struct {
-	Path      string
-	Method    string
-	Range     string // Range 请求头原文（无则为空）
-	UserAgent string
+	Path      string `json:"path"`
+	Method    string `json:"method"`
+	Range     string `json:"range"` // Range 请求头原文（无则为空）
+	UserAgent string `json:"userAgent"`
 }
 
 // NewFakeCDN 构造假 CDN。

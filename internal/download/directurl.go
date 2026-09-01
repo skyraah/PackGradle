@@ -38,3 +38,11 @@ func directURL(base string, fileID int64, filename string) string {
 	// 整数除法、不补零：%d 直接格式化，无前导零（补零实测 403）
 	return fmt.Sprintf("%s/%d/%d/%s", base, fileID/1000, fileID%1000, filename)
 }
+
+// FilePath 构造直链的 URL 路径部分（/files/{file-id / 1000}/{file-id % 1000}/
+// {filename}，与 DirectURL 同一整数除法公式、同样不补零）：假 CDN 进程按路径
+// 登记脚本与内容（pgfixture -serve 控制面 / pgheadless 注入面），此类「只要
+// 路径、不要 scheme/host」的消费方一律经本函数重算，公式单一来源零复制。
+func FilePath(fileID int64, filename string) string {
+	return directURL("/files", fileID, filename)
+}

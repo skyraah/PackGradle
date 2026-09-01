@@ -15,6 +15,8 @@ import (
 	"os/exec"
 	"strings"
 	"time"
+
+	"packgradle/internal/download"
 )
 
 // Step 是脚本步的客户端形态（服务端 fakeStepJSON 的 wire 契约；Body 由本包
@@ -41,12 +43,13 @@ func Step206(content []byte, from int64) Step {
 	}
 }
 
-// Request 是控制面读回的请求记录（Range 头即续传证据）。
+// Request 是控制面读回的请求记录（Range 头即续传证据）。标签与服务端
+// download.FakeRequest 的 wire 形态逐字配对（snake_case，契约 02 §6.3）。
 type Request struct {
-	Path      string `json:"Path"`
-	Method    string `json:"Method"`
-	Range     string `json:"Range"`
-	UserAgent string `json:"UserAgent"`
+	Path      string `json:"path"`
+	Method    string `json:"method"`
+	Range     string `json:"range"`
+	UserAgent string `json:"userAgent"`
 }
 
 // Serve 是假 CDN 进程句柄（Own=true 时 Close 会终止子进程）。
@@ -191,8 +194,8 @@ func (s *Serve) Requests() ([]Request, error) {
 	return out, nil
 }
 
-// FilePath 按 directURL 同口径构造 URL 路径（/files/{id/1000}/{id%1000}/{name}，
-// 整数除法不补零——internal/download 黄金向量钉死的公式，客户端零漂移重算）。
+// FilePath 按 directURL 同口径构造 URL 路径——直接委托 internal/download 的
+// 公式源（FilePath 即 DirectURL 的路径部分），客户端不再持有整数除法副本。
 func FilePath(fileID int64, filename string) string {
-	return fmt.Sprintf("/files/%d/%d/%s", fileID/1000, fileID%1000, filename)
+	return download.FilePath(fileID, filename)
 }
