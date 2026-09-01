@@ -7,7 +7,7 @@
  */
 export interface ActionAvailabilityDTO {
     /**
-     * scan|prepare_sync|apply_sync|prepare_restore|apply_restore|rebind
+     * scan|prepare_sync|apply_sync|quick_update|prepare_restore|apply_restore|rebind
      */
     "action": string;
     "available": boolean;

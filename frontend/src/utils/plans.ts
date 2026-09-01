@@ -27,6 +27,13 @@ export function canApplySync(ws: WorkspaceDTO | null | undefined): boolean {
     return ws?.features.sync_apply === true && availabilityOf(ws, 'apply_sync')?.available === true
 }
 
+// canQuickUpdate 判断「快速更新」入口是否点亮（契约 06 §1/§9，票 #62）：
+// quick_update availability 唯一门控（授权开关 + 活跃任务/恢复门/扫描就绪
+// 三门禁全部由后端推导，前端不自行推断；无独立 feature 开关）。
+export function canQuickUpdate(ws: WorkspaceDTO | null | undefined): boolean {
+    return availabilityOf(ws, 'quick_update')?.available === true
+}
+
 // availabilityReasonText 渲染动作当前不可用的后端原因码文案（契约 03 §2.1：不可用
 // 动作必须带原因码供 locale 渲染）。availability 推导不携带参量，vue-i18n 对缺失
 // 参量输出空串、残留分隔符（如 err.plan.expired 的 {0}）在此收敛；

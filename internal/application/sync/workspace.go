@@ -152,8 +152,12 @@ func (a *App) GetWorkspace(ctx context.Context, relationID string) (view.Workspa
 	if err != nil {
 		return view.WorkspaceView{}, err
 	}
+	// quick_update（契约 06 §1/§4，票 #62）：在 apply_sync 之上注册，授权开关 +
+	// prepare_restore 同款三门禁（无活跃任务 ∧ 非 recovery_required ∧ scan ready）
+	// 由后端推导，前端不得自行推断
 	availability := append(deriveAvailability(string(rel.Health), state.ScanState, hasActiveTask),
-		deriveApplySyncAvailability(string(rel.Health), state.ScanState, hasActiveTask, face))
+		deriveApplySyncAvailability(string(rel.Health), state.ScanState, hasActiveTask, face),
+		deriveQuickUpdateAvailability(string(rel.Health), state.ScanState, hasActiveTask, rel.AuthorizedApply))
 
 	w := view.WorkspaceView{
 		SchemaVersion:   model.CurrentSchemaVersion,

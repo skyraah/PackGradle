@@ -12,6 +12,7 @@ import * as RealPrismService from '../../bindings/packgradle/internal/service/pr
 import * as RealProjectService from '../../bindings/packgradle/internal/transport/projectservice'
 import * as RealRuntimeService from '../../bindings/packgradle/internal/transport/runtimeservice'
 import * as RealSyncService from '../../bindings/packgradle/internal/transport/syncservice'
+import * as RealSettingsService from '../../bindings/packgradle/internal/transport/settingsservice'
 
 const MOCK_KEY = 'packgradle.mock'
 
@@ -103,6 +104,13 @@ export const SyncService: typeof RealSyncService = proxyService(
     RealSyncService,
     {},
 ) as typeof RealSyncService
+
+// 设置/开关域服务（契约 06 §2，票 #57）：保留设置 + 工作区授权开关（票 #62 消费）
+export const SettingsService: typeof RealSettingsService = proxyService(
+    'SettingsService',
+    RealSettingsService,
+    {},
+) as typeof RealSettingsService
 
 // 端点管理页与工作区页的类型出口（真实绑定模型）
 export type {

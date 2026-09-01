@@ -37,6 +37,9 @@ const (
 	// 只出现在 ActionAvailabilityDTO.reason_code，不作为调用级错误抛出。
 	CodeScanIncomplete     = "err.scan.incomplete"
 	CodeRecoveryInProgress = "err.recovery.in_progress"
+	// CodeAuthModeDisabled 是 quick_update availability 原因码（契约 06 §1/§10）：
+	// 授权模式未开启时快速更新入口灰置的推导原因，同样不作调用级错误抛出。
+	CodeAuthModeDisabled = "err.auth_mode.disabled"
 	CodePlanNotFound            = "err.plan.not_found"
 	CodePlanStale               = "err.plan.stale"
 	CodePlanResolutionInvalid   = "err.plan.resolution_invalid"
