@@ -53,6 +53,18 @@ const (
 	MetaDeclaredHashValue = "declared_hash"        // pw.toml [download] hash
 	MetaDisplayName       = "display_name"         // 展示名，永不进入 digest
 	MetaFilename          = "filename"             // pw.toml filename 字段（对应 runtime jar 文件名），永不进入 digest；跨侧 hint 通道使用
+	// MetaCFFileID 是 update.curseforge.file-id（CF 免钥匙直链取数的文件编号，
+	// 票 #63）。仅 sync 计划的物化模式推导消费；不进语义摘要（SemanticDigest
+	// 只读显式列出的保留键），CF 资源的身份仍由 project-id 承担。
+	MetaCFFileID = "cf_file_id"
+)
+
+// 物化模式（契约 06 §3.7）：sync 计划写操作的取数来源。copy=本地取数
+// （P2 既有），download=CF 免钥匙直链重取（ADR-0008）。计划行由后端推导
+// 填充，无用户选择面；旧行空值＝copy 兼容。
+const (
+	MaterializationCopy     = "copy"
+	MaterializationDownload = "download"
 )
 
 // LogicalResource 是合并视图（两侧表示并入同一对象），供后续 MergeAdapter 使用；
@@ -295,6 +307,13 @@ type PlannedOperation struct {
 	Preconditions []Precondition `json:"preconditions"`
 	Reversible    bool           `json:"reversible"`
 	ObjectRefs    []ContentRef   `json:"object_refs,omitempty"`
+	// Materialization 是物化模式（契约 06 §3.7，票 #63）：copy|download，
+	// P3 起由后端推导填充（有重取信息的 mod 写操作 → download，其余 → copy）；
+	// 旧行空值＝copy 兼容。restore 计划行不设该字段（marker 已承载等价信息）。
+	Materialization string `json:"materialization,omitempty"`
+	// PreserveSkip 是「旧版本不留存」警示行标记（ADR-0007 §7）：仅字段位，
+	// 判定归保留阈值改造（票 #64）。
+	PreserveSkip bool `json:"preserve_skip,omitempty"`
 }
 
 // ConfirmationRequirement 由 resolved plan 的最终操作推导（架构文档 §6.5）。

@@ -38,6 +38,16 @@ func CodeOf(err error) string {
 	return ""
 }
 
+// ArgsOf 返回错误的插值参数；非 AppError 返回 nil。供非抛出通道（如剔除
+// 语义的跳过清单，票 #63）携带与调用级错误一致的 code+args 投影。
+func ArgsOf(err error) []string {
+	var appErr *AppError
+	if errors.As(err, &appErr) {
+		return appErr.Args
+	}
+	return nil
+}
+
 // Error 实现 error 接口。返回与 MarshalError 一致的结构化 JSON，
 // 供前端统一解析渲染（无论错误经 err.cause 传递还是文本落入数据字段，
 // 如 RefreshResult.Output / PackProject.Error）；日志场景下也完整可读。

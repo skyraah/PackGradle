@@ -109,8 +109,9 @@ func TestHeadlessConfirmPlanPreparedRun(t *testing.T) {
 	if !ws.Features.SyncApply || !ws.Features.HistoryView {
 		t.Fatalf("P2 应点亮 sync_apply/history_view: %+v", ws.Features)
 	}
-	if len(ws.Features.MaterializationModes) != 1 || ws.Features.MaterializationModes[0] != "copy" {
-		t.Fatalf("materialization_modes 应为 [\"copy\"]: %v", ws.Features.MaterializationModes)
+	// P3（票 #63）：download 物化点亮
+	if len(ws.Features.MaterializationModes) != 2 || ws.Features.MaterializationModes[0] != "copy" || ws.Features.MaterializationModes[1] != "download" {
+		t.Fatalf("materialization_modes 应为 [\"copy\",\"download\"]: %v", ws.Features.MaterializationModes)
 	}
 	if ws.Features.RestorePreview || ws.Features.RestoreApply {
 		t.Fatalf("restore 全家应维持 false: %+v", ws.Features)

@@ -31,6 +31,9 @@ const (
 	stagedDir = "files"
 	// proofsDir 是所有权证明子目录名。
 	proofsDir = "proofs"
+	// dlDirName 是下载暂存子目录名（ADR-0008 §6，票 #63）：download 行的
+	// `.part` 与成品落此处，run 内续传、跨 run 不复用，随运行清理回收。
+	dlDirName = "downloads"
 	// proofExt 是单个证明文件扩展名。
 	proofExt = ".json"
 	// runKeyBytes 是运行密钥字节长度（HMAC-SHA256 密钥）。
@@ -156,6 +159,11 @@ func (r *Run) ID() string { return r.id }
 
 // Dir 返回运行暂存目录绝对路径。
 func (r *Run) Dir() string { return r.dir }
+
+// DlDir 返回运行下载暂存子目录绝对路径（downloads/，票 #63）。不创建：
+// 下载引擎 Fetch 首次使用时自建；目录不在暂存副本/证明枚举与恢复裁决面内，
+// 崩溃后随运行目录按 ADR-0004 恢复矩阵处置。
+func (r *Run) DlDir() string { return filepath.Join(r.dir, dlDirName) }
 
 // TempRelFor 返回目标 root-relative 路径对应的暂存副本相对路径
 // （files/<target_rel>，斜杠形态）；该值即 journal 的 temp_relative_path。

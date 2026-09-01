@@ -222,6 +222,13 @@ type OperationDTO struct {
 	ResourceID    string            `json:"resource_id"`
 	Preconditions []PreconditionDTO `json:"preconditions"`
 	Reversible    bool              `json:"reversible"`
+	// Materialization 是物化模式（契约 06 §3.7，票 #63）：copy|download，由
+	// 后端推导（有重取信息的 mod 写操作 → download，其余 → copy）；旧行空值
+	// ＝copy 兼容。
+	Materialization string `json:"materialization,omitempty"`
+	// PreserveSkip 是「旧版本不留存」警示行标记（ADR-0007 §7）：仅字段位，
+	// 判定归保留阈值改造（票 #64）。
+	PreserveSkip bool `json:"preserve_skip,omitempty"`
 }
 
 // RepresentationDTO 是冲突证据中的表示。
@@ -491,6 +498,16 @@ type CommitDTO struct {
 	Summary       CommitSummaryDTO  `json:"summary"`
 	PlanID        string            `json:"plan_id"`
 	Changes       []CommitChangeDTO `json:"changes"`
+	// Skipped 是本场剔出的取数失败清单（契约 06 §3.7/ADR-0008 §7，票 #63）：
+	// 成功 N + 跳过 M（带 err.download.* 原因码）；旧行无该记录为空数组。
+	Skipped []CommitSkippedDTO `json:"skipped"`
+}
+
+// CommitSkippedDTO 是跳过清单单行：资源 ID + 原因码（文案由前端 locale 提供）。
+type CommitSkippedDTO struct {
+	ResourceID string   `json:"resource_id"`
+	ReasonCode string   `json:"reason_code"`
+	ReasonArgs []string `json:"reason_args,omitempty"`
 }
 
 // CommitPageDTO 是历史列表分页（created_at DESC；cursor=上一页末条 commit_id）。

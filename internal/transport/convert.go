@@ -281,6 +281,7 @@ func planDTO(v view.SyncPlanView) SyncPlanDTO {
 		ops = append(ops, OperationDTO{
 			ID: op.ID, Kind: string(op.Kind), ResourceID: string(op.ResourceID),
 			Preconditions: preconds, Reversible: op.Reversible,
+			Materialization: op.Materialization, PreserveSkip: op.PreserveSkip,
 		})
 	}
 	conflicts := make([]ConflictDTO, 0, len(v.Conflicts))
@@ -363,9 +364,15 @@ func commitDTO(v view.CommitView) CommitDTO {
 			RuntimeBefore: ch.RuntimeBefore, RuntimeAfter: ch.RuntimeAfter,
 		})
 	}
+	skipped := make([]CommitSkippedDTO, 0, len(v.Skipped))
+	for _, s := range v.Skipped {
+		skipped = append(skipped, CommitSkippedDTO{
+			ResourceID: s.ResourceID, ReasonCode: s.ReasonCode, ReasonArgs: s.ReasonArgs,
+		})
+	}
 	return CommitDTO{
 		SchemaVersion: v.SchemaVersion, Summary: commitSummaryDTO(v.Summary),
-		PlanID: v.PlanID, Changes: changes,
+		PlanID: v.PlanID, Changes: changes, Skipped: skipped,
 	}
 }
 

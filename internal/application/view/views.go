@@ -403,12 +403,23 @@ type CommitChangeView struct {
 	RuntimeAfter  *string `json:"runtime_after,omitempty"`
 }
 
+// CommitSkippedView 是本场剔出的取数失败清单单行（ADR-0008 §7，票 #63）：
+// 资源 ID + 原因码（err.download.* / hash_format_unsupported /
+// content_unavailable）+ 插值参数。
+type CommitSkippedView struct {
+	ResourceID string   `json:"resource_id"`
+	ReasonCode string   `json:"reason_code"`
+	ReasonArgs []string `json:"reason_args,omitempty"`
+}
+
 // CommitView 是单提交详情（changes 全量，单 commit 不分页；契约 05 §3.5）。
+// Skipped 从提交头 summary JSON 解析（引擎定义形状；旧行无该记录为空切片）。
 type CommitView struct {
 	SchemaVersion int                `json:"schema_version"`
 	Summary       CommitSummaryView  `json:"summary"`
 	PlanID        string             `json:"plan_id"`
 	Changes       []CommitChangeView `json:"changes"`
+	Skipped       []CommitSkippedView `json:"skipped"`
 }
 
 // CommitPage 是历史列表分页（created_at DESC；cursor=上一页末条 commit_id）。

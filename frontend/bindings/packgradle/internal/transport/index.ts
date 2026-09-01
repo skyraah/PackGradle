@@ -23,6 +23,7 @@ export type {
     CommitChangeDTO,
     CommitDTO,
     CommitPageDTO,
+    CommitSkippedDTO,
     CommitSummaryDTO,
     ConfirmPlanDTO,
     ConfirmationRequirementDTO,

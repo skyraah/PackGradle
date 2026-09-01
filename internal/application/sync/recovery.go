@@ -110,6 +110,24 @@ func (a *App) reconcileTerminalRun(ctx context.Context, active model.Task, run m
 		log.Printf("recovery: 运行 %s 已 committed，任务成功投影重建完成", run.TaskID)
 		return
 	}
+	// failed 终态（ADR-0008 §7，票 #63）：任务 failed 幂等补齐；网络面终局不设
+	// 恢复门（关系健康不动）、不做任何裁决与文件动作。
+	if run.State == model.ApplyRunFailed {
+		if active.Status != model.TaskStatusQueued && active.Status != model.TaskStatusRunning {
+			return
+		}
+		active.Status = model.TaskStatusFailed
+		active.Phase = "done"
+		active.MessageKey = "msg.task.apply.failed"
+		active.Completed = run.OperationCount
+		active.Total = run.OperationCount
+		if _, err := a.runner.Update(ctx, active); err != nil {
+			log.Printf("recovery: 任务 %s failed 终态补齐失败: %v", active.TaskID, err)
+			return
+		}
+		log.Printf("recovery: 运行 %s 已 failed，任务终态补齐完成", run.TaskID)
+		return
+	}
 	// recovery_required 终态：恢复门与任务终态幂等补齐；不做任何裁决与文件动作。
 	if err := a.deps.Relations.UpdateHealth(ctx, run.RelationID, model.HealthRecoveryRequired); err != nil {
 		log.Printf("recovery: 关系 %s 标记恢复态失败: %v", run.RelationID, err)

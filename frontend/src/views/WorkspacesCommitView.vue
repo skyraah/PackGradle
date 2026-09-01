@@ -12,6 +12,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { SyncService } from '../api'
 import type { CommitDTO, CommitSummaryDTO } from '../api'
 import { bootstrapped, workspaces } from '../stores/syncCache'
+import { showSnackbar } from '../stores/ui'
 import { errText } from '../utils/errors'
 import {
     completenessTone,
@@ -77,6 +78,29 @@ function rep(s?: string | null): string {
 }
 
 const cols = ['history.commit.colResource', 'history.commit.colProject', 'history.commit.colRuntime', 'history.commit.colOperation']
+
+// —— 跳过清单（票 #63 剔除语义透出面）：本场剔出的取数失败行（err.download.*
+// /hash_format_unsupported/content_unavailable），原因码直查 locale（与错误条
+// 同一套键；缺键渲染键名本身便于发现遗漏）。——
+const skipped = computed(() => commit.value?.skipped ?? [])
+
+// 重试跳过项 = 重新触发同步（不新造部分重试机制）：重新扫描后用户走既有
+// prepare_sync 流，新计划天然只剩未更新项（一键直达编排归快速更新票，本处
+// 只做「重新开始」语义）。成功后回工作区列表并提示。
+const retrying = ref(false)
+async function retrySkipped(): Promise<void> {
+    if (retrying.value) return
+    retrying.value = true
+    try {
+        await SyncService.StartScan(relationID.value)
+        showSnackbar(t('history.commit.retryQueued'), 'success')
+        void router.push('/workspaces')
+    } catch (e) {
+        showSnackbar(errText(e), 'error')
+    } finally {
+        retrying.value = false
+    }
+}
 </script>
 
 <template>
@@ -206,6 +230,40 @@ const cols = ['history.commit.colResource', 'history.commit.colProject', 'histor
                                     </TableCell>
                                     <TableCell>
                                         <Badge variant="outline">{{ t('history.change.' + row.change_kind) }}</Badge>
+                                    </TableCell>
+                                </TableRow>
+                            </TableBody>
+                        </Table>
+                    </CardContent>
+                </Card>
+
+                <!-- 跳过清单（票 #63 剔除语义）：本场剔出的取数失败行 + 重试入口。
+                     重试 = 重新触发同步（重新扫描后既有计划流只剩未更新项） -->
+                <Card v-if="skipped.length > 0">
+                    <CardContent class="py-2">
+                        <div class="flex items-center justify-between gap-2 px-2 py-2">
+                            <div class="flex flex-col">
+                                <span class="font-medium text-sm text-foreground">{{ t('history.commit.skippedTitle') }}（{{ skipped.length }}）</span>
+                                <span class="text-muted-foreground text-xs">{{ t('history.commit.skippedHint') }}</span>
+                            </div>
+                            <Button size="sm" variant="outline" :disabled="retrying" @click="retrySkipped">
+                                {{ t('history.commit.retrySkipped') }}
+                            </Button>
+                        </div>
+                        <Table>
+                            <TableHeader>
+                                <TableRow>
+                                    <TableHead>{{ t('history.commit.colResource') }}</TableHead>
+                                    <TableHead>{{ t('history.commit.colReason') }}</TableHead>
+                                </TableRow>
+                            </TableHeader>
+                            <TableBody>
+                                <TableRow v-for="row in skipped" :key="row.resource_id">
+                                    <TableCell class="max-w-96 truncate font-mono text-xs" :title="row.resource_id">
+                                        {{ row.resource_id }}
+                                    </TableCell>
+                                    <TableCell class="text-sm">
+                                        <span class="text-amber-600 dark:text-amber-400">{{ t(row.reason_code, row.reason_args ?? []) }}</span>
                                     </TableCell>
                                 </TableRow>
                             </TableBody>

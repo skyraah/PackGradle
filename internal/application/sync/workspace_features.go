@@ -31,7 +31,9 @@ func workspaceFeatures() view.WorkspaceFeaturesView {
 		HistoryView:          true, // ListCommits/GetCommit（T03 契约面，消费票落地）
 		RestorePreview:       false,
 		RestoreApply:         false,
-		MaterializationModes: []string{"copy"}, // copy-only Materializer
+		// MaterializationModes（契约 06 §3.7，票 #63）：download 物化点亮（CF
+		// 免钥匙直链，ADR-0008）；v1 模式选用为后端推导，无用户选择面。
+		MaterializationModes: []string{"copy", "download"},
 	}
 }
 

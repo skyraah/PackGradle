@@ -23,8 +23,9 @@ func TestWorkspaceFeaturesFixedValues(t *testing.T) {
 	if f.ConflictResolution != "choose_side" {
 		t.Errorf("conflict_resolution 应为 choose_side，得到 %s", f.ConflictResolution)
 	}
-	if len(f.MaterializationModes) != 1 || f.MaterializationModes[0] != "copy" {
-		t.Errorf("materialization_modes 应为 [\"copy\"]: %v", f.MaterializationModes)
+	// P3（票 #63）：download 物化点亮（CF 免钥匙直链，ADR-0008 §6）
+	if len(f.MaterializationModes) != 2 || f.MaterializationModes[0] != "copy" || f.MaterializationModes[1] != "download" {
+		t.Errorf(`materialization_modes 应为 ["copy","download"]: %v`, f.MaterializationModes)
 	}
 }
 

@@ -115,9 +115,11 @@ func BuildDraft(in BuildInput) (model.SyncPlan, error) {
 		case diff.ClassProjectToRuntime:
 			op = newOperation(model.OpWriteRuntime, d.ResourceID,
 				writePreconditions(d.ResourceID, sideProject, projObs, rtObs))
+			markMaterialization(op, projObs)
 		case diff.ClassRuntimeToProject:
 			op = newOperation(model.OpWriteProject, d.ResourceID,
 				writePreconditions(d.ResourceID, sideRuntime, rtObs, projObs))
+			markMaterialization(op, rtObs)
 		case diff.ClassRemoveRuntimeCandidate:
 			op = newOperation(model.OpRemoveRuntime, d.ResourceID,
 				removePreconditions(d.ResourceID, sideRuntime, rtObs))
@@ -226,14 +228,17 @@ func Resolve(draft model.SyncPlan, project, runtime model.ObservedSnapshot, reso
 		case model.ChoiceInitializeFromProject:
 			op = newOperation(model.OpWriteRuntime, r.ResourceID,
 				writePreconditions(r.ResourceID, sideProject, projObs, rtObs))
+			markMaterialization(op, projObs)
 		case model.ChoiceInitializeFromRuntime:
 			op = newOperation(model.OpWriteProject, r.ResourceID,
 				writePreconditions(r.ResourceID, sideRuntime, rtObs, projObs))
+			markMaterialization(op, rtObs)
 		case model.ChoiceTakeProject:
 			// 使 runtime 匹配 project 状态：project 表示非 nil 则写 runtime，否则删 runtime
 			if conflict.Project != nil {
 				op = newOperation(model.OpWriteRuntime, r.ResourceID,
 					writePreconditions(r.ResourceID, sideProject, projObs, rtObs))
+				markMaterialization(op, projObs)
 			} else {
 				op = newOperation(model.OpRemoveRuntime, r.ResourceID,
 					removePreconditions(r.ResourceID, sideRuntime, rtObs))
@@ -243,6 +248,7 @@ func Resolve(draft model.SyncPlan, project, runtime model.ObservedSnapshot, reso
 			if conflict.Runtime != nil {
 				op = newOperation(model.OpWriteProject, r.ResourceID,
 					writePreconditions(r.ResourceID, sideRuntime, rtObs, projObs))
+				markMaterialization(op, rtObs)
 			} else {
 				op = newOperation(model.OpRemoveProject, r.ResourceID,
 					removePreconditions(r.ResourceID, sideProject, projObs))
@@ -360,6 +366,32 @@ func newOperation(kind model.OperationKind, id model.ResourceID, preconditions [
 		Preconditions: preconditions,
 		Reversible:    true,
 	}
+}
+
+// markMaterialization 就地推导写操作的物化模式（契约 06 §3.7 / ADR-0008 §6，
+// 票 #63）：mod 写操作且源侧表示携带 CF 直链重取信息（file-id + filename +
+// 声明 hash 三要素齐备）→ download；其余写操作显式填 copy（契约「P3 起填充，
+// 旧行空值＝copy 兼容」）。删除操作无取数面，留空。
+// 纯函数无副作用；murmur2 等不支持格式的降级不在推导期判定——执行期引擎
+// 「不验不装」gate 返回 hash_format_unsupported，走剔除语义的跳过清单。
+func markMaterialization(op *model.PlannedOperation, source *model.ResourceObservation) {
+	if op == nil || source == nil {
+		return
+	}
+	if op.Kind != model.OpWriteRuntime && op.Kind != model.OpWriteProject {
+		return
+	}
+	if source.Kind != model.ResourceMod {
+		op.Materialization = model.MaterializationCopy
+		return
+	}
+	m := source.Representation.Metadata
+	if m[model.MetaCFFileID] != "" && m[model.MetaFilename] != "" &&
+		m[model.MetaDeclaredHashAlgo] != "" && m[model.MetaDeclaredHashValue] != "" {
+		op.Materialization = model.MaterializationDownload
+		return
+	}
+	op.Materialization = model.MaterializationCopy
 }
 
 // writePreconditions 生成 write 操作前置条件：源侧必须 present 且指纹匹配
