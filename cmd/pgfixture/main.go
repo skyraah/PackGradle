@@ -7,9 +7,15 @@
 //
 // 评估（读 pgheadless -metrics 产出的记录，校验门槛，全过退出码 0，任一超标
 // 退出码 1）。两份记录评扫描三项（P1 §2.3）；三份记录加评 apply 两项
-//（P2 §3：冷 apply ≤30s、Apply 峰值内存增量 <256MiB，第三份须为 -apply 产出）：
+//（P2 §3：冷 apply ≤30s、Apply 峰值内存增量 <256MiB，第三份须为 -apply 产出）；
+// 四/五份记录加评 restore/GC 新门槛（P3 §7：restore 冷 ≤30s、restore 内存增量
+// <256MiB、GC ≤30s，票 #66）：
 //
-//	pgfixture -eval <cold.json>,<warm.json>[,<apply.json>]
+//	pgfixture -eval <cold.json>,<warm.json>[,<apply.json>[,<restore.json>[,<gc.json>]]]
+//
+// 假 CDN 进程模式（票 #66；验收规格 §5.1，实现见 serve.go）：
+//
+//	pgfixture -serve [127.0.0.1:PORT]
 package main
 
 import (
@@ -34,15 +40,18 @@ const (
 )
 
 func main() {
-	out := flag.String("out", "", "fixture 生成目标目录（-eval 未指定时必填）")
+	out := flag.String("out", "", "fixture 生成目标目录（-eval/-serve 未指定时必填）")
 	seed := flag.Int64("seed", 20260830, "全局确定性种子")
 	mods := flag.Int("mods", 0, "mod 数量（0 取生产规模默认值；acceptance:headless 用小规模）")
 	textFiles := flag.Int("text-files", 0, "config/kubejs/scripts 文件数量（0 取生产规模默认值）")
 	plainMods := flag.Int("plain-mods", 0, "无 CF 声明 mod 数量（票 #60 -restore 验收变体）")
-	eval := flag.String("eval", "", "评估模式：逗号分隔的 cold,warm[,apply] 记录路径（apply 可选，须为 -apply 产出）")
+	eval := flag.String("eval", "", "评估模式：逗号分隔的 cold,warm[,apply[,restore[,gc]]] 记录路径（apply 及之后可选）")
+	serveAddr := flag.String("serve", "", "假 CDN 进程模式（票 #66）：监听地址（空串不启用；127.0.0.1:0 自动分配）")
 	flag.Parse()
 
 	switch {
+	case *serveAddr != "":
+		runServe(serveOptions{addr: *serveAddr})
 	case *eval != "":
 		os.Exit(runEval(*eval))
 	default:

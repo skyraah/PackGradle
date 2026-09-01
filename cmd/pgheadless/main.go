@@ -38,6 +38,7 @@ import (
 	"packgradle/internal/application/view"
 	"packgradle/internal/bootstrap"
 	"packgradle/internal/core/model"
+	"packgradle/internal/download"
 	"packgradle/internal/store"
 )
 
@@ -53,6 +54,7 @@ func main() {
 	revive := flag.String("revive", "", "从回收站人工复活指定 digest（票 #64 CLI 形态；解压回 objects 并置回 ready）")
 	keepCommits := flag.Int("keep-commits", 0, "写入 config.toml [retention] keep_commits 后继续（0=不动配置；验收 K=3 保底用）")
 	restore := flag.Bool("restore", false, "回滚四场景断言链（P3 票 #60：exact 经 CAS / 补全就绪面 / partial+dirty / 重做语义；需 -plain-mods 夹具）")
+	cdnURL := flag.String("cdn", "", "假 CDN BaseURL（票 #66 验收缝，如 http://127.0.0.1:PORT/files）：下载引擎与 CF 探测指向假 CDN 进程（pgfixture -serve），零真网；空 = 生产 CDN 前缀")
 	flag.Parse()
 
 	// -revive 只需数据根，不需 fixture 端点。
@@ -99,7 +101,17 @@ func main() {
 	if err != nil {
 		log.Fatalf("读取配置失败: %v", err)
 	}
-	stack, err := bootstrap.BuildWithRetention(root, retentionMgr)
+	// -cdn 注入（票 #66 验收缝）：下载引擎/CF 探测指向假 CDN 进程（零真网），
+	// 同时注入快退避测试缝（dlTestStack 先例：429/503 重试面不拖慢验收链路，
+	// 4 次重试×1ms 与生产指数退避 1s→30s 的分桶语义不变）。空 = 生产行为。
+	dlOpts := download.Options{}
+	if *cdnURL != "" {
+		dlOpts.BaseURL = *cdnURL
+		dlOpts.Backoff = func(int) time.Duration { return time.Millisecond }
+		dlOpts.Sleep = func(context.Context, time.Duration) error { return nil }
+		fmt.Printf("== -cdn == 下载引擎/CF 探测 → %s（快退避验收缝）\n", *cdnURL)
+	}
+	stack, err := bootstrap.BuildWithDownloadOptions(root, retentionMgr, dlOpts)
 	if err != nil {
 		log.Fatalf("装配失败: %v", err)
 	}

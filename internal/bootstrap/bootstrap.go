@@ -75,18 +75,28 @@ func (s *Stack) RelationIDs(ctx context.Context) ([]string, error) {
 // Build 在指定用户数据根目录装配新栈。
 // 迁移失败直接返回错误（调用方不得启动写操作——架构文档 §8.3）。
 func Build(root string) (*Stack, error) {
-	return build(root, nil)
+	return build(root, nil, download.Options{})
 }
 
 // BuildWithRetention 同 Build，另接保留设置存取端口（config.toml [retention]
 // 承载，appconfig.ConfigManager 实现）装配 SettingsService（契约 06 §2/§3.6；
 // 票 #57）。GUI 主程序使用；headless 工具（无设置面）沿用 Build。
 func BuildWithRetention(root string, retention ports.RetentionSettingsStore) (*Stack, error) {
-	return build(root, retention)
+	return build(root, retention, download.Options{})
 }
 
-// build 是装配主体：retention 非 nil 时额外装配 SettingsService。
-func build(root string, retention ports.RetentionSettingsStore) (*Stack, error) {
+// BuildWithDownloadOptions 同 BuildWithRetention，另注入下载引擎构造参数
+//（票 #66 验收缝：pgheadless/pgrecovery 的 `-cdn <url>` 把引擎 BaseURL 指向
+// 假 CDN 进程——同一 HTTP 栈、同一直链构造口径，零真网；其余 Options 字段
+// 供验收链注入快退避等测试缝，dlTestStack 先例）。生产装配（GUI main）不经过
+// 此入口，仍走零值 Options（生产 CDN 前缀 + 指数退避）。
+func BuildWithDownloadOptions(root string, retention ports.RetentionSettingsStore, dl download.Options) (*Stack, error) {
+	return build(root, retention, dl)
+}
+
+// build 是装配主体：retention 非 nil 时额外装配 SettingsService；dl 是下载
+// 引擎构造参数（零值 = 生产默认）。
+func build(root string, retention ports.RetentionSettingsStore, dl download.Options) (*Stack, error) {
 	layout, err := store.EnsureLayout(root)
 	if err != nil {
 		return nil, fmt.Errorf("bootstrap: 初始化用户数据目录: %w", err)
@@ -115,7 +125,9 @@ func build(root string, retention ports.RetentionSettingsStore) (*Stack, error) 
 	// 显式配置的消费归 appconfig 加载层与 SettingsService 面）。零值即合法默认。
 	// 同一引擎实例兼作 CF 探测引擎（契约 06 §5；票 #59 ProbeHead：直链构造与
 	// HTTP 通道复用同一 Engine，探测预算为编译期常量）；构造无网络副作用。
-	dlEngine, err := download.New(download.Options{})
+	// dl 参数由 BuildWithDownloadOptions 注入（票 #66：-cdn 假 CDN BaseURL /
+	// 验收快退避），Build 与 BuildWithRetention 传零值即生产行为不变。
+	dlEngine, err := download.New(dl)
 	if err != nil {
 		db.Close()
 		return nil, fmt.Errorf("bootstrap: 构造下载引擎: %w", err)
