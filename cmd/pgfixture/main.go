@@ -38,6 +38,7 @@ func main() {
 	seed := flag.Int64("seed", 20260830, "全局确定性种子")
 	mods := flag.Int("mods", 0, "mod 数量（0 取生产规模默认值；acceptance:headless 用小规模）")
 	textFiles := flag.Int("text-files", 0, "config/kubejs/scripts 文件数量（0 取生产规模默认值）")
+	plainMods := flag.Int("plain-mods", 0, "无 CF 声明 mod 数量（票 #60 -restore 验收变体）")
 	eval := flag.String("eval", "", "评估模式：逗号分隔的 cold,warm[,apply] 记录路径（apply 可选，须为 -apply 产出）")
 	flag.Parse()
 
@@ -45,17 +46,17 @@ func main() {
 	case *eval != "":
 		os.Exit(runEval(*eval))
 	default:
-		runGenerate(*out, *mods, *textFiles, *seed)
+		runGenerate(*out, *mods, *textFiles, *plainMods, *seed)
 	}
 }
 
-func runGenerate(out string, mods, textFiles int, seed int64) {
+func runGenerate(out string, mods, textFiles, plainMods int, seed int64) {
 	if out == "" {
 		flag.Usage()
 		os.Exit(2)
 	}
 	res, err := perffixture.Generate(context.Background(), perffixture.Options{
-		OutDir: out, Seed: seed, Mods: mods, TextFiles: textFiles,
+		OutDir: out, Seed: seed, Mods: mods, TextFiles: textFiles, PlainMods: plainMods,
 	})
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "生成失败:", err)

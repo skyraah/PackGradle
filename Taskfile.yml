@@ -87,8 +87,12 @@ tasks:
   # committed、ListCommits 含新记录、计划投影 applied、收口后 diff 归零。
   # 同一数据目录两遍 -apply：第一遍 initialize 全量收口 committed，第二遍
   # 复用 Relation 重扫重 apply（noop 收口且数据不变）。任一步失败退出码非 0。
+  # -restore 扩展（票 #60；验收规格 §3）：独立 fixture（-plain-mods 无 CF
+  # 声明 mod 变体）+ 独立数据目录跑回滚四场景断言链（exact 经 CAS 逐字节
+  # 复验与历史不改写 / 补全就绪面 CAS miss→staged / partial+dirty 红线④ /
+  # 重做语义）。
   acceptance:headless:
-    summary: Runs the pgheadless chain on a fresh data dir - a -resolve regression pass, then -apply twice on the same data dir (initialize committed + noop re-apply) (acceptance L0)
+    summary: Runs the pgheadless chain on a fresh data dir - a -resolve regression pass, then -apply twice on the same data dir (initialize committed + noop re-apply), then -restore four-scenario chain on a second fixture (acceptance L0)
     cmds:
       - go build -o bin/pgheadless.exe ./cmd/pgheadless
       - rm -rf build/headless/fixture
@@ -98,6 +102,10 @@ tasks:
       - bin/pgheadless.exe -project build/headless/fixture/project -instance build/headless/fixture/instance -data build/headless/data -resolve
       - bin/pgheadless.exe -project build/headless/fixture/project -instance build/headless/fixture/instance -data build/headless/data -apply
       - bin/pgheadless.exe -project build/headless/fixture/project -instance build/headless/fixture/instance -data build/headless/data -apply
+      - rm -rf build/headless/fixture-restore
+      - go run ./cmd/pgfixture -out build/headless/fixture-restore -mods 6 -text-files 12 -plain-mods 2
+      - rm -rf build/headless/data-restore
+      - bin/pgheadless.exe -project build/headless/fixture-restore/project -instance build/headless/fixture-restore/instance -data build/headless/data-restore -restore
 
   # 性能基线（验收规格 §2 沿用 + P2 §3 增量；票 #24/#46）：3,000 资源确定性
   # fixture（产物入 build/perf，不入 git）→ 冷扫描（全新数据目录）→ 热扫描

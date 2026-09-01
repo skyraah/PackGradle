@@ -47,6 +47,7 @@ func main() {
 	metricsPath := flag.String("metrics", "", "分项指标 JSON 输出路径（T14 性能基线，可选）")
 	resolve := flag.Bool("resolve", false, "PrepareSync 后执行 ResolvePlan → GetPlan（A 口径 headless 链路）")
 	apply := flag.Bool("apply", false, "ResolvePlan 后 ConfirmPlan → Apply → committed 断言链（P2 A 口径主链路）")
+	restore := flag.Bool("restore", false, "回滚四场景断言链（P3 票 #60：exact 经 CAS / 补全就绪面 / partial+dirty / 重做语义；需 -plain-mods 夹具）")
 	flag.Parse()
 	if *projectRoot == "" || *instanceDir == "" {
 		flag.Usage()
@@ -60,6 +61,13 @@ func main() {
 	fatalOn(err, "解析项目根绝对路径")
 	instanceAbs, err := filepath.Abs(*instanceDir)
 	fatalOn(err, "解析实例目录绝对路径")
+
+	// -restore 链路种子文件须在首次扫描前落位（受管 config 面入基线）。
+	if *restore {
+		if err := rstSeedFiles(projectAbs, filepath.Join(instanceAbs, "minecraft")); err != nil {
+			log.Fatalf("-restore 种子文件写入失败: %v", err)
+		}
+	}
 
 	root := *dataRoot
 	if root == "" {
@@ -121,6 +129,10 @@ func main() {
 		}
 		applyStats = stats
 		fmt.Println("headless -apply 链路完成（ConfirmPlan → committed 断言全过）")
+	} else if *restore {
+		if err := runRestoreChain(ctx, app, rel, projectAbs, instanceAbs, root); err != nil {
+			log.Fatalf("-restore 链路失败: %v", err)
+		}
 	} else if *resolve {
 		resolved, err := app.ResolvePlan(ctx, view.ResolvePlanInput{
 			PlanID:      plan.PlanID,
