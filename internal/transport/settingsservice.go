@@ -8,17 +8,29 @@ import (
 	"packgradle/internal/application/view"
 )
 
-// SettingsService 是设置/开关域用例的 Wails 出口（契约 06 §2/§3.6；票 #57）。
-// 与 SyncService 分立注册：保留设置（config.toml [retention] 承载）与工作区
-// 授权开关不与同步执行混装（契约 06 §2 服务归属 Q1/Q3）。回滚/下载/GC 等
-// 后续域能力另票点亮，本服务只承载三方法。
-type SettingsService struct {
-	settings settingsapp.Application
-	sync     syncapp.Application
+// SyncApplication 是 SettingsService 对 sync 域的依赖面：既有 syncapp.Application
+// 全集 + GC 任务触发（票 #65 把票 #64 移交的 RequestGC transport 面接上 wire）。
+// 独立组合而非扩 syncapp.Application 本体：「立即回收空间」是设置页的窄需求，
+// 其他消费方不需要（非 transport 面的 GC 触发由 bootstrap.Stack.SyncApp 具体
+// 型承担，口径同票 #64「Application 接口保持 transport 契约面不膨胀」）。
+type SyncApplication interface {
+	syncapp.Application
+	// RequestGC 建 GC 任务（全局单飞幂等；契约 06 §9「立即回收空间」）。
+	RequestGC(ctx context.Context) (view.TaskView, error)
 }
 
-// NewSettingsService 构造服务（设置域 + 授权开关的 relation 域投影）。
-func NewSettingsService(settings settingsapp.Application, sync syncapp.Application) *SettingsService {
+// SettingsService 是设置/开关域用例的 Wails 出口（契约 06 §2/§3.6；票 #57）。
+// 与 SyncService 分立注册：保留设置（config.toml [retention] 承载）与工作区
+// 授权开关不与同步执行混装（契约 06 §2 服务归属 Q1/Q3）。票 #65 起增载
+// RequestGC（设置页「立即回收空间」，消费票 #64 GC 任务面）——契约 06 §2
+// 注明的「3 方法」增为 4（偏差注记见 RequestGC）。
+type SettingsService struct {
+	settings settingsapp.Application
+	sync     SyncApplication
+}
+
+// NewSettingsService 构造服务（设置域 + 授权开关/GC 触发的 sync 域投影）。
+func NewSettingsService(settings settingsapp.Application, sync SyncApplication) *SettingsService {
 	return &SettingsService{settings: settings, sync: sync}
 }
 
@@ -54,6 +66,20 @@ func (s *SettingsService) SetWorkspaceAuthorized(relationID string, enabled bool
 		return WorkspaceDTO{}, err
 	}
 	return workspaceDTO(v), nil
+}
+
+// RequestGC 建「立即回收空间」的 GC 任务（契约 06 §9，票 #65；消费票 #64 的
+// GC 任务面）：全局单飞，已有活跃（queued/running）gc 任务时幂等返回既有任务；
+// 安全窗口未开任务停 pending 排队（msg.task.gc.waiting 文案在任务中心可见，
+// 开窗自动续排同一任务跑完），不拒绝。任务进度/终态由既有任务投影自动覆盖。
+// 偏差注记：契约 06 §2 的「SettingsService 3 方法」因本方法增为 4——票 #64
+// 报告已明确 RequestGC 的 transport 归属移交本票，规格计数未及回改。
+func (s *SettingsService) RequestGC() (TaskDTO, error) {
+	t, err := s.sync.RequestGC(context.Background())
+	if err != nil {
+		return TaskDTO{}, err
+	}
+	return taskDTO(t), nil
 }
 
 // settingsUpdateInput 把 DTO 还原为应用层写输入。
