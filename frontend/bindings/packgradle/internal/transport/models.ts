@@ -204,6 +204,15 @@ export interface ConfirmPlanDTO {
     "plan_id": string;
 }
 
+/**
+ * ConfirmRestorePlanDTO 是回滚确认输入（契约 06 §3.4；票 #60）。成功返回
+ * TaskDTO（kind=restore，status=queued，PlanID 字段回填）；幂等重入返回既有
+ * 任务；failed 终局重入建新运行；committed 后 err.plan.apply_not_reentrant。
+ */
+export interface ConfirmRestorePlanDTO {
+    "plan_id": string;
+}
+
 export interface ConfirmationRequirementDTO {
     "code": string;
     "severity": string;

@@ -26,6 +26,7 @@ export type {
     CommitSkippedDTO,
     CommitSummaryDTO,
     ConfirmPlanDTO,
+    ConfirmRestorePlanDTO,
     ConfirmationRequirementDTO,
     ConflictDTO,
     ContentRefDTO,
