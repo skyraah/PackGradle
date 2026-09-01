@@ -375,7 +375,8 @@ func commitPageDTO(v view.CommitPage) CommitPageDTO {
 	for _, c := range v.Items {
 		items = append(items, commitSummaryDTO(c))
 	}
-	return CommitPageDTO{SchemaVersion: v.SchemaVersion, Items: items, NextCursor: v.NextCursor}
+	return CommitPageDTO{SchemaVersion: v.SchemaVersion, Items: items, NextCursor: v.NextCursor,
+		PrunedBeforeCount: v.PrunedBeforeCount}
 }
 
 // ---- 设置域投影转换（契约 06 §3.6；票 #57）----

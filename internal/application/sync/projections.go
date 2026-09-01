@@ -8,6 +8,7 @@ package sync
 import (
 	"context"
 	"encoding/json"
+	"log"
 	"sort"
 	"strconv"
 	"strings"
@@ -133,6 +134,16 @@ func (a *App) ListCommits(ctx context.Context, relationID string, page ports.Pag
 	}
 	if end < len(all) {
 		out.NextCursor = all[end-1].CommitID
+	}
+	// 墓碑计数（契约 06 §3.8，票 #64）：按保留策略已清理的提交数。GC 面未装配
+	// （既有测试装配）或读失败时退 0——墓碑是增强投影，不阻断历史主链路。
+	if a.deps.GC != nil {
+		n, err := a.deps.GC.PrunedBeforeCount(ctx, relationID)
+		if err != nil {
+			log.Printf("gc: 墓碑计数读取失败（按 0 投影）: %v", err)
+		} else {
+			out.PrunedBeforeCount = n
+		}
 	}
 	return out, nil
 }

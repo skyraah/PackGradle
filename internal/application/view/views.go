@@ -416,6 +416,10 @@ type CommitPage struct {
 	SchemaVersion int                 `json:"schema_version"`
 	Items         []CommitSummaryView `json:"items"`
 	NextCursor    string              `json:"next_cursor,omitempty"`
+	// PrunedBeforeCount 是墓碑计数（契约 06 §3.8，票 #64）：按保留策略已清理
+	// 的提交数（读时推导：任务面 commit_id 悬挂计数）；前端列表尾渲染
+	// 「更早 N 条提交已按保留策略清理」，N=0 不渲染。
+	PrunedBeforeCount int `json:"pruned_before_count"`
 }
 
 // RebindPreparationView 是 PrepareRebind 结果（契约 03 §2.4）。NewEndpoint 与

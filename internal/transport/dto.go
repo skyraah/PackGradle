@@ -502,6 +502,8 @@ type CommitPageDTO struct {
 	SchemaVersion int                `json:"schema_version"`
 	Items         []CommitSummaryDTO `json:"items"`
 	NextCursor    string             `json:"next_cursor,omitempty"`
+	// PrunedBeforeCount 是墓碑计数（契约 06 §3.8，票 #64）；N=0 前端不渲染。
+	PrunedBeforeCount int `json:"pruned_before_count"`
 }
 
 // ---- 设置域 DTO（契约 06 §3.6；票 #57）----
