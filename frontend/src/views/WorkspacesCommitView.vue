@@ -2,8 +2,11 @@
 // /workspaces/:id/history/:commit_id：同步记录详情（契约 05 §3.5 GetCommit；
 // UX 原型 §7.8）。记录数据为本页查询快照（changes 全量不分页），工作区上下文
 // 与 history_view 门控读 stores/syncCache 投影。
-// 变更表列「前 → 后」为后端联表表示摘要（representationSummary），null 显「—」；
-// P2 无恢复按钮、无恢复能力列（restore_preview=false 不暴露，契约 05 §0）。
+// 变更表列「前 → 后」为后端联表表示摘要（representationSummary），null 显「—」。
+// 回滚入口（契约 06 §9，票 #61）：本页主操作「回滚到此状态」是全产品回滚唯一
+// 入口（restore_preview 门控，feature 未点亮不渲染；prepare_restore availability
+// 不可用置灰显后端原因码）；head 提交禁选＝UI 防误触（head=历史首条，后端
+// availability 不含 commit 维度，空差异计划本就合法），以信息横幅说明。
 // 状态机互斥：loading / error / gate / empty / ready（沿 changes 页先例）；
 // err.commit.not_found 落错误态错误条（记录不存在或跨关系）。
 import { computed, ref, watch } from 'vue'
@@ -14,6 +17,7 @@ import type { CommitDTO, CommitSummaryDTO } from '../api'
 import { bootstrapped, workspaces } from '../stores/syncCache'
 import { showSnackbar } from '../stores/ui'
 import { errText } from '../utils/errors'
+import { availabilityReasonText, canPrepareRestore } from '../utils/plans'
 import {
     completenessTone,
     formatTime,
@@ -101,6 +105,49 @@ async function retrySkipped(): Promise<void> {
         retrying.value = false
     }
 }
+
+// —— 回滚入口（契约 06 §9，票 #61）——
+// head 判定：历史首页首条（created_at DESC）即 head（提交不可变、head 恒在
+// 保留窗口内）。查询失败按「非 head」处理——head 禁选是防误触增强，不因探测
+// 失败阻断合法回滚；对 head 发起 PrepareRestore 也只是空差异计划，后端合法。
+const headCommitID = ref('')
+async function loadHead(): Promise<void> {
+    try {
+        const page = await SyncService.ListCommits(relationID.value, '', 1)
+        headCommitID.value = page.items?.[0]?.commit_id ?? ''
+    } catch {
+        headCommitID.value = ''
+    }
+}
+
+const isHead = computed(() => headCommitID.value !== '' && headCommitID.value === commitID.value)
+// 入口渲染门控：restore_preview feature 点亮（feature=false 不渲染入口）且非 head
+//（head 禁选＝UI 防误触，改显横幅说明）；可用性再由 prepare_restore availability 推导
+const restoreEntryVisible = computed(
+    () => wsRow.value?.features.restore_preview === true && !isHead.value,
+)
+const restoreReady = computed(() => canPrepareRestore(wsRow.value))
+const restoreReason = computed(() => availabilityReasonText(wsRow.value, 'prepare_restore'))
+
+const preparing = ref(false)
+async function prepareRestore(): Promise<void> {
+    if (preparing.value || !restoreReady.value) return
+    preparing.value = true
+    try {
+        const plan = await SyncService.PrepareRestore({
+            relation_id: relationID.value,
+            commit_id: commitID.value,
+        })
+        showSnackbar(t('restore.prepared'), 'success')
+        await router.push('/workspaces/' + relationID.value + '/plans/restore/' + plan.plan_id)
+    } catch (e) {
+        showSnackbar(errText(e), 'error')
+    } finally {
+        preparing.value = false
+    }
+}
+
+watch([relationID, commitID], () => void loadHead(), { immediate: true })
 </script>
 
 <template>
@@ -129,6 +176,16 @@ async function retrySkipped(): Promise<void> {
                 </p>
             </div>
             <div class="flex shrink-0 flex-wrap justify-end gap-2">
+                <!-- 回滚入口（全产品唯一，契约 06 §9）：restore_preview 门控 + head 禁选 -->
+                <Button
+                    v-if="restoreEntryVisible"
+                    size="sm"
+                    :disabled="!restoreReady || preparing"
+                    :title="restoreReady ? undefined : restoreReason"
+                    @click="prepareRestore"
+                >
+                    {{ t('restore.entryPrimary') }}
+                </Button>
                 <Button v-if="commit?.plan_id" variant="outline" size="sm" @click="router.push('/workspaces/' + relationID + '/plans/' + commit.plan_id)">
                     {{ t('history.commit.plan') }}
                 </Button>
@@ -137,6 +194,23 @@ async function retrySkipped(): Promise<void> {
                 </Button>
             </div>
         </div>
+
+        <!-- head 禁选横幅（票 #61）：该记录的结果即工作区现状，回滚到当前＝空操作 -->
+        <Card v-if="wsRow && summary && isHead">
+            <CardContent class="text-muted-foreground flex items-center gap-2 py-3 text-sm">
+                <span class="text-foreground font-medium">{{ t('restore.headBannerTitle') }}</span>
+                <span>— {{ t('restore.headBannerHint') }}</span>
+            </CardContent>
+        </Card>
+
+        <!-- restore_preview 点亮但 prepare_restore 不可用：显后端原因码（唯一门控同源） -->
+        <Card v-else-if="wsRow && summary && wsRow.features.restore_preview === true && !restoreReady">
+            <CardContent class="flex flex-wrap items-center justify-between gap-3 py-3">
+                <span class="text-amber-600 text-sm dark:text-amber-400">
+                    {{ t('restore.entryUnavailable') }}<template v-if="restoreReason">：{{ restoreReason }}</template>
+                </span>
+            </CardContent>
+        </Card>
 
         <!-- 工作区不存在：syncCache 引导完成后仍找不到该关系 -->
         <Card v-if="relationMissing">

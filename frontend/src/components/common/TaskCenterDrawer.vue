@@ -47,6 +47,13 @@ function kindLabel(task: TaskDTO): string {
     return t('workspaces.taskKind.' + task.kind)
 }
 
+// 计划路由按任务种类分流（票 #61）：restore 任务的 plan_id 指向回滚计划
+// （/plans/restore/:plan_id，契约 06 §9），其余沿用 P2 同步计划路由
+function planRoute(task: TaskDTO): string {
+    const base = '/workspaces/' + task.relation_id + '/plans/'
+    return task.kind === 'restore' ? base + 'restore/' + task.plan_id : base + task.plan_id
+}
+
 function statusLabel(status: string): string {
     return t('tasks.status.' + status)
 }
@@ -196,7 +203,7 @@ async function cancelTask(task: TaskDTO): Promise<void> {
                                 v-if="task.plan_id"
                                 size="xs"
                                 variant="outline"
-                                @click="goTo('/workspaces/' + task.relation_id + '/plans/' + task.plan_id)"
+                                @click="goTo(planRoute(task))"
                             >
                                 {{ t('tasks.viewPlan') }}
                             </Button>

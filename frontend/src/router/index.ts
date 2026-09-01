@@ -80,6 +80,17 @@ const workspacesPlan: RouteRecordRaw = {
     meta: { titleKey: 'nav.workspacesPlan' },
 }
 
+// 工作区详情：回滚计划页（PrepareRestore/ResolveRestorePlan/GetRestorePlan/
+// StageUserObject/ConfirmRestorePlan，结构 B 单表全列，契约 06 §9，票 #61。
+// 字面段 restore 与上一条 :plan_id 参数路由并存时静态段优先匹配；
+// 入口唯一落在历史详情页主操作，不占侧栏导航项）
+const workspacesRestorePlan: RouteRecordRaw = {
+    path: '/workspaces/:id/plans/restore/:plan_id',
+    name: 'workspaces-restore-plan',
+    component: () => import('../views/WorkspacesRestorePlanView.vue'),
+    meta: { titleKey: 'nav.workspacesRestorePlan' },
+}
+
 // 工作区详情：重新绑定页（PrepareRebind/ApplyRebind 重绑闭环，
 // UX 原型 §7.6，票 #22。入口在工作区列表行操作与变化页头部（rebind_required），
 // 不占侧栏导航项）
@@ -140,6 +151,7 @@ const router = createRouter({
         workspacesMappings,
         workspacesSettings,
         workspacesPlan,
+        workspacesRestorePlan,
         workspacesRebind,
         workspacesHistory,
         workspacesCommit,
