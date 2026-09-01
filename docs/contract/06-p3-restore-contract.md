@@ -308,3 +308,12 @@ type RetentionSettingsDTO struct {
 | mod 字节不进 CAS / staging 绑计划 | §0.3/§3.5：StageUserObject 字节只进 staging；下载字节同（ADR-0005 §7） |
 | 免确认唯一口径零特判 | §0.4/§4：requirements 恒非空机制（restore_acknowledge） |
 | 探测辅助非承诺 | §0.5/§5：unknown 不阻塞；机制归 ADR-0008 |
+
+## 13. 修订项注记（实现与字面偏差，2026-09-01 收口）
+
+执行会话对本文的三处实现与字面偏差，均已裁决落码；本节按 ADR-0008「契约 06 修订项汇总」同一体例归档，后续票面以本节为准（§2/§10 字面保留历史，不再回改）：
+
+1. **SettingsService 3→4 方法（+`RequestGC`）**：§2 方法表漏列 §9 设置页「立即回收空间」的 wire 载体——`RequestGC(ctx) (view.TaskView, error)` 建 kind=gc 任务（全局单飞幂等，已有活跃 gc 任务时复用不重建）。票 #64 落 GC 任务面、票 #65 把该 transport 面接上 wire。理由：§9 交互必须有后端调用面，且任务创建必须走同一单飞语义（并发点击/收口触发共用，不另设通道）；§2 末句「服务方法总数 74 → 79 + 3」随之为 79 + 4。
+2. **新增错误码 11→13（+`err.config.download_concurrency_invalid`、`err.file.read`）**：前者是 ADR-0008 修订项 5（`[download] concurrency` 配置读写）的行为必要载体——下载引擎并发度越界必须可报（域 C 配置面）；后者承载「源文件读取失败」（StageUserObject 读用户文件 I/O 失败、下载引擎读成品/续传文件失败），§10 原清单只有校验失败面、缺读取失败面。理由：两码均为既有错误分桶纪律（`errs.NewDetail` 带 detail 与 args）下的必要载体，不扩语义只补缺口。
+3. **GC 级联 `previous_baseline_id` 置空连带 `parent_id=NULL`**：ADR-0007 §1 字面只提「首个存活提交 `previous_baseline_id` 置空（仅元数据重连，内容不改）」，实现同批把该提交 `parent_id` 一并置空。理由：`sync_commits.parent_id` 外键 REFERENCES 被裁提交行，SQLite 立即外键下指向被裁行的引用必须同批解除，否则修剪事务整体失败；语义仍是「元数据重连，内容不改」——历史页从 head 向根遍历至 NULL 即止（被裁的是最旧连续前缀），parent 链不出现悬空断链，ADR-0007 §1「连续前缀、无断链遍历」不变。
+
