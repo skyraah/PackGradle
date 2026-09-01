@@ -37,10 +37,15 @@ import (
 	syncapp "packgradle/internal/application/sync"
 	"packgradle/internal/application/view"
 	"packgradle/internal/bootstrap"
+	"packgradle/internal/cdnproc"
 	"packgradle/internal/core/model"
 	"packgradle/internal/download"
 	"packgradle/internal/store"
 )
+
+// dnlManagedCDN 是 -download 链自动拉起的假 CDN 进程句柄（装配前拉起——引擎
+// BaseURL 必须装配前确定；main defer Close，链内附着复用）。
+var dnlManagedCDN *cdnproc.Serve
 
 func main() {
 	projectRoot := flag.String("project", "", "Packwiz 项目根目录（含 pack.toml）")
@@ -55,6 +60,10 @@ func main() {
 	keepCommits := flag.Int("keep-commits", 0, "写入 config.toml [retention] keep_commits 后继续（0=不动配置；验收 K=3 保底用）")
 	restore := flag.Bool("restore", false, "回滚四场景断言链（P3 票 #60：exact 经 CAS / 补全就绪面 / partial+dirty / 重做语义；需 -plain-mods 夹具）")
 	cdnURL := flag.String("cdn", "", "假 CDN BaseURL（票 #66 验收缝，如 http://127.0.0.1:PORT/files）：下载引擎与 CF 探测指向假 CDN 进程（pgfixture -serve），零真网；空 = 生产 CDN 前缀")
+	downloadChain := flag.Bool("download", false, "假 CDN 五场景断言链（票 #66 acceptance:download：成功链/探测降标/failed 可重入/剔除语义/续传；零真网。独立 fixture 与数据目录；-cdn 为空时自动拉起 pgfixture -serve）")
+	pgfixtureBin := flag.String("pgfixture", filepath.Join("bin", "pgfixture.exe"), "pgfixture 可执行文件（-download 自动拉起假 CDN 进程用）")
+	dlWork := flag.String("download-work", filepath.Join("build", "download"), "-download 链工作目录（夹具）")
+	dlRecord := flag.String("record", "", "-download 记录 JSON 路径（空=自动 docs/acceptance/records/p3-download-<date>-<host>.json；\"-\"=不落盘）")
 	flag.Parse()
 
 	// -revive 只需数据根，不需 fixture 端点。
@@ -103,13 +112,25 @@ func main() {
 	}
 	// -cdn 注入（票 #66 验收缝）：下载引擎/CF 探测指向假 CDN 进程（零真网），
 	// 同时注入快退避测试缝（dlTestStack 先例：429/503 重试面不拖慢验收链路，
-	// 4 次重试×1ms 与生产指数退避 1s→30s 的分桶语义不变）。空 = 生产行为。
+	// 4 次重试×1ms 与生产指数退避 1s→30s 的分桶语义不变）。空 = 生产行为；
+	// 但 -download 链在 -cdn 未给时自动拉起假 CDN 进程（装配前置——引擎
+	// BaseURL 必须在装配前确定；句柄交链内复用，进程生命周期随本进程）。
 	dlOpts := download.Options{}
 	if *cdnURL != "" {
 		dlOpts.BaseURL = *cdnURL
 		dlOpts.Backoff = func(int) time.Duration { return time.Millisecond }
 		dlOpts.Sleep = func(context.Context, time.Duration) error { return nil }
 		fmt.Printf("== -cdn == 下载引擎/CF 探测 → %s（快退避验收缝）\n", *cdnURL)
+	} else if *downloadChain {
+		s, err := cdnproc.StartServe(*pgfixtureBin, "127.0.0.1:0")
+		fatalOn(err, "拉起假 CDN 进程（-download 自动管理）")
+		defer s.Close()
+		dnlManagedCDN = s
+		*cdnURL = s.URL()
+		dlOpts.BaseURL = *cdnURL
+		dlOpts.Backoff = func(int) time.Duration { return time.Millisecond }
+		dlOpts.Sleep = func(context.Context, time.Duration) error { return nil }
+		fmt.Printf("== -cdn == 下载引擎/CF 探测 → %s（自动拉起假 CDN 进程，快退避验收缝）\n", *cdnURL)
 	}
 	stack, err := bootstrap.BuildWithDownloadOptions(root, retentionMgr, dlOpts)
 	if err != nil {
@@ -131,6 +152,19 @@ func main() {
 		rel0 := ensureRelation(ctx, app, projectAbs, instanceAbs)
 		if err := runGCChain(ctx, stack, app, rel0, projectAbs); err != nil {
 			log.Fatalf("-gc 链路失败: %v", err)
+		}
+		return
+	}
+	// 票 #66：-download 五场景链（独立模，不走主链路的 plan 断言面）。
+	// 夹具由链内生成（先夹具后登记关系）；假 CDN 进程已在装配前拉起
+	//（dnlManagedCDN），链内附着复用。
+	if *downloadChain {
+		if err := runDownloadChain(dnlChainEnv{
+			app: app, projectRoot: projectAbs, instanceDir: instanceAbs, cdnFlag: *cdnURL,
+			managed: dnlManagedCDN,
+			pgfixtureBin: *pgfixtureBin, work: *dlWork, recordPath: *dlRecord,
+		}); err != nil {
+			log.Fatalf("-download 链路失败: %v", err)
 		}
 		return
 	}
