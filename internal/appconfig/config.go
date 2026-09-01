@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"sync"
 
+	"packgradle/internal/download"
 	"packgradle/internal/errs"
 )
 
@@ -29,6 +30,29 @@ type legacyDirLink struct {
 	InstanceDir string `toml:"instance_dir"`
 }
 
+// DownloadConfig 是全局 config.toml 的 [download] 段：下载引擎韧性参数
+//（ADR-0008 §4）。仅并发度暴露用户配置，其余参数为引擎编译期常量。
+type DownloadConfig struct {
+	// Concurrency 下载并发度。nil = 未配置（引擎取默认 6）；显式配置合法域
+	// 1–16，越界在加载时报错（与引擎构造侧共用 download.NormalizeConcurrency，
+	// 单点口径）。
+	Concurrency *int `toml:"concurrency"`
+}
+
+// EffectiveConcurrency 返回生效并发度（未配置取默认 6）。加载层已拒绝越界值，
+// 本函数对残余非法值（直接构造 ConfigManager 不走加载层的场景）防御性退回默认。
+func (c DownloadConfig) EffectiveConcurrency() int {
+	raw := 0
+	if c.Concurrency != nil {
+		raw = *c.Concurrency
+	}
+	n, err := download.NormalizeConcurrency(raw)
+	if err != nil {
+		n, _ = download.NormalizeConcurrency(0) // 防御：退回默认 6
+	}
+	return n
+}
+
 // Config 是持久化在 %AppData%\PackGradle\config.toml 中的应用全局配置。
 // 项目相关的配置（实例关联、目录同步关联）存放于各项目目录下的 packgradle.toml，
 // 不进入全局配置。
@@ -41,6 +65,8 @@ type Config struct {
 	PrismInstancesPath string `toml:"prism_instances_path"`
 	// 程序自动检测到的 Prism 实例根目录（回写持久化，供查看/修改）
 	PrismInstancesDir string `toml:"prism_instances_dir"`
+	// 下载引擎韧性参数（ADR-0008 §4）
+	Download DownloadConfig `toml:"download"`
 	// 用户自行填写的 CurseForge API Key（用于按需查询 mod 版本等）
 	CurseforgeApiKey string `toml:"curseforge_api_key"`
 	// 旧版字段（v1）：项目 ↔ 实例关联与目录同步关联，启动时一次性迁移到项目级配置后清空
@@ -65,11 +91,30 @@ func NewConfigManager() (*ConfigManager, error) {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return nil, errs.NewDetail("err.config.mkdir", err.Error(), dir)
 	}
-	m := &ConfigManager{path: filepath.Join(dir, "config.toml")}
-	if err := ReadToml(m.path, &m.cfg); err != nil {
-		return nil, errs.NewDetail("err.config.read", err.Error())
+	path := filepath.Join(dir, "config.toml")
+	cfg, err := LoadConfigFrom(path)
+	if err != nil {
+		return nil, err
 	}
-	return m, nil
+	return &ConfigManager{path: path, cfg: cfg}, nil
+}
+
+// LoadConfigFrom 从磁盘读取并校验全局配置（NewConfigManager 的可注入内核）。
+// 加载层校验（ADR-0008 §4）：[download] concurrency 显式配置越界（合法 1–16）
+// 即报错——fail fast，让用户修配置而不是带着非法值运行。
+func LoadConfigFrom(path string) (Config, error) {
+	var cfg Config
+	if err := ReadToml(path, &cfg); err != nil {
+		return cfg, errs.NewDetail("err.config.read", err.Error())
+	}
+	if cfg.Download.Concurrency != nil {
+		// 显式配置值直接判界：显式 0 是非法配置（与「未配置」区分，AC：0/17 拒绝）
+		n := *cfg.Download.Concurrency
+		if n < download.MinConcurrency || n > download.MaxConcurrency {
+			return cfg, errs.New(download.CodeConcurrencyInvalid, n)
+		}
+	}
+	return cfg, nil
 }
 
 // NewConfigManagerAt 用指定路径构造配置管理器（不读取磁盘），供测试注入
