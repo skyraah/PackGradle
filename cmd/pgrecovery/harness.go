@@ -126,7 +126,7 @@ func runRound(rc roundContext) roundRecord {
 			return rr
 		}
 		fmt.Printf("  [attempt %d] pid=%d 目标相位=%s 延迟=%dms\n", k, child.pid(), a.targetPhase, a.delayMS)
-		child.runKillWindow(a, rc.killWindow)
+		child.runKillWindow(a, rc.killWindow, "", "== ConfirmPlan ==")
 		lastResult = a.outcome
 
 		ar := attemptRec{
@@ -206,7 +206,7 @@ func runRound(rc roundContext) roundRecord {
 		rr.Invariant1 = assertCommitted(s1, &rr.Violations)
 	case "recovery_required":
 		rr.Verdict = "recovery_required"
-		rr.Invariant1 = assertRecoveryRequired(s1, &rr.Violations)
+		rr.Invariant1 = assertRecoveryRequired(s1, 0, &rr.Violations)
 	default:
 		rr.Violations = append(rr.Violations,
 			fmt.Sprintf("不变式1：运行终态=%s，期望 committed 或 recovery_required", s1.RunState))
@@ -306,8 +306,10 @@ func assertCommitted(s1 roundState, violations *[]string) bool {
 }
 
 // assertRecoveryRequired 校验 recovery_required 终态（不变式 1 的恢复分支）：
-// 基线绝不推进（零提交）、恢复门落库、apply 不可用。
-func assertRecoveryRequired(s1 roundState, violations *[]string) bool {
+// 基线绝不推进（提交数=expectCommits——被中断运行零新提交；P2 apply 场景
+// 夹具无历史传 0，票 #66 restore 场景夹具有 c1/c2 历史传链长）、恢复门落库、
+// apply 不可用。
+func assertRecoveryRequired(s1 roundState, expectCommits int, violations *[]string) bool {
 	ok := true
 	v := func(format string, args ...any) {
 		ok = false
@@ -316,8 +318,9 @@ func assertRecoveryRequired(s1 roundState, violations *[]string) bool {
 	if s1.TaskStatus != "recovery_required" {
 		v("recovery_required 运行的任务状态=%s，期望 recovery_required", s1.TaskStatus)
 	}
-	if s1.CommitCount != 0 {
-		v("recovery_required 期间存在 %d 条提交（基线推进 = 部分完成假象）", s1.CommitCount)
+	if s1.CommitCount != expectCommits {
+		v("recovery_required 期间提交数=%d，期望 %d（超出 = 被中断运行推进了基线 = 部分完成假象）",
+			s1.CommitCount, expectCommits)
 	}
 	if s1.Health != "recovery_required" {
 		v("关系健康=%s，期望 recovery_required", s1.Health)

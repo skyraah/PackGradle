@@ -22,6 +22,7 @@ import (
 	"io"
 	"os/exec"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 	"unicode/utf16"
@@ -37,7 +38,8 @@ type attempt struct {
 	targetPhase string
 	delayMS     int
 
-	confirmed       bool   // 见到 "== ConfirmPlan =="（运行已落库）
+	armed           bool   // 见到 armed 前置标记（restore 模式；apply 恒 armed）
+	confirmed       bool   // 见到确认行（运行已落库）
 	chainDone       bool   // 见到链路完成行（子进程将要干净退出）
 	confirmedAtKill bool   // 击杀发放时刻的 confirmed 快照
 	chainDoneAtKill bool   // 击杀发放时刻的 chainDone 快照
@@ -59,16 +61,23 @@ const (
 
 // childProcess 是已启动的 apply 子进程句柄。
 type childProcess struct {
-	cmd    *exec.Cmd
-	events <-chan string // stdout 行
-	wait   <-chan error
-	stderr *bytes.Buffer
+	cmd       *exec.Cmd
+	events    <-chan string // stdout 行
+	wait      <-chan error
+	stderr    *bytes.Buffer
+	stdoutAll func() string // stdout 全量缓冲（armed 链行解析用，票 #66）
 }
 
 // spawnApplyChild 启动 pgheadless -apply 子进程（必须是直接 exec 的二进制：
 // 强杀目标 PID 即 pgheadless 进程本身，go run 的包装进程不可用）。
 func spawnApplyChild(headlessBin, project, instance, dataDir string) (*childProcess, error) {
-	cmd := exec.Command(headlessBin, "-project", project, "-instance", instance, "-data", dataDir, "-apply")
+	return spawnChild(headlessBin, "-project", project, "-instance", instance, "-data", dataDir, "-apply")
+}
+
+// spawnChild 按参数启动子进程（票 #66 restore 模式复用：pgheadless
+// -restore-target -cdn ...）。
+func spawnChild(bin string, args ...string) (*childProcess, error) {
+	cmd := exec.Command(bin, args...)
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
 		return nil, err
@@ -78,11 +87,18 @@ func spawnApplyChild(headlessBin, project, instance, dataDir string) (*childProc
 		return nil, err
 	}
 	events := make(chan string, 256)
+	var stdoutBuf bytes.Buffer
+	var mu sync.Mutex
 	go func() {
 		sc := bufio.NewScanner(stdout)
 		sc.Buffer(make([]byte, 0, 64*1024), 4*1024*1024)
 		for sc.Scan() {
-			events <- sc.Text()
+			line := sc.Text()
+			mu.Lock()
+			stdoutBuf.WriteString(line)
+			stdoutBuf.WriteByte('\n')
+			mu.Unlock()
+			events <- line
 		}
 		close(events)
 	}()
@@ -94,7 +110,8 @@ func spawnApplyChild(headlessBin, project, instance, dataDir string) (*childProc
 	}
 	wait := make(chan error, 1)
 	go func() { wait <- cmd.Wait() }()
-	return &childProcess{cmd: cmd, events: events, wait: wait, stderr: stderr}, nil
+	return &childProcess{cmd: cmd, events: events, wait: wait, stderr: stderr,
+		stdoutAll: func() string { mu.Lock(); defer mu.Unlock(); return stdoutBuf.String() }}, nil
 }
 
 // pid 返回子进程 PID（taskkill 目标）。
@@ -130,10 +147,15 @@ func consoleDecode(b []byte) string {
 }
 
 // runKillWindow 观察子进程直至按调度完成强杀或判定 miss。
-func (c *childProcess) runKillWindow(a *attempt, window time.Duration) {
+// armedMarker 非空时为「武装前置标记」：该行出现前所有相位标记被忽略
+//（票 #66 restore 模式——子进程先建夹具历史（含 apply 轮），armed 行
+//（== ConfirmRestorePlan ==）之后才是强杀目标的 restore 运行）；confirmMarker
+// 是运行已落库的确认行（apply = == ConfirmPlan ==，restore = 确认行同 armed）。
+func (c *childProcess) runKillWindow(a *attempt, window time.Duration, armedMarker, confirmMarker string) {
 	start := time.Now()
 	deadline := time.After(window)
 	var timer <-chan time.Time
+	armed := armedMarker == ""
 	for {
 		select {
 		case line, ok := <-c.events:
@@ -143,22 +165,28 @@ func (c *childProcess) runKillWindow(a *attempt, window time.Duration) {
 			}
 			ms := time.Since(start).Milliseconds()
 			if !a.killed {
-				if p, isPhase := phaseOf(line); isPhase {
-					a.markers = append(a.markers, markerTime{Marker: "phase=" + p, MS: ms})
-					a.landedPhase = p
-					switch {
-					case p == a.targetPhase:
-						// 目标相位开跑：武装随机延迟击杀。
-						if timer == nil {
-							timer = time.After(time.Duration(a.delayMS) * time.Millisecond)
+				if !armed && armedMarker != "" && strings.Contains(line, armedMarker) {
+					armed = true
+					a.armed = true
+				}
+				if armed {
+					if p, isPhase := phaseOf(line); isPhase {
+						a.markers = append(a.markers, markerTime{Marker: "phase=" + p, MS: ms})
+						a.landedPhase = p
+						switch {
+						case p == a.targetPhase:
+							// 目标相位开跑：武装随机延迟击杀。
+							if timer == nil {
+								timer = time.After(time.Duration(a.delayMS) * time.Millisecond)
+							}
+						case phaseRank[p] > phaseRank[a.targetPhase]:
+							// 相位已推进过目标（目标标记在轮询间隔内一闪而过，或延迟
+							// 等待期间相位走完）：立即击杀，落点=当前相位。
+							a.fireKill(c)
 						}
-					case phaseRank[p] > phaseRank[a.targetPhase]:
-						// 相位已推进过目标（目标标记在轮询间隔内一闪而过，或延迟
-						// 等待期间相位走完）：立即击杀，落点=当前相位。
-						a.fireKill(c)
 					}
 				}
-				if strings.Contains(line, "== ConfirmPlan ==") {
+				if confirmMarker != "" && strings.Contains(line, confirmMarker) {
 					a.confirmed = true
 				}
 				if strings.Contains(line, "链路完成") {
@@ -241,7 +269,13 @@ func phaseOf(line string) (string, bool) {
 // runApplyToCompletion 运行 pgheadless -apply 至自然退出（复跑收口用），
 // 返回退出码与输出尾部。
 func runApplyToCompletion(ctx context.Context, headlessBin, project, instance, dataDir string) (int, string, error) {
-	cmd := exec.CommandContext(ctx, headlessBin, "-project", project, "-instance", instance, "-data", dataDir, "-apply")
+	return runChildToCompletion(ctx, headlessBin, "-project", project, "-instance", instance, "-data", dataDir, "-apply")
+}
+
+// runChildToCompletion 运行子进程至自然退出（票 #66 restore 复跑用），返回
+// 退出码与输出尾部。
+func runChildToCompletion(ctx context.Context, bin string, args ...string) (int, string, error) {
+	cmd := exec.CommandContext(ctx, bin, args...)
 	var out bytes.Buffer
 	cmd.Stdout = &out
 	cmd.Stderr = &out

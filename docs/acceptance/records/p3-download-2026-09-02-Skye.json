@@ -1,0 +1,109 @@
+{
+  "schema": "p3-download/1",
+  "ticket": "skyraah/PackGradle#66",
+  "spec": "docs/acceptance/p3-acceptance-spec.md §5.1 五场景注入链（零真网）",
+  "date": "2026-09-02",
+  "machine": {
+    "host": "Skye",
+    "os": "windows",
+    "arch": "amd64",
+    "go_version": "go1.26.5",
+    "cpus": 16
+  },
+  "cdn": {
+    "mode": "managed",
+    "base_url": "http://127.0.0.1:6158/files"
+  },
+  "scenarios": [
+    {
+      "name": "成功链（升版回滚 restore redownload 两层校验 + 历史不改写）",
+      "spec": "§5.1 场景1",
+      "passed": true,
+      "assertions": [
+        "c1 后 dl-mod-a = v1 字节（两层校验都过） ✓",
+        "c1 后 dl-mod-b = v1 字节 ✓",
+        "c2 后 dl-mod-a = v2 字节 ✓",
+        "mod-a 判定 redownload_required（CAS miss + CF 声明齐备） ✓",
+        "probe ok（假 CDN 200） ✓",
+        "redownload file-id = v1 ✓",
+        "restore 后 dl-mod-a = v1 字节（声明 sha1 引擎校验 + staging sha256 复核） ✓",
+        "历史追加不改写（新头 kind=restore，c2/c1 原样） ✓"
+      ],
+      "evidence": {
+        "c1": "commit_01M1FAZ5XE34CSB7PT9T0RJ8YR",
+        "c2": "commit_01M1FAZ66JF5W0PQ7NMD6G03GY",
+        "restore": "commit_01M1FAZ6DFDSSV7NKZSRGK4VN9"
+      }
+    },
+    {
+      "name": "探测降标（假 CDN 404 → user_object_required + cf_unavailable）",
+      "spec": "§5.1 场景2",
+      "passed": true,
+      "assertions": [
+        "404 降标 user_object_required ✓",
+        "marker_reason=cf_unavailable ✓",
+        "exact 不可行 ✓",
+        "blocked_by 携带阻塞行 ✓"
+      ]
+    },
+    {
+      "name": "failed 终局可重入（429 → failed 不进 recovery → 恢复 → 同 plan 重 Confirm）",
+      "spec": "§5.1 场景3",
+      "passed": true,
+      "assertions": [
+        "429=unknown 不降标（探测是辅助非承诺） ✓",
+        "restore 任务 failed 终局 ✓",
+        "Problem=err.download.rate_limited（429 重试耗尽分桶） ✓",
+        "run=failed（网络失败 ≠ 恢复面） ✓",
+        "关系健康不动（不进 recovery_required） ✓",
+        "failed 终局零提交（head 不变） ✓",
+        "重试运行 committed ✓",
+        "新任务新运行（同 plan 重确认语义） ✓",
+        "重试后 dl-mod-a = v1 字节 ✓"
+      ],
+      "evidence": {
+        "failed_task": "task_01M1FAZ6NBXCEJHFGYB3ZS87MC",
+        "problem": "err.download.rate_limited",
+        "retry_task": "task_01M1FAZ6RQR51ZRZFA9E3W3XFH"
+      }
+    },
+    {
+      "name": "sync 剔除语义与全败 failed",
+      "spec": "§5.1 场景4",
+      "passed": true,
+      "assertions": [
+        "单行失败剔出本场照常提交（partial） ✓",
+        "跳过清单承载 err.download.unavailable ✓",
+        "健康行 mod-a 照常落盘 = v5 字节 ✓",
+        "被剔行 mod-b 保持 v1 现状 ✓",
+        "全败 → failed 终局（零提交不进 recovery） ✓",
+        "run=failed ✓",
+        "failed 终局清理运行暂存（.part 不跨运行复用） ✓",
+        "关系健康不动 ✓",
+        "全败零提交 ✓",
+        "重试 committed ✓",
+        "重试后 mod-b = v3 字节 ✓"
+      ]
+    },
+    {
+      "name": "续传（半截断流 → .part Range 续传 → 成功）",
+      "spec": "§5.1 场景5",
+      "passed": true,
+      "assertions": [
+        "续传轮收口 ✓",
+        "续传后 exact 收口 ✓",
+        "mod-b = v4 字节（.part 拼接 + sha1 验收） ✓",
+        "假 CDN 请求记录含 Range 头（续传证据） ✓"
+      ],
+      "evidence": {
+        "b4_requests": 19,
+        "range_requests": 1,
+        "truncate_at": 32768
+      }
+    }
+  ],
+  "verdict": {
+    "all_pass": true
+  },
+  "note": "五场景零真网（假 CDN 进程 pgfixture -serve 供给，脚本故障控制面热切换）；两层校验口径 = 引擎声明 sha1（取对了）+ staging sha256 复核（写对了，链路面以落盘字节逐字节一致断言）；续传证据 = 假 CDN 请求记录 Range 头"
+}

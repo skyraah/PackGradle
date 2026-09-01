@@ -1,0 +1,48 @@
+{
+  "schema": "p3-perf-run/1",
+  "captured_at": "2026-09-01T20:36:46Z",
+  "project_root": "C:\\project\\pg-p3-t66\\build\\perf\\fixture\\project",
+  "instance_dir": "C:\\project\\pg-p3-t66\\build\\perf\\fixture\\instance",
+  "data_root": "build/perf/data",
+  "machine": {
+    "host": "Skye",
+    "os": "windows",
+    "arch": "amd64",
+    "go_version": "go1.26.5",
+    "cpus": 16
+  },
+  "scan_phases_ms": {
+    "project_scan": 41,
+    "runtime_scan": 375,
+    "normalize": 10,
+    "persist": 25
+  },
+  "scan_total_ms": 458,
+  "run_total_ms": 19727,
+  "hash_cache": {
+    "hits": 2700,
+    "misses": 0,
+    "hit_ratio": 1
+  },
+  "apply": {
+    "kind": "initialize",
+    "operation_count": 2400,
+    "phases_ms": {
+      "staging": 4316,
+      "applying": 5782,
+      "verifying": 7035
+    },
+    "apply_total_ms": 18784,
+    "chain_total_ms": 19102,
+    "peak_memory_delta": {
+      "metric": "go_runtime_memstats_sys_peak_delta",
+      "baseline_bytes": 39317504,
+      "peak_bytes": 57102336,
+      "delta_bytes": 17784832,
+      "delta_mib": 16.9609375,
+      "peak_heap_inuse_bytes": 28663808,
+      "samples": 185,
+      "note": "runtime.ReadMemStats 按 GetTask 轮询间隔（~100ms）+ 终态补充采样；增量 = apply 段 Sys 峰值 − ConfirmPlan 前基线"
+    }
+  }
+}

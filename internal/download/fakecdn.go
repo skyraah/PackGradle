@@ -58,6 +58,10 @@ type FakeStep struct {
 	// HEAD 不消费响应体，Hang 对 HEAD 无效；Delay 在头之前挂住使 HEAD 同样
 	// 被阻塞至客户端超时/取消）。感知请求取消：客户端断开即返回。
 	Delay time.Duration
+	// Abort 为真时收到请求即断连（不发任何响应字节，票 #66）：进程形态脚本
+	// 的「断连」步——客户端经完整 TCP 连接收到传输中断（transient 网络桶）。
+	// 拨号层的「连接拒绝」由 RefusingAddr 在单测覆盖，进程形态不另设端口面。
+	Abort bool
 }
 
 // FakeRequest 是一次被假 CDN 记录的请求（Range 头记录即续传证据）。
@@ -164,6 +168,9 @@ func (c *FakeCDN) serveHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	switch {
+	case step.Abort:
+		// 断连步：连接已建立但不发任何响应字节即终止（客户端得传输中断）
+		panic(http.ErrAbortHandler)
 	case step.Hang > 0:
 		// 发完头即挂住：Content-Length 给非零值诱导客户端等待，直到客户端断开
 		w.Header().Set("Content-Length", "1024")
