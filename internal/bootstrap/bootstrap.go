@@ -30,12 +30,46 @@ type Stack struct {
 	DB      *sql.DB
 	App     syncapp.Application
 	Service *transport.SyncService
+	// SyncApp 是具体应用类型（headless 工具消费非接口面：GC 触发/复活，
+	// 票 #64——Application 接口保持 transport 契约面不膨胀）。
+	SyncApp *syncapp.App
+	// GCRepo / GCTrash / CAS 是验收对账与复活面的采集出口（票 #64；
+	// headless 链经它们组装 core/gc.Audit 的四侧事实）。
+	GCRepo  ports.GCRepository
+	GCTrash ports.GCTrash
+	CAS     *objectstore.CAS
 	// ProjectService / RuntimeService 是端点管理用例出口（/sources、/runtimes 页）。
 	ProjectService *transport.ProjectService
 	RuntimeService *transport.RuntimeService
 	// SettingsService 是设置/开关域出口（契约 06 §2；票 #57）：保留设置 +
 	// 授权开关。仅 BuildWithRetention 装配（headless 工具无设置面）。
 	Settings *transport.SettingsService
+}
+
+// StartGC 启动触发通道①（票 #64，ADR-0007 §3）：异步建 GC 任务（幂等单飞）。
+// 产品入口（GUI main）与验收链显式调用；测试装配不自动触发。
+func (s *Stack) StartGC() {
+	if s.SyncApp != nil {
+		s.SyncApp.StartGC()
+	}
+}
+
+// RelationIDs 返回全部关系 id（引用图对账的全局遍历底册，验收链用）。
+func (s *Stack) RelationIDs(ctx context.Context) ([]string, error) {
+	rows, err := s.DB.QueryContext(ctx, "SELECT id FROM relations ORDER BY id ASC")
+	if err != nil {
+		return nil, fmt.Errorf("bootstrap: 列关系 id: %w", err)
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		out = append(out, id)
+	}
+	return out, rows.Err()
 }
 
 // Build 在指定用户数据根目录装配新栈。
@@ -104,6 +138,14 @@ func build(root string, retention ports.RetentionSettingsStore) (*Stack, error) 
 		StagingRoot:   layout.StagingDir,
 		Downloads:     dlEngine,
 		Probes:        dlEngine,
+		// 保留策略设置（ADR-0007 §8，票 #64）：retention 非 nil 时供
+		// PrepareSync 的 preserve_skip 阈值与 GC 引擎五键读取；nil（headless
+		// Build）退默认值。
+		Retention: retention,
+		// GC 引擎存储面与回收站（票 #64）：GCRepository 走同一 DB，
+		// GCTrash 即 CAS（回收站/孤儿清扫落盘侧）。
+		GC:      sqlite.NewGCRepository(db),
+		GCTrash: cas,
 		Tx:            sqlite.NewUnitOfWork(db),
 		Publisher:     transport.NewEventBridge(),
 		ProjectScan:   packwiz.New(),
@@ -166,6 +208,10 @@ func build(root string, retention ports.RetentionSettingsStore) (*Stack, error) 
 		Layout:         layout,
 		DB:             db,
 		App:            app,
+		SyncApp:        app,
+		GCRepo:         sqlite.NewGCRepository(db),
+		GCTrash:        cas,
+		CAS:            cas,
 		Service:        transport.NewSyncService(app),
 		ProjectService: transport.NewProjectService(projectSvc),
 		RuntimeService: transport.NewRuntimeService(runtimeSvc),

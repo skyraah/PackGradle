@@ -312,8 +312,10 @@ type PlannedOperation struct {
 	// P3 起由后端推导填充（有重取信息的 mod 写操作 → download，其余 → copy）；
 	// 旧行空值＝copy 兼容。restore 计划行不设该字段（marker 已承载等价信息）。
 	Materialization string `json:"materialization,omitempty"`
-	// PreserveSkip 是「旧版本不留存」警示行标记（ADR-0007 §7）：仅字段位，
-	// 判定归保留阈值改造（票 #64）。
+	// PreserveSkip 是「旧版本不留存」标记（ADR-0007 §7，票 #64；契约 06 §3.7）：
+	// 非 mod 单文件超过 preserve_max_bytes 阈值 → 不做 before 保全（照常写，
+	// 旧版本不留 CAS；回滚对象缺失走既有降级分支）。判定口径=model.ShouldSkipPreserve，
+	// prepare 时点固化进计划（计划即契约，执行引擎不再重算）。
 	PreserveSkip bool `json:"preserve_skip,omitempty"`
 }
 

@@ -226,8 +226,9 @@ type OperationDTO struct {
 	// 后端推导（有重取信息的 mod 写操作 → download，其余 → copy）；旧行空值
 	// ＝copy 兼容。
 	Materialization string `json:"materialization,omitempty"`
-	// PreserveSkip 是「旧版本不留存」警示行标记（ADR-0007 §7）：仅字段位，
-	// 判定归保留阈值改造（票 #64）。
+	// PreserveSkip 是「旧版本不留存」警示行标记（契约 06 §3.7；ADR-0007 §7，
+	// 票 #64）：非 mod 单文件超过 preserve_max_bytes，不做 before 保全。
+	// 只增不删，同「不可重取」警示先例（deletion_warn）。
 	PreserveSkip bool `json:"preserve_skip,omitempty"`
 }
 
@@ -515,6 +516,8 @@ type CommitPageDTO struct {
 	SchemaVersion int                `json:"schema_version"`
 	Items         []CommitSummaryDTO `json:"items"`
 	NextCursor    string             `json:"next_cursor,omitempty"`
+	// PrunedBeforeCount 是墓碑计数（契约 06 §3.8，票 #64）；N=0 前端不渲染。
+	PrunedBeforeCount int `json:"pruned_before_count"`
 }
 
 // ---- 设置域 DTO（契约 06 §3.6；票 #57）----

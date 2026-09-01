@@ -32,6 +32,7 @@ import (
 	"strings"
 	"time"
 
+	"packgradle/internal/appconfig"
 	"packgradle/internal/application/ports"
 	syncapp "packgradle/internal/application/sync"
 	"packgradle/internal/application/view"
@@ -47,7 +48,17 @@ func main() {
 	metricsPath := flag.String("metrics", "", "分项指标 JSON 输出路径（T14 性能基线，可选）")
 	resolve := flag.Bool("resolve", false, "PrepareSync 后执行 ResolvePlan → GetPlan（A 口径 headless 链路）")
 	apply := flag.Bool("apply", false, "ResolvePlan 后 ConfirmPlan → Apply → committed 断言链（P2 A 口径主链路）")
+	commits := flag.Int("commits", 0, "连续小 apply 造 N 个提交（票 #64 acceptance:gc 历史夹具；每轮 project 侧加一个文件）")
+	gcRun := flag.Bool("gc", false, "RequestGC → 等终态 → 墓碑/存活/引用图不变式断言链（票 #64 acceptance:gc 主链）")
+	revive := flag.String("revive", "", "从回收站人工复活指定 digest（票 #64 CLI 形态；解压回 objects 并置回 ready）")
+	keepCommits := flag.Int("keep-commits", 0, "写入 config.toml [retention] keep_commits 后继续（0=不动配置；验收 K=3 保底用）")
 	flag.Parse()
+
+	// -revive 只需数据根，不需 fixture 端点。
+	if *revive != "" {
+		runRevive(*dataRoot, *revive)
+		return
+	}
 	if *projectRoot == "" || *instanceDir == "" {
 		flag.Usage()
 		os.Exit(2)
@@ -69,7 +80,18 @@ func main() {
 			log.Fatalf("定位用户数据目录失败: %v", err)
 		}
 	}
-	stack, err := bootstrap.Build(root)
+	// -keep-commits 在装配前写入（config.toml [retention]，票 #64）：装配读
+	// 同一文件，GC 引擎经 Retention 端口取到新值；装配后写只落另一实例内存。
+	if *keepCommits > 0 {
+		writeKeepCommits(root, *keepCommits)
+	}
+	// 统一经 BuildWithRetention 装配（票 #64）：config.toml [retention] 与产品
+	// 同源（headless Build 的 nil 端口只退默认值，读不回写）。
+	retentionMgr, err := appconfig.NewConfigManagerAtLoaded(filepath.Join(root, "config.toml"))
+	if err != nil {
+		log.Fatalf("读取配置失败: %v", err)
+	}
+	stack, err := bootstrap.BuildWithRetention(root, retentionMgr)
 	if err != nil {
 		log.Fatalf("装配失败: %v", err)
 	}
@@ -77,6 +99,21 @@ func main() {
 
 	ctx := context.Background()
 	app := stack.App
+
+	// 票 #64：-commits（历史夹具）与 -gc（验收链）独立成模，不走单计划链路。
+	if *commits > 0 {
+		rel0 := ensureRelation(ctx, app, projectAbs, instanceAbs)
+		seedCommits(ctx, app, rel0, projectAbs, *commits)
+		fmt.Printf("== -commits == 已造 %d 个提交\n", *commits)
+		return
+	}
+	if *gcRun {
+		rel0 := ensureRelation(ctx, app, projectAbs, instanceAbs)
+		if err := runGCChain(ctx, stack, app, rel0, projectAbs); err != nil {
+			log.Fatalf("-gc 链路失败: %v", err)
+		}
+		return
+	}
 
 	// 命中计数以本次扫描的 delta 记账（GetHashCacheStats 为进程生命周期累计）
 	before, err := app.GetHashCacheStats(ctx)

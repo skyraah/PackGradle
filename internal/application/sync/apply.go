@@ -51,6 +51,7 @@ func (a *App) startApply(t model.Task) {
 	a.runner.RegisterCancel(t.TaskID, cancel)
 	go func() {
 		defer a.runner.UnregisterCancel(t.TaskID)
+		defer a.kickGC() // 运行收口（committed/failed/recovery_required）= 窗口复查事件
 		a.runApply(applyCtx, t)
 	}()
 }
@@ -397,6 +398,10 @@ func (a *App) runApply(ctx context.Context, queued model.Task) {
 		return
 	}
 	_ = a.pub.PublishRelationInvalidated(commitCtx, rel.RelationID)
+
+	// 触发通道②（票 #64，ADR-0007 §3）：提交收口后廉价检查关系占用，
+	// 超容量锚点 C 才建 GC 任务（幂等单飞；异步不阻塞收口）。
+	a.maybeScheduleGCAfterCommit(commitCtx, rel.RelationID)
 }
 
 // applyWorkers 是 staging 与 applying 批内文件动作共用的有界并行度（票 #48：
@@ -469,9 +474,12 @@ func stageOneOperation(ctx context.Context, a *App, run *syncstage.Run, relation
 		return s
 	}
 	// before-content CAS 保全：modify/delete 且 recoverability 策略要求时
-	// 先落 CAS 并独立复核（PreserveBeforeContent 失败零引用）。
+	// 先落 CAS 并独立复核（PreserveBeforeContent 失败零引用）。大文件保全
+	// 阈值（ADR-0007 §7，票 #64）：计划行固化 preserve_skip=true 的操作跳过
+	// 保全——prepare 时点已按 model.ShouldSkipPreserve 判定（计划即契约），
+	// 照常同步写、旧版本不留 CAS；回滚对象缺失走既有降级分支，零新增枚举。
 	if fp.action == applyActionModify || fp.action == applyActionDelete {
-		if syncstage.RequiresCASBackup(fp.recoverability) {
+		if !fp.op.PreserveSkip && syncstage.RequiresCASBackup(fp.recoverability) {
 			ref, preserved, err := syncstage.PreserveBeforeContent(ctx, a.deps.CAS,
 				filepath.Join(fp.root, filepath.FromSlash(fp.targetRel)), fp.recoverability)
 			if err != nil {

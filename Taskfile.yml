@@ -134,6 +134,26 @@ tasks:
       - rm -rf build/recovery
       - bin/pgrecovery.exe
 
+  # GC 验收链（验收规格 §6 五件套之 2/3；票 #64）：全新 fixture + 全新数据
+  # 目录 → ①`-commits 25` 连续小 apply 造 >20 提交历史 → ②`-gc` CLI 通道触发
+  # （keep_commits 默认 20：裁 5）断言墓碑 pruned_before_count>0 且被裁行消失、
+  # 存活 ≥K=3、引用图不变式逐 digest 对账零违例、最老存活提交可达闭包逐字节
+  # 复验（回滚承诺不缩水；restore 服务面归票 #60）→ ③`-keep-commits 5` 后
+  # `-gc -probes`：head 前移 + 活跃 draft 计划屏障 + staged/recovery_required
+  # 两个未收口 run 注入（正例②③）→ 安全窗口关闭断言（pending+排队文案）→
+  # 夹具收口 → 开窗自动续排（同一任务跑完）→ 屏障截断存活>N、观察 digest 续跑
+  # 后被回收、引用图对账零违例。任一断言失败非零退出。
+  acceptance:gc:
+    summary: Builds a >20-commit history via repeated small applies, runs pgheadless gc (CLI channel), asserts tombstone/K=3 floor/reference-graph invariant/oldest-commit restorability and the three protection red lines (acceptance L0)
+    cmds:
+      - go build -o bin/pgheadless.exe ./cmd/pgheadless
+      - rm -rf build/gc
+      - go run ./cmd/pgfixture -out build/gc/fixture -mods 6 -text-files 12
+      - bin/pgheadless.exe -project build/gc/fixture/project -instance build/gc/fixture/instance -data build/gc/data -commits 25
+      - bin/pgheadless.exe -project build/gc/fixture/project -instance build/gc/fixture/instance -data build/gc/data -gc
+      - bin/pgheadless.exe -project build/gc/fixture/project -instance build/gc/fixture/instance -data build/gc/data -keep-commits 5 -gc
+      - PGHEADLESS_GC_PROBES=1 bin/pgheadless.exe -project build/gc/fixture/project -instance build/gc/fixture/instance -data build/gc/data -gc
+
   # B 口径前端构建门槛（验收规格 §1.1）：vue-tsc 类型检查 + Vite 生产构建
   #（package.json `build` = `vue-tsc && vite build --mode production`）。
   frontend:build:

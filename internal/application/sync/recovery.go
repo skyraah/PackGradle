@@ -184,6 +184,9 @@ func (a *App) AcknowledgeRecovery(ctx context.Context, taskID string) (view.Work
 		// 事件只在 SQLite 事务提交后发布（ADR-0004 §6）；发布失败不影响已提交事实
 		_ = a.pub.PublishRelationInvalidated(ctx, relationID)
 		log.Printf("recovery: 运行 %s 恢复已人工确认，关系 %s 复位 healthy（头基线不动，引导重扫）", taskID, relationID)
+		// 恢复处置收口=安全窗口复查事件（票 #64，ADR-0007 §3）：唤醒排队中的
+		// GC 任务自动续排。
+		a.kickGC()
 	}
 	return a.GetWorkspace(ctx, relationID)
 }

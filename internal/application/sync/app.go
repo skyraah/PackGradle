@@ -6,6 +6,7 @@ package sync
 import (
 	"context"
 	"fmt"
+	"log"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -100,6 +101,16 @@ type AppDeps struct {
 	// Probes 是 CF 探测引擎（internal/download.Engine 满足 RestoreProber；
 	// 票 #59 PrepareRestore 尽力探测）。可为 nil（不探测，行内不标 availability）。
 	Probes RestoreProber
+	// Retention 是保留策略设置存取（config.toml [retention]，ADR-0007 §8，票 #64）。
+	// 可选：nil（headless 无设置面）时用 model.DefaultRetention()——PrepareSync
+	// 的 preserve_skip 阈值与 GC 引擎的五键读取都经 retentionSettings() 收口。
+	Retention ports.RetentionSettingsStore
+	// GC 是 GC 引擎的存储面（修剪决策输入/级联删除/对象账目与隔离态，票 #64）。
+	// 可选：nil 时 GC 引擎不可用（RequestGC 报错、收口触发跳过），既有链路零波及。
+	GC ports.GCRepository
+	// GCTrash 是回收站与盘面对象操作（objectstore.CAS 实现，票 #64）。可选：
+	// 与 GC 同生（bootstrap 成对装配）。
+	GCTrash ports.GCTrash
 	// Tx 是多步元数据写入的单事务边界（ADR-0003）；CreateRelation 走 RunInTx。
 	Tx            ports.UnitOfWork
 	Publisher     ports.EventPublisher // 事件出口（transport 桥），可为 nil
@@ -136,6 +147,13 @@ type App struct {
 	// 为 T09 pgheadless -metrics apply 度量供数；runApply 写入，互斥保护）。
 	applyTimingMu   sync.Mutex
 	lastApplyTiming view.ApplyTimingView
+
+	// gcMu 串行化 GC 任务创建段（RequestGC 的单飞检查+创建非原子，进程内
+	// 双保险；跨通道并发触发的后到请求复用首个任务）。gcKick 是安全窗口的
+	// 唤醒通道（任务终态/恢复处置 kick，ADR-0007 §3；带缓冲单槽，无等待者
+	// 时丢弃——轮询兜底）。New 初始化。
+	gcMu   sync.Mutex
+	gcKick chan struct{}
 }
 
 // LastScanTiming 返回最近一次完成的扫描分相耗时（进程生命周期内最后一次；
@@ -209,6 +227,7 @@ func New(deps AppDeps) (*App, error) {
 		deps:   deps,
 		pub:    pub,
 		runner: task.NewRunner(deps.Tasks, pub, deps.IDs, deps.Now),
+		gcKick: make(chan struct{}, 1),
 	}, nil
 }
 
@@ -216,6 +235,21 @@ func New(deps AppDeps) (*App, error) {
 func (a *App) taskRunner() *task.Runner { return a.runner }
 
 func (a *App) nowStr() string { return a.deps.Now().UTC().Format(time.RFC3339) }
+
+// retentionSettings 读取保留策略五键（ADR-0007 §8）：设置存取端口缺失
+//（headless Build）或读取失败时退默认值——GC 是机会主义后台任务，设置面
+// 故障不阻断产品主链路，引擎下轮再取。
+func (a *App) retentionSettings() model.RetentionSettings {
+	if a.deps.Retention == nil {
+		return model.DefaultRetention()
+	}
+	s, err := a.deps.Retention.Retention()
+	if err != nil {
+		log.Printf("gc: 读取保留设置失败（退默认值）: %v", err)
+		return model.DefaultRetention()
+	}
+	return s
+}
 
 func (a *App) relationGate(relationID string) *sync.Mutex {
 	v, _ := a.startGate.LoadOrStore(relationID, &sync.Mutex{})

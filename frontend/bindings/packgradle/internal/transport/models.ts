@@ -166,6 +166,11 @@ export interface CommitPageDTO {
     "schema_version": number;
     "items": CommitSummaryDTO[] | null;
     "next_cursor"?: string;
+
+    /**
+     * PrunedBeforeCount 是墓碑计数（契约 06 §3.8，票 #64）；N=0 前端不渲染。
+     */
+    "pruned_before_count": number;
 }
 
 /**
@@ -333,8 +338,9 @@ export interface OperationDTO {
     "materialization"?: string;
 
     /**
-     * PreserveSkip 是「旧版本不留存」警示行标记（ADR-0007 §7）：仅字段位，
-     * 判定归保留阈值改造（票 #64）。
+     * PreserveSkip 是「旧版本不留存」警示行标记（契约 06 §3.7；ADR-0007 §7，
+     * 票 #64）：非 mod 单文件超过 preserve_max_bytes，不做 before 保全。
+     * 只增不删，同「不可重取」警示先例（deletion_warn）。
      */
     "preserve_skip"?: boolean;
 }
