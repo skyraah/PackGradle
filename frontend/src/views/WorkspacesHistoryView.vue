@@ -34,6 +34,9 @@ const relationID = computed(() => String(route.params.id ?? ''))
 // —— 查询快照（旧数据在刷新失败时保留）——
 const items = ref<CommitSummaryDTO[]>([])
 const nextCursor = ref('')
+// 墓碑计数（契约 06 §3.8，票 #64 字段位 / 票 #65 前端渲染）：按保留策略已清理
+// 的更早提交数（全量统计，每页响应同值）；N=0 不渲染墓碑行。
+const prunedBeforeCount = ref(0)
 // 查询生命周期：phase 是互斥主状态；inflight 只在已有快照时投影为 refreshing
 const phase = ref<QueryPhase>('loading')
 const inflight = ref(false)
@@ -62,6 +65,7 @@ async function queryPage(cursor: string): Promise<void> {
         if (seq !== querySeq) return
         items.value = cursor ? [...items.value, ...(page.items ?? [])] : (page.items ?? [])
         nextCursor.value = page.next_cursor ?? ''
+        prunedBeforeCount.value = page.pruned_before_count ?? 0
         phase.value = 'ready'
         errorMsg.value = ''
     } catch (e) {
@@ -220,6 +224,18 @@ const cols = ['history.colTime', 'history.colKind', 'history.colCompleteness', '
                                 </TableRow>
                             </TableBody>
                         </Table>
+
+                        <!-- 墓碑行（原型 H-01 先例，契约 06 §3.8）：被裁提交行自然消失，
+                             列表尾点名保留策略可调；N=0 不渲染 -->
+                        <div
+                            v-if="pageState === 'ready' && prunedBeforeCount > 0"
+                            class="text-muted-foreground mt-1 px-2 pb-1 text-center text-xs"
+                        >
+                            {{ t('history.prunedTombstone', [prunedBeforeCount]) }}
+                            <button class="text-primary hover:underline" @click="router.push('/settings')">
+                                {{ t('history.prunedTombstoneHint') }}
+                            </button>
+                        </div>
 
                         <!-- 页脚：已展示计数 + 加载更多 -->
                         <div v-if="pageState === 'ready'" class="flex items-center justify-between gap-2 py-2">

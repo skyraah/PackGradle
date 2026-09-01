@@ -150,4 +150,6 @@ export type {
     CommitChangeDTO,
     CommitDTO,
     CommitPageDTO,
+    RetentionSettingsDTO,
+    UpdateRetentionSettingsDTO,
 } from '../../bindings/packgradle/internal/transport/models'

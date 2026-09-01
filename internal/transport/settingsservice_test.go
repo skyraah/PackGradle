@@ -154,6 +154,33 @@ func TestSettingsServiceUpdateRetentionInvalid(t *testing.T) {
 	}
 }
 
+// TestSettingsServiceRequestGC 立即回收空间上 wire（契约 06 §9，票 #65）：
+// 建 kind=gc 任务（relation_id 空=全局任务）且全局单飞幂等——连续两次请求
+// 复用同一活跃任务（第二次请求先于引擎收口到达，与票 #64 引擎单飞测试同
+// 稳定性依据）。
+func TestSettingsServiceRequestGC(t *testing.T) {
+	svc, _, _ := newSettingsFixture(t)
+
+	first, err := svc.RequestGC()
+	if err != nil {
+		t.Fatalf("RequestGC: %v", err)
+	}
+	if first.Kind != "gc" {
+		t.Errorf("任务 kind = %q, 期望 gc", first.Kind)
+	}
+	if first.RelationID != "" {
+		t.Errorf("GC 任务应为全局（relation_id 空）, got %q", first.RelationID)
+	}
+
+	second, err := svc.RequestGC()
+	if err != nil {
+		t.Fatalf("RequestGC 二次: %v", err)
+	}
+	if first.TaskID != second.TaskID {
+		t.Errorf("单飞破坏：首次 %s 二次 %s", first.TaskID, second.TaskID)
+	}
+}
+
 // TestSettingsServiceSetWorkspaceAuthorized 开关切换：WorkspaceDTO 投影一致，
 // 与 SyncService.GetWorkspace 读投影同源同值（AC「开关切换后 WorkspaceDTO 投影
 // 一致」）；不存在关系返回 err.relation.not_found。
