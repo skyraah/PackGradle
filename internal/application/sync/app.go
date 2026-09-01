@@ -15,7 +15,6 @@ import (
 	"packgradle/internal/application/view"
 	"packgradle/internal/core/model"
 	"packgradle/internal/download"
-	"packgradle/internal/syncstage"
 )
 
 // Application 是 P1 只读核心用例集（transport 依赖此接口而非具体实现）。
@@ -59,34 +58,48 @@ type Application interface {
 	// SetWorkspaceAuthorized 切换工作区授权开关（契约 06 §3.6；票 #57）：
 	// 写 relations.authorized_apply 列，返回更新后工作区投影。
 	SetWorkspaceAuthorized(ctx context.Context, relationID string, enabled bool) (view.WorkspaceView, error)
+	// ---- 回滚计划面（契约 06 §2/§3；票 #59）----
+	// PrepareRestore 准备回滚：目标 baseline 后端推导，四标记判定 + CF 尽力探测，
+	// draft 落 sync_plans(kind=restore) 沿既有计划机器。
+	PrepareRestore(ctx context.Context, input view.PrepareRestoreInput) (view.RestorePlanView, error)
+	// ResolveRestorePlan 回滚决议：仅 partial 逐资源 skip；exact 遇就绪面不满前置拒绝。
+	ResolveRestorePlan(ctx context.Context, input view.ResolveRestorePlanInput) (view.RestorePlanView, error)
+	// GetRestorePlan 回滚计划读伴随（对称 GetPlan；stale/expired 读取时投影）。
+	GetRestorePlan(ctx context.Context, planID string) (view.RestorePlanView, error)
+	// StageUserObject 用户对象补全：字节进 staging 绑 plan 不进 CAS，凭
+	// expected_digest 验收，不改标记只改就绪面。
+	StageUserObject(ctx context.Context, input view.StageUserObjectInput) (view.RestorePlanView, error)
 }
 
 var _ Application = (*App)(nil)
 
 // AppDeps 是应用依赖（唯一允许注入具体实现的位置是构造调用方）。
 type AppDeps struct {
-	Endpoints     ports.EndpointRepository
-	Relations     ports.RelationRepository
-	Snapshots     ports.SnapshotRepository
-	Baselines     ports.BaselineRepository
-	Plans         ports.PlanRepository
-	Tasks         ports.TaskRepository
-	Mappings      ports.MappingRepository
-	Preparations  ports.PreparationRepository
-	HashCache     ports.HashCacheRepository
-	Events        ports.TaskEventRepository
+	Endpoints    ports.EndpointRepository
+	Relations    ports.RelationRepository
+	Snapshots    ports.SnapshotRepository
+	Baselines    ports.BaselineRepository
+	Plans        ports.PlanRepository
+	Tasks        ports.TaskRepository
+	Mappings     ports.MappingRepository
+	Preparations ports.PreparationRepository
+	HashCache    ports.HashCacheRepository
+	Events       ports.TaskEventRepository
 	// Apply 执行仓库（Phase 2，ADR-0004 事实模型，T01 落库；读投影票 #39 消费）。
 	ApplyRuns ports.ApplyRunRepository
 	Journal   ports.OperationJournalRepository
 	Commits   ports.CommitRepository
 	// Apply 引擎文件层依赖（T04）：CAS 承接 before-content 保全（objectstore.CAS
 	// 满足 syncstage.ContentStore），StagingRoot 是按运行隔离的暂存根目录。
-	CAS         syncstage.ContentStore
+	CAS         CASStore
 	StagingRoot string
 	// Downloads 是下载物化引擎（ADR-0008，票 #58/#63）：download 行经其产
 	// 「已过声明 hash 校验的字节」喂既有 StageContent。生产装配恒提供；
 	// nil 时 download 行按取数失败剔除（不进恢复面），供未接下载面的夹具。
 	Downloads *download.Engine
+	// Probes 是 CF 探测引擎（internal/download.Engine 满足 RestoreProber；
+	// 票 #59 PrepareRestore 尽力探测）。可为 nil（不探测，行内不标 availability）。
+	Probes RestoreProber
 	// Tx 是多步元数据写入的单事务边界（ADR-0003）；CreateRelation 走 RunInTx。
 	Tx            ports.UnitOfWork
 	Publisher     ports.EventPublisher // 事件出口（transport 桥），可为 nil

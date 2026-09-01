@@ -646,5 +646,11 @@
   "workspaces.settings.entryPrefix": "概览「快速更新」入口：",
   "workspaces.settings.entryLit": "已点亮",
   "workspaces.settings.entryGrey": "灰置（{0}）",
-  "err.auth_mode.disabled": "授权模式未开启：请在该工作区设置中开启后使用快速更新"
+  "err.auth_mode.disabled": "授权模式未开启：请在该工作区设置中开启后使用快速更新",
+  "err.restore.commit_not_found": "未找到回滚目标提交: {0}",
+  "err.restore.exact_infeasible": "回滚计划 {0} 尚有未就绪资源，无法按 exact 完成；请改用 allow_partial（可逐项跳过缺失资源）",
+  "err.restore.skip_invalid": "资源 {0} 不是可跳过的阻塞项（仅「需我提供」未补全或「不可恢复」行可跳过）",
+  "err.userobject.hash_mismatch": "提供的文件内容与目标摘要不符（期望 {0}），请重新选择文件",
+  "err.userobject.not_required": "资源 {0} 不是「需我提供」的补全项",
+  "req.restore_acknowledge": "我了解本次回滚将把双端写回目标状态：删除面不可撤销、CF 重取失败即整场退出、回滚永远需要人工确认、成功后产生新记录且历史不改写"
 }

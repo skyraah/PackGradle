@@ -247,6 +247,42 @@ func hashFilePath(path string) (string, int64, error) {
 	return hashReader(f)
 }
 
+// RunExists 报告 task_id 的暂存运行目录是否已存在（只读探测，不创建布局、
+// 不生成密钥）。restore 计划的就绪面投影（票 #59）据此避免读路径产生
+// staging 目录副作用；写路径仍走 OpenRun。
+func RunExists(stagingRoot, taskID string) bool {
+	if stagingRoot == "" || validateID(taskID) != nil {
+		return false
+	}
+	_, err := os.Lstat(filepath.Join(stagingRoot, taskID))
+	return err == nil
+}
+
+// StagedDigest 返回目标路径暂存副本的 sha256（hex）。副本不存在返回 ok=false
+//（正常情况：尚未补全）；路径逃逸返回 ErrPathEscape。只读，不写任何状态——
+// restore 计划的 staged 就绪面投影（票 #59）按此实时推导，不改计划行。
+func (r *Run) StagedDigest(targetRel string) (digest string, ok bool, err error) {
+	stagingRel, err := r.TempRelFor(targetRel)
+	if err != nil {
+		return "", false, err
+	}
+	abs, err := r.StageAbs(stagingRel)
+	if err != nil {
+		return "", false, err
+	}
+	if _, statErr := os.Lstat(abs); statErr != nil {
+		if errors.Is(statErr, fs.ErrNotExist) {
+			return "", false, nil
+		}
+		return "", false, fmt.Errorf("syncstage: 检查暂存副本失败: %w", statErr)
+	}
+	got, _, err := hashFilePath(abs)
+	if err != nil {
+		return "", false, err
+	}
+	return got, true, nil
+}
+
 // ListStagedFiles 枚举运行目录下全部暂存副本（按 StagingRel 排序），
 // 供恢复探测盘点 staging 完整性与提交后清理。
 func (r *Run) ListStagedFiles() ([]StagedFile, error) {

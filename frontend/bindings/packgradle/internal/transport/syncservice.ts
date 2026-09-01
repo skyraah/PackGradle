@@ -102,6 +102,14 @@ export function GetPlan(planID: string): $CancellablePromise<$models.SyncPlanDTO
 }
 
 /**
+ * GetRestorePlan 查询回滚计划（对称 GetPlan 的读伴随，契约 06 §2；
+ * stale/expired 为读取时投影）。
+ */
+export function GetRestorePlan(planID: string): $CancellablePromise<$models.RestorePlanDTO> {
+    return $Call.ByID(2624076714, planID);
+}
+
+/**
  * GetSnapshotDiagnostics 返回快照持久化的诊断列表（diag.mapping.collision、
  * diag.scan.* 等；票 #17：mapping_collision 等诊断在快照中可查）。
  */
@@ -178,6 +186,15 @@ export function PrepareRelation(input: $models.PrepareRelationDTO): $Cancellable
 }
 
 /**
+ * PrepareRestore 准备回滚：只收 relation_id + commit_id，目标 baseline 后端推导；
+ * 四标记判定 + CF 尽力探测，draft 落 sync_plans(kind=restore)（契约 06 §3.1）。
+ * 成功 → RestorePlanDTO（status=draft）。
+ */
+export function PrepareRestore(input: $models.RestorePrepareDTO): $CancellablePromise<$models.RestorePlanDTO> {
+    return $Call.ByID(3538135376, input);
+}
+
+/**
  * PrepareSync 生成不可变 draft plan。
  */
 export function PrepareSync(input: $models.PrepareSyncDTO): $CancellablePromise<$models.SyncPlanDTO> {
@@ -189,6 +206,23 @@ export function PrepareSync(input: $models.PrepareSyncDTO): $CancellablePromise<
  */
 export function ResolvePlan(input: $models.ResolvePlanDTO): $CancellablePromise<$models.SyncPlanDTO> {
     return $Call.ByID(3652495030, input);
+}
+
+/**
+ * ResolveRestorePlan 固化回滚决议（契约 06 §3.3）：仅 partial 逐资源 skip，
+ * exact 遇就绪面不满前置拒绝（err.restore.exact_infeasible）。
+ */
+export function ResolveRestorePlan(input: $models.ResolveRestorePlanDTO): $CancellablePromise<$models.RestorePlanDTO> {
+    return $Call.ByID(3523848938, input);
+}
+
+/**
+ * StageUserObject 用户对象补全（契约 06 §3.5）：draft/resolved 均可补全；
+ * 按 expected_digest 验收不符 → err.userobject.hash_mismatch（{0}=期望摘要，
+ * 可重试）。成功返回更新后的 RestorePlanDTO（该行 staged=true）。
+ */
+export function StageUserObject(input: $models.StageUserObjectDTO): $CancellablePromise<$models.RestorePlanDTO> {
+    return $Call.ByID(3042442895, input);
 }
 
 /**

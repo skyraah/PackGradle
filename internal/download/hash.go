@@ -91,3 +91,10 @@ func VerifyDeclaredHash(format, declared string, data []byte) error {
 	}
 	return nil
 }
+
+// SupportsHashFormat 报告声明格式是否在引擎可验集内（md5/sha1/sha256/sha512；
+// murmur2/未知格式 false）。回滚四标记判定（票 #59）据此判「重取信息可验」，
+// 与引擎取数 gate 同一份清单，两处口径不漂移。
+func SupportsHashFormat(format string) bool {
+	return newHasher(format) != nil
+}

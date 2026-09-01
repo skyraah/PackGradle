@@ -11,8 +11,8 @@ import (
 	"packgradle/internal/adapters/filesystem"
 	"packgradle/internal/adapters/packwiz"
 	"packgradle/internal/adapters/prism"
-	projectapp "packgradle/internal/application/project"
 	"packgradle/internal/application/ports"
+	projectapp "packgradle/internal/application/project"
 	runtimeapp "packgradle/internal/application/runtime"
 	settingsapp "packgradle/internal/application/settings"
 	syncapp "packgradle/internal/application/sync"
@@ -79,6 +79,8 @@ func build(root string, retention ports.RetentionSettingsStore) (*Stack, error) 
 	// 下载物化引擎（ADR-0008，票 #58/#63）：并发度取全局 config [download]
 	// concurrency 的生效值缺省（默认 6；headless 工具与 GUI 共用同一装配路径，
 	// 显式配置的消费归 appconfig 加载层与 SettingsService 面）。零值即合法默认。
+	// 同一引擎实例兼作 CF 探测引擎（契约 06 §5；票 #59 ProbeHead：直链构造与
+	// HTTP 通道复用同一 Engine，探测预算为编译期常量）；构造无网络副作用。
 	dlEngine, err := download.New(download.Options{})
 	if err != nil {
 		db.Close()
@@ -101,6 +103,7 @@ func build(root string, retention ports.RetentionSettingsStore) (*Stack, error) 
 		CAS:           cas,
 		StagingRoot:   layout.StagingDir,
 		Downloads:     dlEngine,
+		Probes:        dlEngine,
 		Tx:            sqlite.NewUnitOfWork(db),
 		Publisher:     transport.NewEventBridge(),
 		ProjectScan:   packwiz.New(),

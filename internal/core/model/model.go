@@ -54,8 +54,9 @@ const (
 	MetaDisplayName       = "display_name"         // 展示名，永不进入 digest
 	MetaFilename          = "filename"             // pw.toml filename 字段（对应 runtime jar 文件名），永不进入 digest；跨侧 hint 通道使用
 	// MetaCFFileID 是 update.curseforge.file-id（CF 免钥匙直链取数的文件编号，
-	// 票 #63）。仅 sync 计划的物化模式推导消费；不进语义摘要（SemanticDigest
-	// 只读显式列出的保留键），CF 资源的身份仍由 project-id 承担。
+	// 票 #63 sync 物化模式推导与票 #59 restore 重取判定共用同一键）。仅取数
+	// 推导消费；不进语义摘要（SemanticDigest 只读显式列出的保留键），CF 资源
+	// 的身份仍由 project-id 承担。
 	MetaCFFileID = "cf_file_id"
 )
 
@@ -203,15 +204,15 @@ const (
 
 // Relation 是一条本机 Project <-> Runtime 关系（聚合根）。
 type Relation struct {
-	SchemaVersion int            `json:"schema_version"`
-	RelationID    string         `json:"relation_id"` // rel_ 前缀
-	ProjectID     string         `json:"project_id"`
-	RuntimeID     string         `json:"runtime_id"`
-	PolicySet     string         `json:"policy_set"`
-	Revision      int            `json:"revision"`
-	Health        RelationHealth `json:"health"`
-	HeadBaselineID string        `json:"head_baseline_id,omitempty"`
-	HeadCommitID   string        `json:"head_commit_id,omitempty"`
+	SchemaVersion  int            `json:"schema_version"`
+	RelationID     string         `json:"relation_id"` // rel_ 前缀
+	ProjectID      string         `json:"project_id"`
+	RuntimeID      string         `json:"runtime_id"`
+	PolicySet      string         `json:"policy_set"`
+	Revision       int            `json:"revision"`
+	Health         RelationHealth `json:"health"`
+	HeadBaselineID string         `json:"head_baseline_id,omitempty"`
+	HeadCommitID   string         `json:"head_commit_id,omitempty"`
 	// AuthorizedApply 是工作区级授权开关（schema v6 列，ADR-0005 §4；契约 06 §3.6）。
 	// 开启后非冲突操作免逐次确认；恢复期开关值保留（入口由 recovery 门禁挡）。
 	AuthorizedApply bool   `json:"authorized_apply"`
@@ -259,16 +260,16 @@ const (
 // ApplyRebind 只接受其 ID，端点行由 Apply 原位更新（NewProject/NewRuntime 携带
 // 旧端点 ID，作为将被写入的绑定草稿）。
 type RebindPreparation struct {
-	SchemaVersion int                `json:"schema_version"`
-	PreparationID string             `json:"preparation_id"` // prep_ 前缀
-	RelationID    string             `json:"relation_id"`
-	Side          Side               `json:"side"`
-	CreatedAt     string             `json:"created_at"`
-	ExpiresAt     string             `json:"expires_at"`
+	SchemaVersion int    `json:"schema_version"`
+	PreparationID string `json:"preparation_id"` // prep_ 前缀
+	RelationID    string `json:"relation_id"`
+	Side          Side   `json:"side"`
+	CreatedAt     string `json:"created_at"`
+	ExpiresAt     string `json:"expires_at"`
 	// InputRootPath 是用户输入的原始路径（project: pack.toml 所在目录；runtime: Prism 实例目录）。
-	InputRootPath string   `json:"input_root_path"`
-	NewProject    *Project `json:"new_project,omitempty"` // side=project 时的绑定草稿（含 fingerprint）
-	NewRuntime    *Runtime `json:"new_runtime,omitempty"` // side=runtime 时的绑定草稿（RootPath 为游戏目录）
+	InputRootPath string             `json:"input_root_path"`
+	NewProject    *Project           `json:"new_project,omitempty"` // side=project 时的绑定草稿（含 fingerprint）
+	NewRuntime    *Runtime           `json:"new_runtime,omitempty"` // side=runtime 时的绑定草稿（RootPath 为游戏目录）
 	Checks        []PreparationCheck `json:"checks"`
 	// FingerprintChanged 是新旧绑定指纹对比结果（重绑后旧 Plan 的 expected_bindings 失配）。
 	FingerprintChanged bool `json:"fingerprint_changed"`
@@ -440,6 +441,23 @@ type SyncPlan struct {
 	// Diagnostics 是输入快照携带的扫描/映射诊断（含 diag.mapping.collision 碰撞证据，
 	// 检视报告 P0-5）。证据性数据，不参与 PlanDigest。
 	Diagnostics []Diagnostic `json:"diagnostics"`
+	// ---- 回滚计划增量（kind=restore 专用，契约 06 §3.1/§3.2；票 #59）----
+	// 均为证据性/辅助字段，不参与 PlanDigest（既有口径沿用：写回契约由
+	// Operations 与前置条件承载，digest/expiry/stale 规则与 sync 计划同一套）。
+	// TargetCommitID 是回滚目标提交（任意历史提交，含 restore 提交=重做）。
+	TargetCommitID string `json:"target_commit_id,omitempty"`
+	// RestoreItems 是逐资源四标记判定行（prepare 时点确定函数的固化证据；
+	// Skipped/Staged 为运行时投影不入库，见 RestorePlanItem 注释）。
+	RestoreItems []RestorePlanItem `json:"restore_items,omitempty"`
+	// CreatedAt 是计划建立时间（sync 计划未填、留空；restore 投影契约 06 §3.2
+	// 要求 created_at，随 plan_json 持久化）。
+	CreatedAt string `json:"created_at,omitempty"`
+	// StagingPlanID 是用户补全暂存的锚计划（restore 专用）：计划行不可变、
+	// resolve 产生新 plan_id，补全字节落 <staging>/<锚>/ 才能跨 draft→resolved
+	// 延续就绪面（契约 06 §3.5「draft/resolved 均可补全」）。draft=自身 id；
+	// resolved 继承根 draft 的 id（同一决议链共享一个暂存目录）。证据性字段，
+	// 不参与 PlanDigest；执行票 #60 消费暂存同用此锚。
+	StagingPlanID string `json:"staging_plan_id,omitempty"`
 }
 
 // ChangeKind / Change 是资源相对 base 的状态变化（诊断与摘要用）。

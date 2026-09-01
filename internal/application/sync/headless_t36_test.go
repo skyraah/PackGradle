@@ -101,7 +101,7 @@ func TestHeadlessConfirmPlanPreparedRun(t *testing.T) {
 	rel := mustRelationWithScan(t, app, projectRoot, instanceDir)
 	plan := mustResolvePlan(t, app, rel)
 
-	// features 三值变更（契约 05 §1）且 restore 不变
+	// features 三值变更（契约 05 §1）+ P3 restore 点亮（契约 06 §1，票 #59）
 	ws, err := app.GetWorkspace(ctx, rel.RelationID)
 	if err != nil {
 		t.Fatal(err)
@@ -113,8 +113,8 @@ func TestHeadlessConfirmPlanPreparedRun(t *testing.T) {
 	if len(ws.Features.MaterializationModes) != 2 || ws.Features.MaterializationModes[0] != "copy" || ws.Features.MaterializationModes[1] != "download" {
 		t.Fatalf("materialization_modes 应为 [\"copy\",\"download\"]: %v", ws.Features.MaterializationModes)
 	}
-	if ws.Features.RestorePreview || ws.Features.RestoreApply {
-		t.Fatalf("restore 全家应维持 false: %+v", ws.Features)
+	if !ws.Features.RestorePreview || !ws.Features.RestoreApply {
+		t.Fatalf("P3 应点亮 restore_preview/restore_apply: %+v", ws.Features)
 	}
 	// availability：resolved 可应用计划在位 → apply_sync 可用
 	var applySync *view.ActionAvailabilityView

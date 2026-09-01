@@ -158,12 +158,12 @@ type ScanTimingView struct {
 // 供数口；T09 pgheadless -metrics 消费。只在具体 *syncapp.App 上暴露，
 // 不入 transport 契约）。未走到的相为 0；失败路径记录已完成的相。
 type ApplyTimingView struct {
-	RelationID    string `json:"relation_id"`
-	OperationCount int   `json:"operation_count"`
-	StagingMs     int64  `json:"staging_ms"`
-	ApplyingMs    int64  `json:"applying_ms"`
-	VerifyingMs   int64  `json:"verifying_ms"`
-	TotalMs       int64  `json:"total_ms"`
+	RelationID     string `json:"relation_id"`
+	OperationCount int    `json:"operation_count"`
+	StagingMs      int64  `json:"staging_ms"`
+	ApplyingMs     int64  `json:"applying_ms"`
+	VerifyingMs    int64  `json:"verifying_ms"`
+	TotalMs        int64  `json:"total_ms"`
 }
 
 // WorkspacePage 是工作区分页。
@@ -472,4 +472,62 @@ type UpdateRetentionSettingsInput struct {
 	RelationCapacityBytes int64 `json:"relation_capacity_bytes"`
 	PreserveMaxBytes      int64 `json:"preserve_max_bytes"`
 	TrashDays             int   `json:"trash_days"`
+}
+
+// ---- 回滚计划面投影（契约 06 §3.1/§3.2/§3.3/§3.5；票 #59）----
+
+// PrepareRestoreInput 是准备回滚输入（Q4：目标 baseline 后端由 commit 推导，
+// 不收 baseline id）。
+type PrepareRestoreInput struct {
+	RelationID string `json:"relation_id"`
+	CommitID   string `json:"commit_id"` // 任意历史提交（含 restore 提交=重做）；head 合法（空差异计划）
+}
+
+// ResolveRestorePlanInput 是回滚决议输入（ADR-0006 §3：无冲突决议面）。
+type ResolveRestorePlanInput struct {
+	PlanID             string   `json:"plan_id"`
+	RequestedExactness string   `json:"requested_exactness"` // exact|allow_partial（沿 P2 枚举；空值缺省 allow_partial）
+	SkipResourceIDs    []string `json:"skip_resource_ids"`   // 逐资源 skip 决议，固化于 resolved plan
+}
+
+// StageUserObjectInput 是用户对象补全输入：读字节→按 expected_digest 校验→
+// 暂存（暂存路径不透出）。
+type StageUserObjectInput struct {
+	PlanID     string `json:"plan_id"`
+	ResourceID string `json:"resource_id"`
+	SourcePath string `json:"source_path"` // 本地绝对路径
+}
+
+// RestoreBlockedItemView 是 exact 阻塞清单行（draft 时点 exact_infeasible 证据，
+// ADR-0006 §4）。
+type RestoreBlockedItemView struct {
+	ResourceID   string `json:"resource_id"`
+	RelativePath string `json:"relative_path"`
+	Marker       string `json:"marker"`
+}
+
+// RestorePlanItemView 是回滚计划单资源行：判定字段为 prepare 时点固化事实，
+// Skipped/Staged 为读取时实时投影（skip 固化于 Resolutions，staged 由计划暂存
+// 目录 digest 复核推导）。
+type RestorePlanItemView struct {
+	model.RestorePlanItem
+	Skipped bool `json:"skipped"` // resolved 后 skip 决议投影（Q5）
+	Staged  bool `json:"staged"`  // user_object_required 行补全就绪（§3.5）
+}
+
+// RestorePlanView 是回滚计划投影（Status 反映读取时计算的 stale/expired/applied；
+// ExactFeasible 为实时就绪面，非 draft 静态标记）。
+type RestorePlanView struct {
+	SchemaVersion            int                             `json:"schema_version"`
+	PlanID                   string                          `json:"plan_id"`
+	RelationID               string                          `json:"relation_id"`
+	TargetCommitID           string                          `json:"target_commit_id"`
+	Status                   string                          `json:"status"` // draft|resolved|confirmed|applied|expired|stale（沿 sync_plans CHECK）
+	ExactFeasible            bool                            `json:"exact_feasible"`
+	BlockedBy                []RestoreBlockedItemView        `json:"blocked_by"`
+	Items                    []RestorePlanItemView           `json:"items"`
+	RequestedExactness       string                          `json:"requested_exactness,omitempty"` // resolved 后回填 exact|allow_partial
+	ConfirmationRequirements []model.ConfirmationRequirement `json:"confirmation_requirements"`     // 恒非空（restore_acknowledge）
+	ExpiresAt                string                          `json:"expires_at"`
+	CreatedAt                string                          `json:"created_at"`
 }

@@ -54,6 +54,10 @@ type FakeStep struct {
 	TruncateAt int
 	// Hang > 0 时发完响应头即挂住至客户端断开（读停顿场景：客户端看门狗先超时）。
 	Hang time.Duration
+	// Delay > 0 时在写出响应头之前延迟（慢响应场景，票 #59 CF 探测接入：
+	// HEAD 不消费响应体，Hang 对 HEAD 无效；Delay 在头之前挂住使 HEAD 同样
+	// 被阻塞至客户端超时/取消）。感知请求取消：客户端断开即返回。
+	Delay time.Duration
 }
 
 // FakeRequest 是一次被假 CDN 记录的请求（Range 头记录即续传证据）。
@@ -143,6 +147,16 @@ func (c *FakeCDN) serveHTTP(w http.ResponseWriter, r *http.Request) {
 	c.enter()
 	defer c.leave()
 	step := c.stepFor(r.URL.Path)
+
+	// 响应前延迟（慢响应）：在写出任何字节/头之前挂住，HEAD 与 GET 同样被
+	// 阻塞；客户端取消（超时/预算耗尽）即返回。
+	if step.Delay > 0 {
+		select {
+		case <-time.After(step.Delay):
+		case <-r.Context().Done():
+			return
+		}
+	}
 
 	// 头统一在 WriteHeader 前设置
 	if step.RetryAfterSeconds > 0 {

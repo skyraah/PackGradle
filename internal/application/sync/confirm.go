@@ -60,6 +60,13 @@ func (a *App) ConfirmPlan(ctx context.Context, input view.ConfirmPlanInput) (vie
 		if err != nil {
 			return errs.New(CodePlanNotFound, input.PlanID)
 		}
+		// 计划类别门禁（票 #59）：ConfirmPlan 是 apply 计划的确认入口；restore
+		// 计划的确认归 ConfirmRestorePlan（票 #60），不得经本方法建 apply 运行
+		//（否则 restore 写回操作在本票就获得第二条执行通道）。跨类计划按
+		// not_found 同一口径，不泄露其他类计划的形状（GetRestorePlan 同判）。
+		if p.Kind != model.PlanSync && p.Kind != model.PlanInitialize {
+			return errs.New(CodePlanNotFound, input.PlanID)
+		}
 		if p.Status != model.PlanResolved {
 			return errs.New(CodePlanStale, input.PlanID)
 		}

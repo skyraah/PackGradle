@@ -30,15 +30,24 @@ func assertAvailability(t *testing.T, avail []view.ActionAvailabilityView, actio
 	t.Fatalf("availability 缺少动作 %s: %+v", action, avail)
 }
 
-// assertNoRestoreActions 未实现能力不注册（契约 05 §1：apply_sync 已随 P2 点亮；
-// prepare_restore/apply_restore 维持 Phase 3，不出现在 availability）。
-func assertNoRestoreActions(t *testing.T, avail []view.ActionAvailabilityView) {
+// assertRestoreActionRegistration 校验 restore 动作注册面（契约 06 §1；票 #59）：
+// prepare_restore 随 P3 点亮注册；apply_restore 归票 #60，不出现在 availability。
+func assertRestoreActionRegistration(t *testing.T, avail []view.ActionAvailabilityView) {
 	t.Helper()
+	var hasPrepare, hasApply bool
 	for _, a := range avail {
 		switch a.Action {
-		case "prepare_restore", "apply_restore":
-			t.Fatalf("未实现能力不应出现在 availability: %s", a.Action)
+		case "prepare_restore":
+			hasPrepare = true
+		case "apply_restore":
+			hasApply = true
 		}
+	}
+	if !hasPrepare {
+		t.Fatalf("P3 应注册 prepare_restore: %+v", avail)
+	}
+	if hasApply {
+		t.Fatal("apply_restore 归票 #60，不应出现在 availability")
 	}
 }
 
@@ -52,7 +61,7 @@ func TestHeadlessWorkspaceFeaturesAndAvailability(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// features 固定值（P2：契约 05 §1 三值变更生效，restore 全家维持 false）
+	// features 固定值（P3：契约 06 §1——restore 点亮，modes 增 download；票 #59）
 	f := w.Features
 	if !f.Scan || !f.SyncPreview || !f.ConflictInspection || f.ConflictResolution != "choose_side" {
 		t.Fatalf("features 固定值不符: %+v", f)
@@ -60,8 +69,8 @@ func TestHeadlessWorkspaceFeaturesAndAvailability(t *testing.T) {
 	if !f.SyncApply || !f.HistoryView {
 		t.Fatalf("P2 应点亮 sync_apply/history_view: %+v", f)
 	}
-	if f.RestorePreview || f.RestoreApply {
-		t.Fatalf("restore 全家应维持 false: %+v", f)
+	if !f.RestorePreview || !f.RestoreApply {
+		t.Fatalf("P3 应点亮 restore_preview/restore_apply: %+v", f)
 	}
 	// P3（票 #63）：download 物化点亮（CF 免钥匙直链，ADR-0008 §6）
 	if len(f.MaterializationModes) != 2 || f.MaterializationModes[0] != "copy" || f.MaterializationModes[1] != "download" {
@@ -70,7 +79,7 @@ func TestHeadlessWorkspaceFeaturesAndAvailability(t *testing.T) {
 	// availability：未扫描 → scan/rebind 可用；prepare_sync/apply_sync 因
 	// scan_state 非 ready 不可用（apply_sync 计划面在 ready 之后才判定）；
 	// quick_update 已注册（契约 06 §1，票 #62）但开关默认关 → auth_mode.disabled
-	assertNoRestoreActions(t, w.Availability)
+	assertRestoreActionRegistration(t, w.Availability)
 	assertAvailability(t, w.Availability, "scan", true, "")
 	assertAvailability(t, w.Availability, "prepare_sync", false, "err.scan.incomplete")
 	assertAvailability(t, w.Availability, "apply_sync", false, "err.scan.incomplete")
@@ -117,7 +126,9 @@ func TestHeadlessWorkspaceFeaturesAndAvailability(t *testing.T) {
 	if len(page.Items) != 1 {
 		t.Fatalf("工作区列表应 1 项，得到 %d", len(page.Items))
 	}
-	if page.Items[0].Features.Scan != true || len(page.Items[0].Availability) != 5 {
+	// P3：availability 六动作 = scan/prepare_sync/rebind/apply_sync/quick_update/
+	// prepare_restore（quick_update 票 #62、prepare_restore 票 #59 随点亮注册）
+	if page.Items[0].Features.Scan != true || len(page.Items[0].Availability) != 6 {
 		t.Fatalf("列表项未内嵌 features/availability: %+v", page.Items[0])
 	}
 
