@@ -14,6 +14,7 @@ import (
 	"packgradle/internal/application/task"
 	"packgradle/internal/application/view"
 	"packgradle/internal/core/model"
+	"packgradle/internal/download"
 	"packgradle/internal/syncstage"
 )
 
@@ -82,6 +83,10 @@ type AppDeps struct {
 	// 满足 syncstage.ContentStore），StagingRoot 是按运行隔离的暂存根目录。
 	CAS         syncstage.ContentStore
 	StagingRoot string
+	// Downloads 是下载物化引擎（ADR-0008，票 #58/#63）：download 行经其产
+	// 「已过声明 hash 校验的字节」喂既有 StageContent。生产装配恒提供；
+	// nil 时 download 行按取数失败剔除（不进恢复面），供未接下载面的夹具。
+	Downloads *download.Engine
 	// Tx 是多步元数据写入的单事务边界（ADR-0003）；CreateRelation 走 RunInTx。
 	Tx            ports.UnitOfWork
 	Publisher     ports.EventPublisher // 事件出口（transport 桥），可为 nil

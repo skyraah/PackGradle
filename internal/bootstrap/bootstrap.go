@@ -17,6 +17,7 @@ import (
 	settingsapp "packgradle/internal/application/settings"
 	syncapp "packgradle/internal/application/sync"
 	"packgradle/internal/core/ids"
+	"packgradle/internal/download"
 	"packgradle/internal/store"
 	"packgradle/internal/store/objectstore"
 	"packgradle/internal/store/sqlite"
@@ -75,6 +76,14 @@ func build(root string, retention ports.RetentionSettingsStore) (*Stack, error) 
 	hasher := filesystem.NewHasher()
 	fingerprinter := filesystem.NewFingerprinter()
 	endpoints := sqlite.NewEndpointRepository(db)
+	// 下载物化引擎（ADR-0008，票 #58/#63）：并发度取全局 config [download]
+	// concurrency 的生效值缺省（默认 6；headless 工具与 GUI 共用同一装配路径，
+	// 显式配置的消费归 appconfig 加载层与 SettingsService 面）。零值即合法默认。
+	dlEngine, err := download.New(download.Options{})
+	if err != nil {
+		db.Close()
+		return nil, fmt.Errorf("bootstrap: 构造下载引擎: %w", err)
+	}
 	app, err := syncapp.New(syncapp.AppDeps{
 		Endpoints:     endpoints,
 		Relations:     sqlite.NewRelationRepository(db),
@@ -91,6 +100,7 @@ func build(root string, retention ports.RetentionSettingsStore) (*Stack, error) 
 		Commits:       sqlite.NewCommitRepository(db),
 		CAS:           cas,
 		StagingRoot:   layout.StagingDir,
+		Downloads:     dlEngine,
 		Tx:            sqlite.NewUnitOfWork(db),
 		Publisher:     transport.NewEventBridge(),
 		ProjectScan:   packwiz.New(),

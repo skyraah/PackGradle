@@ -7,21 +7,23 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"packgradle/internal/application/ports"
 	"packgradle/internal/core/diff"
 	"packgradle/internal/core/model"
 	"packgradle/internal/core/normalize"
+	"packgradle/internal/download"
 	"packgradle/internal/syncstage"
 )
 
-// Apply 引擎的文件层推导与执行原语封装（票 #37）：
+// Apply 引擎的文件层推导与执行原语封装（票 #37；P3 下载接线票 #63）：
 // 从计划操作 + 输入快照推导逐操作文件执行计划（目标侧/路径/前后 digest/内容来源），
 // staging 期做前置条件复核、before-content CAS 保全与 after 内容暂存，applying 期
-// 经 syncstage 动作原语落地。mod 资源的 jar 内容 P2 无下载器（materialization
-// modes=["copy"]，可再获取内容不入 CAS，架构 §8.2）：仅当目标已达成声明 digest
-// （幂等已应用）或 CAS 恰有该内容时可执行，否则操作失败进恢复路径。
+// 经 syncstage 动作原语落地。物化数据源两路（ADR-0008 §6）：copy=本地源文件/CAS
+// （P2 既有），download=CF 免钥匙直链（票 #58 引擎产出已过声明 hash 校验的字节，
+// 下载相位喂既有 StageContent，不另起写路径）。
 
 // 文件动作类别（与 syncstage.OwnershipProof.Kind 同一三分法）。
 const (
@@ -77,12 +79,30 @@ type applyFilePlan struct {
 	sourceRoot     string               // after 内容源侧端点 root（写操作非空）
 	sourceRel      string               // after 内容源文件 root-relative（相对 sourceRoot）
 	beforeDigest   string               // 覆盖/删除前的期望内容 sha256（create 为空）
-	afterDigest    string               // write 的目标内容 sha256（delete 为空）
+	afterDigest    string               // write 的目标内容 sha256（delete 为空；download 行在下载相位回填实测值）
 	afterFromCAS   string               // after 内容取自 CAS 对象的 digest
 	targetReady    bool                 // 目标已达成 after（幂等重放，动作无需内容）
 	recoverability model.Recoverability // before 保全策略（旧基线值或按类别缺省）
 	blockedCode    string               // 非空 = staging 期直接失败的结果码
+	// 物化模式（契约 06 §3.7，票 #63）：计划行推导，空串（旧行）按 copy。
+	materialization string
+	// dlReq/dlPath/dlDone 是 download 行的取数状态（下载相位填）：dlReq 由
+	// 源侧 metafile 元数据构造；成功后 dlPath 指运行暂存 downloads/ 下的成品
+	//（已过声明 hash 校验），afterDigest 回填成品实测 sha256（两层校验第二层
+	// 的复核基准，journal after_digest 同源）。
+	dlReq  *download.Request
+	dlPath string
+	dlDone bool
+	// dlFail* 是下载相位的取数失败事实（剔出本场，票 #63）：dlFailCode 为
+	// 跳过原因码（err.download.* / hash_format_unsupported）。
+	dlFailCode  string
+	dlFailArgs  []string
+	dlFailCause string
 }
+
+// skipReasonContentUnavailable 是 copy 取数失败的跳过原因码（与既有操作终局
+// 结果码同字面：本地数据源无目标字节）。
+const skipReasonContentUnavailable = resultContentUnavailable
 
 // applySideForOp 返回操作的源侧与目标侧（写操作源侧=内容来源，删除只有目标侧）。
 func applySideForOp(kind model.OperationKind) (src, tgt model.Side, ok bool) {
@@ -148,6 +168,12 @@ func deriveApplyFilePlans(plan model.SyncPlan, snapP, snapR model.ObservedSnapsh
 	out := make([]applyFilePlan, 0, len(plan.Operations))
 	for _, op := range plan.Operations {
 		fp := applyFilePlan{op: op, recoverability: defaultRecoverability(op.ResourceID)}
+		// 物化模式（票 #63）：计划行推导值直传；空串（P2 旧行）按 copy 兼容。
+		if op.Materialization == model.MaterializationDownload {
+			fp.materialization = model.MaterializationDownload
+		} else {
+			fp.materialization = model.MaterializationCopy
+		}
 		if rec, ok := baseRec[op.ResourceID]; ok {
 			fp.recoverability = rec
 		}
@@ -229,13 +255,23 @@ func deriveApplyFilePlans(plan model.SyncPlan, snapP, snapR model.ObservedSnapsh
 			fp.targetRel = srcObs.Representation.RelativePath
 		}
 
-		// after 内容来源优先级：源侧文件（文件资源恒命中）→ 目标已达成（幂等）
-		// → CAS 对象。全不命中 = P2 copy 物化无法离线取得内容（如需下载的 jar）。
+		// after 内容来源优先级（ADR-0008 §6）：源侧文件（文件资源恒命中）→ 目标
+		// 已达成（幂等）→ download 行经引擎直链取数 → CAS 对象。全不命中 = copy
+		// 物化无法离线取得内容（操作按取数失败剔出本场，票 #63）。
 		switch {
 		case srcObs.Representation.Content != nil && srcObs.Representation.Content.Digest == fp.afterDigest:
 			fp.sourceRel = srcObs.Representation.RelativePath
 		case tgtObs != nil && tgtObs.Representation.Content != nil && tgtObs.Representation.Content.Digest == fp.afterDigest:
 			fp.targetReady = true
+		case fp.materialization == model.MaterializationDownload:
+			// download 行：数据源无本地字节 → 下载相位经票 #58 引擎取数。取数
+			// 请求从源侧 metafile 元数据构造（计划推导保证三要素齐备；缺失为
+			// 防御分支，按 copy 不可得处理走剔除）。afterDigest 可能为空（声明
+			// 非 sha256），下载成功后回填成品实测 sha256。
+			fp.dlReq = downloadRequestFor(srcObs)
+			if fp.dlReq == nil {
+				fp.blockedCode = resultContentUnavailable
+			}
 		case fp.afterDigest != "":
 			fp.afterFromCAS = fp.afterDigest
 		default:
@@ -246,25 +282,56 @@ func deriveApplyFilePlans(plan model.SyncPlan, snapP, snapR model.ObservedSnapsh
 	return out
 }
 
+// downloadRequestFor 从源侧 mod 表示元数据构造 CF 直链取数请求（file-id +
+// filename + 声明 hash；票 #58 引擎输入契约）。要素缺失或 file-id 非法返回 nil
+//（调用方按取数失败处理）。
+func downloadRequestFor(src *model.ResourceObservation) *download.Request {
+	m := src.Representation.Metadata
+	fid, err := strconv.ParseInt(strings.TrimSpace(m[model.MetaCFFileID]), 10, 64)
+	if err != nil || fid <= 0 || m[model.MetaFilename] == "" {
+		return nil
+	}
+	return &download.Request{
+		FileID:     fid,
+		Filename:   m[model.MetaFilename],
+		HashFormat: m[model.MetaDeclaredHashAlgo],
+		Hash:       m[model.MetaDeclaredHashValue],
+	}
+}
+
 // verifyApplyPreconditions 复核单操作的全部前置条件在磁盘上仍成立（ADR-0004 §1：
 // prepared 落列的前置条件由引擎在 staged 前复核）。快照观察提供 root-relative
-// 路径；Expected 指纹逐一重算比对。返回空串 = 通过，否则为失败结果码。
+// 路径；Expected 指纹逐一重算比对。返回 code 非空 = 不成立；srcFailed 归因失败
+// 断言在源侧（取数面不可得，票 #63 剔除语义的分流依据：源侧失效无写坏风险，
+// copy/download 一条规矩剔出本场；目标侧失效=文件一致性风险，保持恢复面）。
 func verifyApplyPreconditions(op model.PlannedOperation, snaps map[model.Side]model.ObservedSnapshot,
-	rootBySide map[model.Side]string) string {
+	rootBySide map[model.Side]string) (code string, srcFailed bool) {
 
+	srcSide, _, known := applySideForOp(op.Kind)
 	for _, pre := range op.Preconditions {
 		obs := snapshotObs(snaps[model.Side(pre.Side)], pre.ResourceID)
-		abs := filepath.Join(rootBySide[model.Side(pre.Side)], filepath.FromSlash(prePathOf(obs, pre)))
+		rel := prePathOf(pre, obs, snaps)
+		if rel == "" {
+			// 断言路径不可定位（观察缺失且无法按资源类别回退）：计划时点 diff
+			// 已证明该侧缺席（present 断言必有观察路径，不会走到这里），无文件
+			// 系统证据不误判——absent 断言直接放行（票 #63 下载接线修：mod 的
+			// absent 断言此前落到空路径=端点根目录，Lstat 命中目录恒 violated）。
+			if pre.Existence == "absent" {
+				continue
+			}
+			return resultPreconditionViolated, known && pre.Side == string(srcSide)
+		}
+		abs := filepath.Join(rootBySide[model.Side(pre.Side)], filepath.FromSlash(rel))
 		_, statErr := os.Lstat(abs)
 		switch pre.Existence {
 		case "absent":
 			if statErr == nil {
-				return resultPreconditionViolated
+				return resultPreconditionViolated, known && pre.Side == string(srcSide)
 			}
 			continue
 		default: // present
 			if statErr != nil {
-				return resultPreconditionViolated
+				return resultPreconditionViolated, known && pre.Side == string(srcSide)
 			}
 		}
 		if pre.Expected == nil {
@@ -272,21 +339,35 @@ func verifyApplyPreconditions(op model.PlannedOperation, snaps map[model.Side]mo
 		}
 		ref, err := syncstage.HashFile(abs)
 		if err != nil || ref.Digest != pre.Expected.Digest {
-			return resultPreconditionViolated
+			return resultPreconditionViolated, known && pre.Side == string(srcSide)
 		}
 	}
-	return ""
+	return "", false
 }
 
-// prePathOf 返回前置条件对应资源的 root-relative 路径（观察缺失时按资源 ID 的
-// file: 前缀回退——absent 断言无需真实路径，存在性检查以空路径失败兜底）。
-func prePathOf(obs *model.ResourceObservation, pre model.Precondition) string {
+// prePathOf 返回前置条件对应资源的 root-relative 路径：观察存在取观察路径；
+// 缺失时 file: 资源按 ID 内嵌路径回退（两侧同路径），mod 资源按任一侧观察的
+// filename 元数据推 mods/<filename>（与写动作落盘路径同源——缺观察的 mod
+// absent 断言以真实 jar 路径裁决，票 #63）；仍不可得返回空串（调用方对 absent
+// 放行、present 判 violated）。
+func prePathOf(pre model.Precondition, obs *model.ResourceObservation,
+	snaps map[model.Side]model.ObservedSnapshot) string {
+
 	if obs != nil {
 		return obs.Representation.RelativePath
 	}
 	s := string(pre.ResourceID)
 	if strings.HasPrefix(s, "file:") {
 		return strings.TrimPrefix(s, "file:")
+	}
+	if normalize.KindOfResourceID(pre.ResourceID) == model.ResourceMod {
+		for _, side := range []model.Side{model.SideProject, model.SideRuntime} {
+			if src := snapshotObs(snaps[side], pre.ResourceID); src != nil {
+				if name := src.Representation.Metadata[model.MetaFilename]; name != "" {
+					return "mods/" + name
+				}
+			}
+		}
 	}
 	return ""
 }
@@ -318,11 +399,19 @@ func applyResultCode(err error) string {
 // afterContentReader 打开 after 内容流：目标已达成（幂等重放）返回空读器
 // （syncstage 动作先查目标 digest，already_applied 路径不会消费内容；若目标
 // 在 staging 与 applying 之间被外部改动，StageContent 的 hash 复核令空内容
-// 落地前即失败，目标不受影响）；源侧文件/CAS 对象按需重开（动作可能重放）。
+// 落地前即失败，目标不受影响）；download 行读下载相位的引擎成品（运行暂存
+// downloads/ 下已过声明 hash 校验的字节）；源侧文件/CAS 对象按需重开（动作
+// 可能重放）。
 func (a *App) afterContentReader(ctx context.Context, fp applyFilePlan) (io.Reader, func(), error) {
 	switch {
 	case fp.targetReady:
 		return strings.NewReader(""), func() {}, nil
+	case fp.dlDone && fp.dlPath != "":
+		f, err := os.Open(fp.dlPath)
+		if err != nil {
+			return nil, nil, err
+		}
+		return f, func() { f.Close() }, nil
 	case fp.sourceRel != "":
 		f, err := os.Open(filepath.Join(fp.sourceRoot, filepath.FromSlash(fp.sourceRel)))
 		if err != nil {
@@ -431,18 +520,32 @@ func sideSemantic(id model.ResourceID, rep *model.Representation) (string, error
 
 // verifyRescan 验证复扫快照与计划目标一致（ADR-0004 §5：完整复扫 + 快照与计划
 // 目标一致才可 committed）：
-//  1. 逐操作目标达成——write 双侧语义一致、remove 目标侧缺席；
-//  2. 未选资源相对既有基线未漂移（跳过/手动裁决资源豁免——用户显式保留差异）。
+//  1. 逐操作目标达成——write 双侧语义一致、remove 目标侧缺席；download 行
+//     （票 #63）目标达成判定=复扫目标侧实测 sha256 与下载成品一致（声明面可
+//     为 sha1/murmur2 等非可比格式，双侧语义比对对其豁免——两层校验的第一层
+//     已证明来源正确性）；
+//  2. 未选资源相对既有基线未漂移（跳过/手动裁决资源与本场剔出的取数失败资源
+//     豁免 violation，但计入剩余差异——partial 语义）。
 //
-// 返回违规清单与剩余差异数（提交 completeness 的数据源）。
+// skipped 是本场剔出的取数失败清单（可空）。返回违规清单与剩余差异数。
 func verifyRescan(plan model.SyncPlan, plans []applyFilePlan, rescanP, rescanR model.ObservedSnapshot,
-	base *model.SyncBaseline) (violations []string, remaining int, err error) {
+	base *model.SyncBaseline, skips []stagedOp) (violations []string, remaining int, err error) {
 
 	snaps := map[model.Side]model.ObservedSnapshot{model.SideProject: rescanP, model.SideRuntime: rescanR}
 
 	for _, fp := range plans {
 		switch actionChangeKind(fp.action) {
 		case model.ChangeCreate, model.ChangeModify:
+			if fp.materialization == model.MaterializationDownload && fp.dlDone {
+				// download 行专用判定：目标侧字节=引擎验过的字节（实测 sha256）。
+				obs := snapshotObs(snaps[fp.targetSide], fp.op.ResourceID)
+				if obs == nil || obs.Representation.Content == nil ||
+					obs.Representation.Content.Digest != fp.afterDigest {
+					violations = append(violations,
+						fmt.Sprintf("download %s: 复扫目标侧 digest 与下载成品不一致", fp.op.ResourceID))
+				}
+				continue
+			}
 			pSem, err := sideSemantic(fp.op.ResourceID, repOf(rescanP, fp.op.ResourceID))
 			if err != nil {
 				return nil, 0, err
@@ -477,17 +580,38 @@ func verifyRescan(plan model.SyncPlan, plans []applyFilePlan, rescanP, rescanR m
 			exempt[r.ResourceID] = true
 		}
 	}
+	for _, s := range skips {
+		exempt[s.fp.op.ResourceID] = true // 剔出本场的取数失败资源：不 violation，计入剩余
+	}
+	// download 行目标已由专用判定证明：其资源在本场已达成，剩余差异不再累计
+	//（声明面与实测面的格式差异会让 diff 给出非 clean 分类，属预期形态）。
+	dlDone := map[model.ResourceID]bool{}
+	for _, fp := range plans {
+		if fp.materialization == model.MaterializationDownload && fp.dlDone {
+			dlDone[fp.op.ResourceID] = true
+		}
+	}
 	clean := map[diff.Classification]bool{
 		diff.ClassNoop: true, diff.ClassConverged: true, diff.ClassAdoptEqual: true,
 	}
+	counted := map[model.ResourceID]bool{}
 	for _, d := range res.Diffs {
-		if clean[d.Classification] {
+		if clean[d.Classification] || dlDone[d.ResourceID] {
 			continue
 		}
+		counted[d.ResourceID] = true
 		remaining++
 		if !opRes[d.ResourceID] && !exempt[d.ResourceID] {
 			violations = append(violations,
 				fmt.Sprintf("unselected %s: 复扫分类 %s（基线%v）", d.ResourceID, d.Classification, base != nil))
+		}
+	}
+	// 剔出本场的取数失败资源恒计入剩余差异（ADR-0008 §7「成功 N + 跳过 M」，
+	// 票 #63：partial 不谎报 exact）——源侧失效场景复扫 diff 可能已无该资源条目
+	//（双侧缺席 = 分类消失），逐项补计防漏。
+	for _, s := range skips {
+		if !counted[s.fp.op.ResourceID] && !dlDone[s.fp.op.ResourceID] {
+			remaining++
 		}
 	}
 	return violations, remaining, nil

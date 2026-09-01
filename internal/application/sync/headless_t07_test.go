@@ -63,8 +63,9 @@ func TestHeadlessWorkspaceFeaturesAndAvailability(t *testing.T) {
 	if f.RestorePreview || f.RestoreApply {
 		t.Fatalf("restore 全家应维持 false: %+v", f)
 	}
-	if len(f.MaterializationModes) != 1 || f.MaterializationModes[0] != "copy" {
-		t.Fatalf(`materialization_modes 应为 ["copy"]: %v`, f.MaterializationModes)
+	// P3（票 #63）：download 物化点亮（CF 免钥匙直链，ADR-0008 §6）
+	if len(f.MaterializationModes) != 2 || f.MaterializationModes[0] != "copy" || f.MaterializationModes[1] != "download" {
+		t.Fatalf(`materialization_modes 应为 ["copy","download"]: %v`, f.MaterializationModes)
 	}
 	// availability：未扫描 → scan/rebind 可用；prepare_sync/apply_sync 因
 	// scan_state 非 ready 不可用（apply_sync 计划面在 ready 之后才判定）

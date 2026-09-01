@@ -164,7 +164,38 @@ func (a *App) GetCommit(ctx context.Context, relationID, commitID string) (view.
 		Summary:       commitSummaryView(c),
 		PlanID:        c.PlanID,
 		Changes:       changes,
+		Skipped:       commitSkippedView(c.Summary),
 	}, nil
+}
+
+// commitSkippedView 从提交头 summary JSON 解析跳过清单（票 #63：sync 剔除语义
+// 的透出面；引擎定义形状原样保存，解析失败/旧行无该记录返回空切片——摘要
+// 是诊断性数据，解析缺陷不阻断提交详情读取）。
+func commitSkippedView(summary json.RawMessage) []view.CommitSkippedView {
+	if len(summary) == 0 {
+		return []view.CommitSkippedView{}
+	}
+	var parsed struct {
+		Skipped []struct {
+			ResourceID string   `json:"resource_id"`
+			ReasonCode string   `json:"reason_code"`
+			ReasonArgs []string `json:"reason_args"`
+		} `json:"skipped"`
+	}
+	if err := json.Unmarshal(summary, &parsed); err != nil {
+		return []view.CommitSkippedView{}
+	}
+	out := make([]view.CommitSkippedView, 0, len(parsed.Skipped))
+	for _, s := range parsed.Skipped {
+		args := s.ReasonArgs
+		if args == nil {
+			args = []string{}
+		}
+		out = append(out, view.CommitSkippedView{
+			ResourceID: s.ResourceID, ReasonCode: s.ReasonCode, ReasonArgs: args,
+		})
+	}
+	return out
 }
 
 // applyRunView 把运行头投影为视图（字段直映，无临时路径/proof 通道）。

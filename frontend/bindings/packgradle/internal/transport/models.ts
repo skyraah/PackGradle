@@ -151,6 +151,12 @@ export interface CommitDTO {
     "summary": CommitSummaryDTO;
     "plan_id": string;
     "changes": CommitChangeDTO[] | null;
+
+    /**
+     * Skipped 是本场剔出的取数失败清单（契约 06 §3.7/ADR-0008 §7，票 #63）：
+     * 成功 N + 跳过 M（带 err.download.* 原因码）；旧行无该记录为空数组。
+     */
+    "skipped": CommitSkippedDTO[] | null;
 }
 
 /**
@@ -160,6 +166,15 @@ export interface CommitPageDTO {
     "schema_version": number;
     "items": CommitSummaryDTO[] | null;
     "next_cursor"?: string;
+}
+
+/**
+ * CommitSkippedDTO 是跳过清单单行：资源 ID + 原因码（文案由前端 locale 提供）。
+ */
+export interface CommitSkippedDTO {
+    "resource_id": string;
+    "reason_code": string;
+    "reason_args"?: string[] | null;
 }
 
 /**
@@ -309,6 +324,19 @@ export interface OperationDTO {
     "resource_id": string;
     "preconditions": PreconditionDTO[] | null;
     "reversible": boolean;
+
+    /**
+     * Materialization 是物化模式（契约 06 §3.7，票 #63）：copy|download，由
+     * 后端推导（有重取信息的 mod 写操作 → download，其余 → copy）；旧行空值
+     * ＝copy 兼容。
+     */
+    "materialization"?: string;
+
+    /**
+     * PreserveSkip 是「旧版本不留存」警示行标记（ADR-0007 §7）：仅字段位，
+     * 判定归保留阈值改造（票 #64）。
+     */
+    "preserve_skip"?: boolean;
 }
 
 export interface PlanSummaryDTO {
