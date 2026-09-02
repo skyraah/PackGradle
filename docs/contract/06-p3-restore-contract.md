@@ -97,7 +97,7 @@ type RestorePlanItemDTO struct {
     RelativePath   string `json:"relative_path"`
     ChangeKind     string `json:"change_kind"`  // create|modify|delete（delete 行不占四标记，ADR-0006 §2/§5）
     Marker         string `json:"marker"`       // restorable_from_cas|redownload_required|user_object_required|unrecoverable
-    MarkerReason   string `json:"marker_reason,omitempty"` // user_object_required 行：no_redownload_info|cf_unavailable（§5 降标）
+    MarkerReason   string `json:"marker_reason,omitempty"` // user_object_required 行：no_redownload_info|cf_unavailable（§5 降标）|no_project_content（ADR-0012 §4 存量降级：目标基线无项目侧内容，补全通道关闭、skip 或手工）
     Skipped        bool   `json:"skipped"`      // resolved 后 skip 决议投影（Q5）
     Staged         bool   `json:"staged"`       // user_object_required 行补全就绪（§3.5）
     DeletionWarn   bool   `json:"deletion_warn,omitempty"` // 手放 mod 删除＝「不可重取」警示（ADR-0006 §5）
