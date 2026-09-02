@@ -11,7 +11,9 @@ import type { TaskDTO, WorkspaceDTO } from '../api'
 import { bootstrapped, bootstrapError, retryBootstrap, tasks, triggerRequery, workspaces } from '../stores/syncCache'
 import { showSnackbar } from '../stores/ui'
 import { errText } from '../utils/errors'
-import { availabilityReasonText, canPrepareSync, canRebind, prepareSync } from '../utils/plans'
+import { availabilityReasonText, canPrepareSync, canQuickUpdate, canRebind, prepareSync } from '../utils/plans'
+import { runQuickUpdate } from '../utils/quickUpdate'
+import type { QuickUpdatePhase } from '../utils/quickUpdate'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
@@ -68,6 +70,8 @@ interface WorkspaceRow {
     rebindReason: string
     recoveryRequired: boolean
     canHistory: boolean
+    canQuickUpdate: boolean
+    quickUpdateReason: string
     scanLabel: string
     healthTone: BadgeTone
     scanTone: BadgeTone
@@ -91,6 +95,11 @@ const rows = computed<WorkspaceRow[]>(() =>
             // 已注册但不可用（如恢复门期间的 rebind）→ 保留稳定位置并显后端原因码
             // （UX 原型 §4.3 主操作不可用语义；恢复门期间为 err.recovery.in_progress）
             rebindReason: availabilityReasonText(w, 'rebind'),
+            // 快速更新入口（契约 06 §1/§9，票 #62）：quick_update availability 唯一门控
+            //（后端已恒注册）——点亮可点，未开/门禁期灰置并显后端原因码（未开授权
+            // 为 err.auth_mode.disabled，恢复期为 err.recovery.in_progress）
+            canQuickUpdate: canQuickUpdate(w),
+            quickUpdateReason: availabilityReasonText(w, 'quick_update'),
             recoveryRequired: w.relation.health === 'recovery_required',
             // 历史入口（T13 B 口径走查发现补，票 #45）：history_view feature 唯一门控，
             // 列表行承接 /workspaces/:id/history（T10 路由注释既定「入口在工作区列表行
@@ -126,13 +135,13 @@ function lastActivity(w: WorkspaceDTO): string {
 
 // —— 行操作（动作成功后立即触发一轮受控重查；后续事件继续经管线刷新）——
 // withPending 统一防重入：同 id 动作进行中禁点，结束后释放
-const pending = ref({ scanning: new Set<string>(), cancelling: new Set<string>(), preparing: new Set<string>(), recovering: new Set<string>() })
+const pending = ref({ scanning: new Set<string>(), cancelling: new Set<string>(), preparing: new Set<string>(), recovering: new Set<string>(), updating: new Set<string>() })
 
-function isPending(kind: 'scanning' | 'cancelling' | 'preparing' | 'recovering', id: string): boolean {
+function isPending(kind: 'scanning' | 'cancelling' | 'preparing' | 'recovering' | 'updating', id: string): boolean {
     return pending.value[kind].has(id)
 }
 
-async function withPending(kind: 'scanning' | 'cancelling' | 'preparing' | 'recovering', id: string, action: () => Promise<void>): Promise<void> {
+async function withPending(kind: 'scanning' | 'cancelling' | 'preparing' | 'recovering' | 'updating', id: string, action: () => Promise<void>): Promise<void> {
     if (isPending(kind, id)) return
     const next = new Set(pending.value[kind])
     next.add(id)
@@ -158,6 +167,42 @@ function prepareSyncPlan(row: WorkspaceRow): void {
             await router.push('/workspaces/' + ws.relation.relation_id + '/plans/' + plan.plan_id)
         } catch (e) {
             showSnackbar(errText(e), 'error')
+        }
+    })
+}
+
+// 快速更新（契约 06 §4，票 #62）：概览主操作区的一次点击编排——扫描 → 计划 →
+// （requirements 空 ∧ authorized）免确认直达，否则转待确认计划页走 P2 既有确认流
+//（编排细节与唯一口径判定收在 utils/quickUpdate，本页零入口特判）。按钮进行中
+// 显编排阶段文案；结果导航前补一轮受控重查，让承接页拿到新鲜投影。
+const updatePhases = ref<Record<string, QuickUpdatePhase>>({})
+
+function quickUpdate(row: WorkspaceRow): void {
+    const ws = row.workspace
+    const relID = ws.relation.relation_id
+    void withPending('updating', relID, async () => {
+        try {
+            const outcome = await runQuickUpdate(ws, phase => {
+                updatePhases.value = { ...updatePhases.value, [relID]: phase }
+            })
+            triggerRequery()
+            if (outcome.kind === 'committed') {
+                // ConfirmPlan 已受理：apply 任务移交任务中心（可离开页面，UX §7.9），
+                // 沿 P2 applyPlan 的承接页去变化页继续追踪
+                showSnackbar(t('workspaces.quickUpdate.directToast'), 'success')
+                await router.push('/workspaces/' + relID + '/changes')
+            } else {
+                // 冲突决议 / 确认要求非空 → 待确认计划页（P2 既有流，绝不自动执行）
+                showSnackbar(t('workspaces.quickUpdate.manualToast'), 'warning')
+                await router.push('/workspaces/' + relID + '/plans/' + outcome.planID)
+            }
+        } catch (e) {
+            showSnackbar(errText(e), 'error')
+            triggerRequery()
+        } finally {
+            const rest = { ...updatePhases.value }
+            delete rest[relID]
+            updatePhases.value = rest
         }
     })
 }
@@ -313,6 +358,24 @@ const cols: { key: string; alignRight?: boolean }[] = [
                                 <TableCell class="text-muted-foreground text-xs">{{ row.activity }}</TableCell>
                                 <TableCell>
                                     <div class="flex justify-end gap-2">
+                                        <!-- 快速更新主操作（契约 06 §9，票 #62）：quick_update
+                                             availability 唯一门控——点亮一次点击编排直达 committed；
+                                             未开授权（err.auth_mode.disabled）/活跃任务/恢复门/
+                                             扫描未就绪灰置保留位置并显后端原因码（UX §4.3）；
+                                             进行中显编排阶段文案（扫描→计划→应用） -->
+                                        <Button
+                                            size="xs"
+                                            :variant="row.canQuickUpdate ? 'default' : 'outline'"
+                                            :disabled="!row.canQuickUpdate || isPending('updating', row.workspace.relation.relation_id)"
+                                            :title="row.canQuickUpdate ? undefined : row.quickUpdateReason"
+                                            @click="quickUpdate(row)"
+                                        >
+                                            {{
+                                                isPending('updating', row.workspace.relation.relation_id)
+                                                    ? t('workspaces.quickUpdate.phase.' + (updatePhases[row.workspace.relation.relation_id] ?? 'scan'))
+                                                    : t('workspaces.quickUpdateAction')
+                                            }}
+                                        </Button>
                                         <!-- 处理恢复：恢复门期间的行内主上下文动作（UX 原型 §7.1
                                              行操作优先级 1；契约 05 §5 双入口之列表行） -->
                                         <Button
@@ -331,6 +394,15 @@ const cols: { key: string; alignRight?: boolean }[] = [
                                             @click="router.push('/workspaces/' + row.workspace.relation.relation_id + '/mappings')"
                                         >
                                             {{ t('workspaces.mappingsAction') }}
+                                        </Button>
+                                        <!-- 工作区设置入口（票 #62）：授权模式等工作区级开关，
+                                             详见 /workspaces/:id/settings 设置页 -->
+                                        <Button
+                                            size="xs"
+                                            variant="outline"
+                                            @click="router.push('/workspaces/' + row.workspace.relation.relation_id + '/settings')"
+                                        >
+                                            {{ t('workspaces.settingsAction') }}
                                         </Button>
                                         <!-- 变更浏览入口：两侧快照齐备（scan ready）才可读时计算 diff -->
                                         <Button

@@ -118,7 +118,7 @@ type WorkspaceFeaturesDTO struct {
 // ActionAvailabilityDTO 是单动作可用性，由后端按当前状态推导（架构 §10.4）。
 // 前端不得自行推断；不可用动作必须带原因码供 locale 渲染。
 type ActionAvailabilityDTO struct {
-	Action     string   `json:"action"` // scan|prepare_sync|apply_sync|prepare_restore|apply_restore|rebind
+	Action     string   `json:"action"` // scan|prepare_sync|apply_sync|quick_update|prepare_restore|apply_restore|rebind
 	Available  bool     `json:"available"`
 	ReasonCode string   `json:"reason_code,omitempty"`
 	ReasonArgs []string `json:"reason_args,omitempty"`
@@ -133,6 +133,9 @@ type WorkspaceDTO struct {
 	Availability          []ActionAvailabilityDTO `json:"availability"`
 	LatestProjectSnapshot *SnapshotSummaryDTO     `json:"latest_project_snapshot,omitempty"`
 	LatestRuntimeSnapshot *SnapshotSummaryDTO     `json:"latest_runtime_snapshot,omitempty"`
+	// AuthorizedApply 是工作区授权开关投影（relations.authorized_apply，schema v6；
+	// 契约 06 §3.6：只增不删，票 #57）。
+	AuthorizedApply bool `json:"authorized_apply"`
 }
 
 // WorkspacePageDTO 是工作区分页。
@@ -219,6 +222,14 @@ type OperationDTO struct {
 	ResourceID    string            `json:"resource_id"`
 	Preconditions []PreconditionDTO `json:"preconditions"`
 	Reversible    bool              `json:"reversible"`
+	// Materialization 是物化模式（契约 06 §3.7，票 #63）：copy|download，由
+	// 后端推导（有重取信息的 mod 写操作 → download，其余 → copy）；旧行空值
+	// ＝copy 兼容。
+	Materialization string `json:"materialization,omitempty"`
+	// PreserveSkip 是「旧版本不留存」警示行标记（契约 06 §3.7；ADR-0007 §7，
+	// 票 #64）：非 mod 单文件超过 preserve_max_bytes，不做 before 保全。
+	// 只增不删，同「不可重取」警示先例（deletion_warn）。
+	PreserveSkip bool `json:"preserve_skip,omitempty"`
 }
 
 // RepresentationDTO 是冲突证据中的表示。
@@ -488,6 +499,16 @@ type CommitDTO struct {
 	Summary       CommitSummaryDTO  `json:"summary"`
 	PlanID        string            `json:"plan_id"`
 	Changes       []CommitChangeDTO `json:"changes"`
+	// Skipped 是本场剔出的取数失败清单（契约 06 §3.7/ADR-0008 §7，票 #63）：
+	// 成功 N + 跳过 M（带 err.download.* 原因码）；旧行无该记录为空数组。
+	Skipped []CommitSkippedDTO `json:"skipped"`
+}
+
+// CommitSkippedDTO 是跳过清单单行：资源 ID + 原因码（文案由前端 locale 提供）。
+type CommitSkippedDTO struct {
+	ResourceID string   `json:"resource_id"`
+	ReasonCode string   `json:"reason_code"`
+	ReasonArgs []string `json:"reason_args,omitempty"`
 }
 
 // CommitPageDTO 是历史列表分页（created_at DESC；cursor=上一页末条 commit_id）。
@@ -495,4 +516,107 @@ type CommitPageDTO struct {
 	SchemaVersion int                `json:"schema_version"`
 	Items         []CommitSummaryDTO `json:"items"`
 	NextCursor    string             `json:"next_cursor,omitempty"`
+	// PrunedBeforeCount 是墓碑计数（契约 06 §3.8，票 #64）；N=0 前端不渲染。
+	PrunedBeforeCount int `json:"pruned_before_count"`
+}
+
+// ---- 设置域 DTO（契约 06 §3.6；票 #57）----
+
+// RetentionSettingsDTO 是保留策略设置投影（config.toml [retention] 承载，
+// ADR-0007 §2/§7/§8；K=3 硬保底固定不可调，不设键）。
+type RetentionSettingsDTO struct {
+	SchemaVersion         int   `json:"schema_version"`
+	KeepCommits           int   `json:"keep_commits"`            // 默认 20，范围 5–200
+	KeepDays              int   `json:"keep_days"`               // 默认 90，范围 7–365
+	RelationCapacityBytes int64 `json:"relation_capacity_bytes"` // 默认 1 GiB，范围 128 MiB–20 GiB
+	PreserveMaxBytes      int64 `json:"preserve_max_bytes"`      // 默认 32 MiB，范围 1 MiB–512 MiB；0＝不限
+	TrashDays             int   `json:"trash_days"`              // 默认 7，范围 1–90
+}
+
+// UpdateRetentionSettingsDTO 是保留设置写输入：五键整体替换（设置页表单全量
+// 提交）。单键范围校验，越界 → err.settings.retention_invalid（{0}=字段名），
+// 整体拒绝（不落任何键）。
+type UpdateRetentionSettingsDTO struct {
+	KeepCommits           int   `json:"keep_commits"`
+	KeepDays              int   `json:"keep_days"`
+	RelationCapacityBytes int64 `json:"relation_capacity_bytes"`
+	PreserveMaxBytes      int64 `json:"preserve_max_bytes"`
+	TrashDays             int   `json:"trash_days"`
+}
+
+// ---- 回滚计划面 DTO（契约 06 §3；票 #59；独立族不复用 SyncPlanDTO，Q2）----
+
+// RestorePrepareDTO 是准备回滚输入（Q4：目标 baseline 后端由 commit 推导，
+// 不收 baseline id）。
+type RestorePrepareDTO struct {
+	RelationID string `json:"relation_id"`
+	CommitID   string `json:"commit_id"` // 任意历史提交（含 restore 提交=重做）；head 合法（空差异计划）
+}
+
+// ResolveRestorePlanDTO 是回滚决议输入（ADR-0006 §3：无冲突决议面）。
+type ResolveRestorePlanDTO struct {
+	PlanID             string   `json:"plan_id"`
+	RequestedExactness string   `json:"requested_exactness"` // exact|allow_partial（沿 P2 枚举；空值缺省 allow_partial）
+	SkipResourceIDs    []string `json:"skip_resource_ids"`   // 逐资源 skip 决议，固化于 resolved plan
+}
+
+// ConfirmRestorePlanDTO 是回滚确认输入（契约 06 §3.4；票 #60）。成功返回
+// TaskDTO（kind=restore，status=queued，PlanID 字段回填）；幂等重入返回既有
+// 任务；failed 终局重入建新运行；committed 后 err.plan.apply_not_reentrant。
+type ConfirmRestorePlanDTO struct {
+	PlanID string `json:"plan_id"`
+}
+
+// StageUserObjectDTO 是用户对象补全输入：读字节→按 expected_digest 校验→暂存
+//（暂存路径不透出，契约 06 §3.5）。
+type StageUserObjectDTO struct {
+	PlanID     string `json:"plan_id"`
+	ResourceID string `json:"resource_id"`
+	SourcePath string `json:"source_path"` // 本地绝对路径
+}
+
+// RestoreBlockedItemDTO 是 exact 阻塞清单行（draft 时点 exact_infeasible 证据，
+// ADR-0006 §4）。
+type RestoreBlockedItemDTO struct {
+	ResourceID   string `json:"resource_id"`
+	RelativePath string `json:"relative_path"`
+	Marker       string `json:"marker"`
+}
+
+// RestorePlanItemDTO 是回滚计划单资源行。Marker 枚举
+// restorable_from_cas|redownload_required|user_object_required|unrecoverable
+//（delete 行不占四标记）；MarkerReason 仅 user_object_required 行
+//（no_redownload_info|cf_unavailable|hash_format_unsupported）；Skipped/Staged
+// 为读取时实时投影；Availability 仅 redownload_required 行（ok|unknown）；
+// ExpectedDigest 仅 user_object_required 行（验收入库的目标摘要）。
+type RestorePlanItemDTO struct {
+	ResourceID     string `json:"resource_id"`
+	RelativePath   string `json:"relative_path"`
+	ChangeKind     string `json:"change_kind"` // create|modify|delete
+	Marker         string `json:"marker"`      // delete 行为空串
+	MarkerReason   string `json:"marker_reason,omitempty"`
+	Skipped        bool   `json:"skipped"`
+	Staged         bool   `json:"staged"`
+	DeletionWarn   bool   `json:"deletion_warn,omitempty"`   // 手放 mod 删除＝「不可重取」警示（ADR-0006 §5）
+	PreserveSkip   bool   `json:"preserve_skip,omitempty"`   // 「旧版本不留存」警示位（判定归票 #64）
+	Availability   string `json:"availability,omitempty"`    // ok|unknown，仅 redownload_required 行
+	NewerAvailable bool   `json:"newer_available,omitempty"` // 仅 ok 行；仅提示，版本决策归 packwiz
+	ExpectedDigest string `json:"expected_digest,omitempty"` // user_object_required 行验收入库目标摘要
+}
+
+// RestorePlanDTO 是回滚计划投影（Status 沿 sync_plans CHECK 读取时投影；
+// ExactFeasible 为实时就绪面，非 draft 静态标记）。
+type RestorePlanDTO struct {
+	SchemaVersion            int                          `json:"schema_version"`
+	PlanID                   string                       `json:"plan_id"`
+	RelationID               string                       `json:"relation_id"`
+	TargetCommitID           string                       `json:"target_commit_id"`
+	Status                   string                       `json:"status"` // draft|resolved|confirmed|applied|expired|stale
+	ExactFeasible            bool                         `json:"exact_feasible"`
+	BlockedBy                []RestoreBlockedItemDTO      `json:"blocked_by"`
+	Items                    []RestorePlanItemDTO         `json:"items"`
+	RequestedExactness       string                       `json:"requested_exactness,omitempty"` // resolved 后回填 exact|allow_partial
+	ConfirmationRequirements []ConfirmationRequirementDTO `json:"confirmation_requirements"`     // 恒非空（restore_acknowledge）
+	ExpiresAt                string                       `json:"expires_at"`
+	CreatedAt                string                       `json:"created_at"`
 }

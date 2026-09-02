@@ -283,7 +283,7 @@ func (a *App) probeOperation(run model.ApplyRun, stgRun *syncstage.Run, op model
 		}
 		notWritten := !targetExists || targetDigest == op.BeforeDigest
 		if notWritten && stagedReady {
-			if verifyApplyPreconditions(planned, snaps, rootBySide) == "" {
+			if code, _ := verifyApplyPreconditions(planned, snaps, rootBySide); code == "" {
 				return opVerdict{kind: opVerdictRedo, reason: "目标未写入、staging 完整、前置条件成立", proof: proof,
 					planned: planned, action: action, targetAbs: targetAbs, stagedAbs: stagedAbs}
 			}
@@ -582,7 +582,7 @@ func (a *App) completeRecoveredRun(ctx context.Context, active model.Task, run m
 		_, tgtSide, _ := applySideForOp(v.planned.Kind)
 		plans[i] = applyFilePlan{op: v.planned, action: v.action, targetSide: tgtSide}
 	}
-	violations, remaining, err := verifyRescan(plan, plans, rescanP, rescanR, base)
+	violations, remaining, err := verifyRescan(plan, plans, rescanP, rescanR, base, nil)
 	if err != nil {
 		blocked(resultVerifyMismatch, fmt.Errorf("验证比较失败: %w", err))
 		return
@@ -621,7 +621,7 @@ func (a *App) completeRecoveredRun(ctx context.Context, active model.Task, run m
 	rescanR.SnapshotID = a.deps.IDs("snap_")
 	rescanR.CapturedAt = nowStr
 	commit := buildSyncCommit(rel, plan, commitID, baselineID, nowStr, completeness, remaining,
-		rescanP.SnapshotID, rescanR.SnapshotID, buildCommitChanges(plans, snapP, snapR, rescanP, rescanR))
+		rescanP.SnapshotID, rescanR.SnapshotID, buildCommitChanges(plans, snapP, snapR, rescanP, rescanR), nil)
 
 	// object_refs：运行级恢复引用中的 CAS before 保全引用（恢复完成的运行重建
 	// 引用行；引擎路径的 size 事实在恢复引用中不携带，此处按缺省 0 落库）。
@@ -683,7 +683,7 @@ func (a *App) completeRecoveredRun(ctx context.Context, active model.Task, run m
 
 	active.Status = model.TaskStatusSucceeded
 	active.Phase = "done"
-	active.MessageKey = "msg.task.apply.succeeded"
+	active.MessageKey = taskProgressKey(active.Kind, "succeeded")
 	active.Completed = len(ops)
 	active.Total = len(ops)
 	active.CommitID = commitID
@@ -710,7 +710,7 @@ func (a *App) blockRecoveredRun(ctx context.Context, active model.Task, run mode
 	}
 	if active.Status == model.TaskStatusQueued || active.Status == model.TaskStatusRunning {
 		active.Status = model.TaskStatusRecoveryRequired
-		active.MessageKey = "msg.task.apply.recovery_required"
+		active.MessageKey = taskProgressKey(active.Kind, "recovery_required")
 		active.Problem = &model.Problem{Code: CodeRecoveryInProgress, Detail: cause.Error()}
 		if _, err := a.runner.Update(ctx, active); err != nil {
 			log.Printf("recovery: 任务 %s 恢复终态落库失败: %v", active.TaskID, err)

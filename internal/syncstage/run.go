@@ -31,6 +31,9 @@ const (
 	stagedDir = "files"
 	// proofsDir 是所有权证明子目录名。
 	proofsDir = "proofs"
+	// dlDirName 是下载暂存子目录名（ADR-0008 §6，票 #63）：download 行的
+	// `.part` 与成品落此处，run 内续传、跨 run 不复用，随运行清理回收。
+	dlDirName = "downloads"
 	// proofExt 是单个证明文件扩展名。
 	proofExt = ".json"
 	// runKeyBytes 是运行密钥字节长度（HMAC-SHA256 密钥）。
@@ -157,10 +160,23 @@ func (r *Run) ID() string { return r.id }
 // Dir 返回运行暂存目录绝对路径。
 func (r *Run) Dir() string { return r.dir }
 
+// DlDir 返回运行下载暂存子目录绝对路径（downloads/，票 #63）。不创建：
+// 下载引擎 Fetch 首次使用时自建；目录不在暂存副本/证明枚举与恢复裁决面内，
+// 崩溃后随运行目录按 ADR-0004 恢复矩阵处置。
+func (r *Run) DlDir() string { return filepath.Join(r.dir, dlDirName) }
+
 // TempRelFor 返回目标 root-relative 路径对应的暂存副本相对路径
 // （files/<target_rel>，斜杠形态）；该值即 journal 的 temp_relative_path。
 // 目标路径非法（逃逸）时返回 ErrPathEscape。
 func (r *Run) TempRelFor(targetRel string) (string, error) {
+	return StagedRel(targetRel)
+}
+
+// StagedRel 返回目标 root-relative 路径对应的暂存副本相对路径
+// （files/<target_rel>，斜杠形态；TempRelFor 的无句柄形态）。供不开运行句柄的
+// 调用方按同一形状计算暂存路径（restore 执行器消费计划暂存锚上的用户补全
+// 字节，票 #60）；目标路径非法（逃逸）时返回 ErrPathEscape。
+func StagedRel(targetRel string) (string, error) {
 	clean, err := normalizeRelative(targetRel)
 	if err != nil {
 		return "", err
@@ -237,6 +253,42 @@ func hashFilePath(path string) (string, int64, error) {
 	}
 	defer f.Close()
 	return hashReader(f)
+}
+
+// RunExists 报告 task_id 的暂存运行目录是否已存在（只读探测，不创建布局、
+// 不生成密钥）。restore 计划的就绪面投影（票 #59）据此避免读路径产生
+// staging 目录副作用；写路径仍走 OpenRun。
+func RunExists(stagingRoot, taskID string) bool {
+	if stagingRoot == "" || validateID(taskID) != nil {
+		return false
+	}
+	_, err := os.Lstat(filepath.Join(stagingRoot, taskID))
+	return err == nil
+}
+
+// StagedDigest 返回目标路径暂存副本的 sha256（hex）。副本不存在返回 ok=false
+//（正常情况：尚未补全）；路径逃逸返回 ErrPathEscape。只读，不写任何状态——
+// restore 计划的 staged 就绪面投影（票 #59）按此实时推导，不改计划行。
+func (r *Run) StagedDigest(targetRel string) (digest string, ok bool, err error) {
+	stagingRel, err := r.TempRelFor(targetRel)
+	if err != nil {
+		return "", false, err
+	}
+	abs, err := r.StageAbs(stagingRel)
+	if err != nil {
+		return "", false, err
+	}
+	if _, statErr := os.Lstat(abs); statErr != nil {
+		if errors.Is(statErr, fs.ErrNotExist) {
+			return "", false, nil
+		}
+		return "", false, fmt.Errorf("syncstage: 检查暂存副本失败: %w", statErr)
+	}
+	got, _, err := hashFilePath(abs)
+	if err != nil {
+		return "", false, err
+	}
+	return got, true, nil
 }
 
 // ListStagedFiles 枚举运行目录下全部暂存副本（按 StagingRel 排序），

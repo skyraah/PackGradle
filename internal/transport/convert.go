@@ -114,7 +114,7 @@ func rebindPreparationDTO(v view.RebindPreparationView) RebindPreparationDTO {
 	return RebindPreparationDTO{
 		SchemaVersion: v.SchemaVersion, PreparationID: v.PreparationID,
 		CreatedAt: v.CreatedAt, ExpiresAt: v.ExpiresAt, Side: v.Side,
-		Checks: checks,
+		Checks:      checks,
 		OldEndpoint: endpointDTO(v.OldEndpoint), NewEndpoint: endpointDTO(v.NewEndpoint),
 		FingerprintChanged: v.FingerprintChanged, BaselineInheritance: v.BaselineInheritance,
 		InvalidatedPlanCount: v.InvalidatedPlanCount,
@@ -123,8 +123,9 @@ func rebindPreparationDTO(v view.RebindPreparationView) RebindPreparationDTO {
 
 func workspaceDTO(v view.WorkspaceView) WorkspaceDTO {
 	out := WorkspaceDTO{
-		SchemaVersion: v.SchemaVersion,
-		Relation:      relationDTO(v.Relation),
+		SchemaVersion:   v.SchemaVersion,
+		Relation:        relationDTO(v.Relation),
+		AuthorizedApply: v.AuthorizedApply,
 		State: WorkspaceStateDTO{
 			ScanState: v.State.ScanState, BaselineState: v.State.BaselineState,
 			DiffState: v.State.DiffState, RelationHealth: v.State.RelationHealth,
@@ -280,6 +281,7 @@ func planDTO(v view.SyncPlanView) SyncPlanDTO {
 		ops = append(ops, OperationDTO{
 			ID: op.ID, Kind: string(op.Kind), ResourceID: string(op.ResourceID),
 			Preconditions: preconds, Reversible: op.Reversible,
+			Materialization: op.Materialization, PreserveSkip: op.PreserveSkip,
 		})
 	}
 	conflicts := make([]ConflictDTO, 0, len(v.Conflicts))
@@ -362,9 +364,15 @@ func commitDTO(v view.CommitView) CommitDTO {
 			RuntimeBefore: ch.RuntimeBefore, RuntimeAfter: ch.RuntimeAfter,
 		})
 	}
+	skipped := make([]CommitSkippedDTO, 0, len(v.Skipped))
+	for _, s := range v.Skipped {
+		skipped = append(skipped, CommitSkippedDTO{
+			ResourceID: s.ResourceID, ReasonCode: s.ReasonCode, ReasonArgs: s.ReasonArgs,
+		})
+	}
 	return CommitDTO{
 		SchemaVersion: v.SchemaVersion, Summary: commitSummaryDTO(v.Summary),
-		PlanID: v.PlanID, Changes: changes,
+		PlanID: v.PlanID, Changes: changes, Skipped: skipped,
 	}
 }
 
@@ -373,5 +381,77 @@ func commitPageDTO(v view.CommitPage) CommitPageDTO {
 	for _, c := range v.Items {
 		items = append(items, commitSummaryDTO(c))
 	}
-	return CommitPageDTO{SchemaVersion: v.SchemaVersion, Items: items, NextCursor: v.NextCursor}
+	return CommitPageDTO{SchemaVersion: v.SchemaVersion, Items: items, NextCursor: v.NextCursor,
+		PrunedBeforeCount: v.PrunedBeforeCount}
+}
+
+// ---- 设置域投影转换（契约 06 §3.6；票 #57）----
+
+func retentionSettingsDTO(v view.RetentionSettingsView) RetentionSettingsDTO {
+	return RetentionSettingsDTO{
+		SchemaVersion:         v.SchemaVersion,
+		KeepCommits:           v.KeepCommits,
+		KeepDays:              v.KeepDays,
+		RelationCapacityBytes: v.RelationCapacityBytes,
+		PreserveMaxBytes:      v.PreserveMaxBytes,
+		TrashDays:             v.TrashDays,
+	}
+}
+
+// ---- 回滚计划面投影转换（契约 06 §3；票 #59）----
+
+func restoreBlockedItemDTO(v view.RestoreBlockedItemView) RestoreBlockedItemDTO {
+	return RestoreBlockedItemDTO{
+		ResourceID:   v.ResourceID,
+		RelativePath: v.RelativePath,
+		Marker:       v.Marker,
+	}
+}
+
+func restorePlanItemDTO(v view.RestorePlanItemView) RestorePlanItemDTO {
+	return RestorePlanItemDTO{
+		ResourceID:     string(v.ResourceID),
+		RelativePath:   v.RelativePath,
+		ChangeKind:     v.ChangeKind,
+		Marker:         string(v.Marker),
+		MarkerReason:   v.MarkerReason,
+		Skipped:        v.Skipped,
+		Staged:         v.Staged,
+		DeletionWarn:   v.DeletionWarn,
+		PreserveSkip:   v.PreserveSkip,
+		Availability:   v.Availability,
+		NewerAvailable: v.NewerAvailable,
+		ExpectedDigest: v.ExpectedDigest,
+	}
+}
+
+func restorePlanDTO(v view.RestorePlanView) RestorePlanDTO {
+	items := make([]RestorePlanItemDTO, 0, len(v.Items))
+	for _, it := range v.Items {
+		items = append(items, restorePlanItemDTO(it))
+	}
+	blocked := make([]RestoreBlockedItemDTO, 0, len(v.BlockedBy))
+	for _, b := range v.BlockedBy {
+		blocked = append(blocked, restoreBlockedItemDTO(b))
+	}
+	reqs := make([]ConfirmationRequirementDTO, 0, len(v.ConfirmationRequirements))
+	for _, r := range v.ConfirmationRequirements {
+		reqs = append(reqs, ConfirmationRequirementDTO{
+			Code: r.Code, Severity: r.Severity, ResourceCount: r.ResourceCount,
+		})
+	}
+	return RestorePlanDTO{
+		SchemaVersion:            v.SchemaVersion,
+		PlanID:                   v.PlanID,
+		RelationID:               v.RelationID,
+		TargetCommitID:           v.TargetCommitID,
+		Status:                   v.Status,
+		ExactFeasible:            v.ExactFeasible,
+		BlockedBy:                blocked,
+		Items:                    items,
+		RequestedExactness:       v.RequestedExactness,
+		ConfirmationRequirements: reqs,
+		ExpiresAt:                v.ExpiresAt,
+		CreatedAt:                v.CreatedAt,
+	}
 }

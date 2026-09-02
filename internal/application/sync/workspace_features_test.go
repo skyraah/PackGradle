@@ -16,15 +16,49 @@ func TestWorkspaceFeaturesFixedValues(t *testing.T) {
 	if !f.SyncApply || !f.HistoryView {
 		t.Errorf("P2 应点亮 sync_apply/history_view: %+v", f)
 	}
-	// restore 全家维持 false（Phase 3，硬约束 2）
-	if f.RestorePreview || f.RestoreApply {
-		t.Errorf("restore 能力应维持 false: %+v", f)
+	// P3 点亮（契约 06 §1，票 #59）：restore_preview/restore_apply + download 物化
+	if !f.RestorePreview || !f.RestoreApply {
+		t.Errorf("P3 应点亮 restore_preview/restore_apply: %+v", f)
 	}
 	if f.ConflictResolution != "choose_side" {
 		t.Errorf("conflict_resolution 应为 choose_side，得到 %s", f.ConflictResolution)
 	}
-	if len(f.MaterializationModes) != 1 || f.MaterializationModes[0] != "copy" {
-		t.Errorf("materialization_modes 应为 [\"copy\"]: %v", f.MaterializationModes)
+	// P3（票 #63）：download 物化点亮（CF 免钥匙直链，ADR-0008 §6）
+	if len(f.MaterializationModes) != 2 || f.MaterializationModes[0] != "copy" || f.MaterializationModes[1] != "download" {
+		t.Errorf(`materialization_modes 应为 ["copy","download"]: %v`, f.MaterializationModes)
+	}
+}
+
+// derivePrepareRestoreAvailability 按契约 06 §1 prepare_restore 推导行逐支断言
+//（三条件：无活跃任务 ∧ 非 recovery_required ∧ scan ready；票 #59）。
+func TestDerivePrepareRestoreAvailability(t *testing.T) {
+	recovery := string(model.HealthRecoveryRequired)
+
+	cases := []struct {
+		name          string
+		health        string
+		scanState     string
+		hasActiveTask bool
+		available     bool
+		reason        string
+	}{
+		{name: "三条件满足 → available", health: string(model.HealthHealthy), scanState: "ready", available: true},
+		{name: "活跃任务 → already_running（推导表列序第一）", health: string(model.HealthHealthy), scanState: "ready", hasActiveTask: true, reason: "err.scan.already_running"},
+		{name: "恢复占用 → in_progress", health: recovery, scanState: "ready", reason: "err.recovery.in_progress"},
+		{name: "扫描未就绪 → incomplete", health: string(model.HealthHealthy), scanState: "never_scanned", reason: "err.scan.incomplete"},
+		{name: "扫描失败 → incomplete", health: string(model.HealthHealthy), scanState: "failed", reason: "err.scan.incomplete"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := derivePrepareRestoreAvailability(tc.health, tc.scanState, tc.hasActiveTask)
+			if got.Action != "prepare_restore" {
+				t.Fatalf("action = %s，期望 prepare_restore", got.Action)
+			}
+			if got.Available != tc.available || got.ReasonCode != tc.reason {
+				t.Fatalf("available=%v reason=%q，期望 available=%v reason=%q",
+					got.Available, got.ReasonCode, tc.available, tc.reason)
+			}
+		})
 	}
 }
 
@@ -90,6 +124,67 @@ func TestDeriveApplySyncAvailability(t *testing.T) {
 			got := deriveApplySyncAvailability(tc.health, tc.scanState, tc.hasActiveTask, tc.plans)
 			if got.Action != "apply_sync" {
 				t.Fatalf("action = %s，期望 apply_sync", got.Action)
+			}
+			if got.Available != tc.available || got.ReasonCode != tc.reason {
+				t.Fatalf("available=%v reason=%q，期望 available=%v reason=%q",
+					got.Available, got.ReasonCode, tc.available, tc.reason)
+			}
+		})
+	}
+}
+
+// deriveQuickUpdateAvailability 按契约 06 §1 quick_update 推导行逐支断言
+// （票 #62：授权开关未开启 → err.auth_mode.disabled 优先；其余三门禁与
+// prepare_restore 同款，原因码沿 already_running → in_progress → incomplete）。
+func TestDeriveQuickUpdateAvailability(t *testing.T) {
+	recovery := string(model.HealthRecoveryRequired)
+
+	cases := []struct {
+		name          string
+		health        string
+		scanState     string
+		hasActiveTask bool
+		authorized    bool
+		available     bool
+		reason        string
+	}{
+		{
+			name: "开关开启且无活跃任务且非恢复且扫描就绪 → available",
+			health: string(model.HealthHealthy), scanState: "ready", authorized: true,
+			available: true,
+		},
+		{
+			name: "开关未开启 → auth_mode.disabled（连举条件序第一，优先于其余门禁）",
+			health: string(model.HealthHealthy), scanState: "ready", authorized: false,
+			reason: "err.auth_mode.disabled",
+		},
+		{
+			name: "开关未开启且扫描未就绪 → 仍报 auth_mode.disabled（引导先开开关）",
+			health: string(model.HealthHealthy), scanState: "never_scanned", authorized: false,
+			reason: "err.auth_mode.disabled",
+		},
+		{
+			name: "活跃任务占用 → already_running",
+			health: string(model.HealthHealthy), scanState: "ready", hasActiveTask: true, authorized: true,
+			reason: "err.scan.already_running",
+		},
+		{
+			name: "恢复占用 → in_progress（开关值保留，门禁单独挡）",
+			health: recovery, scanState: "ready", authorized: true,
+			reason: "err.recovery.in_progress",
+		},
+		{
+			name: "扫描未就绪 → incomplete",
+			health: string(model.HealthHealthy), scanState: "failed", authorized: true,
+			reason: "err.scan.incomplete",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := deriveQuickUpdateAvailability(tc.health, tc.scanState, tc.hasActiveTask, tc.authorized)
+			if got.Action != "quick_update" {
+				t.Fatalf("action = %s，期望 quick_update", got.Action)
 			}
 			if got.Available != tc.available || got.ReasonCode != tc.reason {
 				t.Fatalf("available=%v reason=%q，期望 available=%v reason=%q",

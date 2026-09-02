@@ -76,6 +76,37 @@ func fixtureRelation(t *testing.T, db *sql.DB, suffix string) string {
 	return rel.RelationID
 }
 
+// fixtureRelationRaw 用 v1 列集 raw SQL 写入关系行（含最小 project/runtime 端点行），
+// 供手工搭建旧版 schema（v1..v5）的迁移测试预置数据——RelationRepository 的列
+// 清单随最新 schema 演进（v6 起 authorized_apply），旧版库阶段不能走仓库写路径。
+func fixtureRelationRaw(t *testing.T, db *sql.DB, suffix string) string {
+	t.Helper()
+	ctx := context.Background()
+	endpoints := NewEndpointRepository(db)
+	now := time.Now().UTC().Format(time.RFC3339)
+	if err := endpoints.CreateProject(ctx, model.Project{
+		SchemaVersion: model.CurrentSchemaVersion, ProjectID: "prj_" + suffix,
+		Adapter: "packwiz", DisplayName: "Project " + suffix,
+		RootPath: "D:/packs/" + suffix, BindingFingerprint: "sha256:prj" + suffix, CreatedAt: now,
+	}); err != nil {
+		t.Fatalf("创建 Project 失败: %v", err)
+	}
+	if err := endpoints.CreateRuntime(ctx, model.Runtime{
+		SchemaVersion: model.CurrentSchemaVersion, RuntimeID: "run_" + suffix,
+		Adapter: "prism", DisplayName: "Runtime " + suffix,
+		RootPath: "D:/instances/" + suffix + "/minecraft", AdapterIdentity: "inst-" + suffix,
+		BindingFingerprint: "sha256:run" + suffix, CreatedAt: now,
+	}); err != nil {
+		t.Fatalf("创建 Runtime 失败: %v", err)
+	}
+	if _, err := db.Exec(`INSERT INTO relations(id, project_id, runtime_id, policy_set, revision, health, created_at)
+		VALUES(?,?,?,?,1,'healthy',?)`,
+		"rel_"+suffix, "prj_"+suffix, "run_"+suffix, "default-v1", now); err != nil {
+		t.Fatalf("raw 写入 Relation 失败: %v", err)
+	}
+	return "rel_" + suffix
+}
+
 // fixtureSnapshot 构造一条含资源与诊断的快照。
 func fixtureSnapshot(id, relationID string, side model.Side, capturedAt string) model.ObservedSnapshot {
 	return model.ObservedSnapshot{

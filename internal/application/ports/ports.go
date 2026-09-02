@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"time"
 
 	"packgradle/internal/core/model"
 )
@@ -95,6 +96,20 @@ type RelationRepository interface {
 	// UpdateHeadCommit 设置关系头提交引用（Phase 2 Apply committed 收口写，
 	// redesign §6.6 步骤 5：与新 Baseline/Commit/object refs 同一事务）。空串清除。
 	UpdateHeadCommit(ctx context.Context, id, commitID string) error
+	// UpdateAuthorizedApply 切换工作区授权开关（schema v6 列；契约 06 §3.6，票 #57）。
+	// 只写列不做门禁（恢复期开关值保留，入口由 recovery 门禁挡）；关系不存在返回 ErrNotFound。
+	UpdateAuthorizedApply(ctx context.Context, id string, enabled bool) error
+}
+
+// RetentionSettingsStore 是保留策略设置的存取端口（config.toml [retention] 承载，
+// ADR-0007 §8；appconfig.ConfigManager 实现）。默认值/范围校验由实现方承担
+// （加载层与写入层同款，契约 06 §3.6）：单键越界返回携带字段名的
+// err.settings.retention_invalid 结构化错误。
+type RetentionSettingsStore interface {
+	// Retention 读取并归一保留设置：未写键取默认值，越界键整体拒绝。
+	Retention() (model.RetentionSettings, error)
+	// SetRetention 校验后整体替换五键并持久化，返回生效值。
+	SetRetention(s model.RetentionSettings) (model.RetentionSettings, error)
 }
 
 // SnapshotRepository 持久化不可变观察快照。
@@ -133,6 +148,10 @@ type TaskRepository interface {
 	Get(ctx context.Context, id string) (model.Task, error)
 	ListByRelation(ctx context.Context, relationID string, active bool, page PageRequest) ([]model.Task, string, error)
 	FindActiveByRelationAndKind(ctx context.Context, relationID, kind string) (model.Task, bool, error)
+	// FindActiveByKind 查找全局（跨关系）指定类别的活跃任务（GC 全局单飞，
+	// 票 #64：同一时刻至多一个 gc 任务排队/执行）。relation_id IS NULL 的
+	// 任务也在查找范围。
+	FindActiveByKind(ctx context.Context, kind string) (model.Task, bool, error)
 	// ListActiveAll 返回全部 queued/running 任务（启动恢复用）。
 	ListActiveAll(ctx context.Context) ([]model.Task, error)
 }
@@ -269,6 +288,135 @@ type ObjectRefRow struct {
 	Digest    string
 	Purpose   string
 	Size      int64
+}
+
+// GCObjectRef 是 GC 决策/根集计算用的对象引用投影（object_refs 联 objects 取
+// size；OwnerID 为引用提交 id，owner_type 恒 commit——GC 域无其他 owner）。
+type GCObjectRef struct {
+	OwnerID string
+	Digest  string
+	Size    int64
+}
+
+// GCRepository 是 GC 引擎的存储面（票 #64）：修剪决策输入读取、级联删除执行、
+// 对象账目与隔离态操作。隔离（quarantined）即回收账目（ADR-0007 §5），零新表。
+type GCRepository interface {
+	// ---- 修剪决策输入（per relation）----
+
+	// RelationCommitsChain 返回关系全部存活提交（id 升序 = 链序 oldest-first，
+	// ULID 单调保证创建序即链序）。
+	RelationCommitsChain(ctx context.Context, relationID string) ([]model.SyncCommit, error)
+	// RelationObjectRefs 返回关系全部存活提交的 object_refs 行（联 objects 取 size）。
+	RelationObjectRefs(ctx context.Context, relationID string) ([]GCObjectRef, error)
+	// RelationUsageBytes 返回关系存活提交引用对象的字节占用：SUM(objects.size)
+	// over 去重 digest（ADR-0007 §2 关系占用口径；CAS 跨关系去重按去重记账）。
+	RelationUsageBytes(ctx context.Context, relationID string) (int64, error)
+	// ProtectedBaselineIDs 返回「屏障」基线集合：relations.head_baseline_id ∪
+	// 活跃（draft/resolved）计划的 base_baseline_id——前者是头提交天然引用，
+	// 后者是保护根集的计划引用通道（ADR-0007 §4；红线：活跃计划引用不回收）。
+	ProtectedBaselineIDs(ctx context.Context, relationID string) ([]string, error)
+
+	// ---- 修剪级联执行（单事务，FK 顺序：先重连、先提交后基线）----
+
+	// ApplyPrune 在单事务内执行级联删除（core/gc.PruneDecision 的执行形态）：
+	// 1) 重连——首个存活提交 parent_id/previous_baseline_id 置空、其结果基线
+	//    parent_id 置空、被裁行自身 parent 引用置空、失效计划（非活跃）的
+	//    base_baseline_id 置空、被裁提交对应 apply_runs.commit_id 置空
+	//    （SQLite 立即外键要求先解除全部指向被裁行的引用）；
+	// 2) 先删提交侧（commit_changes → object_refs → sync_commits），
+	//    后删基线侧（baseline_resources → sync_baselines）——「先提交后基线」
+	//    的 FK 顺序（ADR-0007 执行要点）。tasks/apply_runs 的 commit_id 列
+	//    均有外键（tasks 自 schema v2 起 REFERENCES sync_commits），删行前
+	//    置空；墓碑计数由 PrunedBeforeCount 读时推导承担。
+	ApplyPrune(ctx context.Context, relationID string, prunedCommits, droppedBaselines []string,
+		reconnectCommitID, reconnectBaselineID string) error
+	// PrunedBeforeCount 返回按保留策略已清理的提交数（墓碑行数据源，契约 06
+	// §3.8）：读时推导「committed 运行数 − 现存提交数」——每个 committed 运行
+	// 恰产生一个提交（AttachCommit 1:1），删提交须置空 tasks/apply_runs 的
+	// commit_id（schema v2 起 tasks.commit_id 有外键），两侧行均永不删除，
+	// 差值即被裁数（ADR-0007「零新表零迁移」约束下的读时推导）。
+	PrunedBeforeCount(ctx context.Context, relationID string) (int, error)
+
+	// ---- 对象账目与隔离态（ADR-0007 §5 删除协议）----
+
+	// ReadyDigests 返回全部 state='ready' 对象的 digest（GC 候选集底册）。
+	ReadyDigests(ctx context.Context) ([]string, error)
+	// BaselineDigestHits 返回存活基线（存活提交结果基线 ∪ 屏障基线）的
+	// baseline_resources.logical_digest 中命中 objects 表的部分（去重）——
+	// 保护根集 1 的基线通道（ADR-0007 §4）。
+	BaselineDigestHits(ctx context.Context, relationIDs []string) ([]string, error)
+	// PlanBaseDigestHits 返回活跃计划（单活跃口径，同 ProtectedBaselineIDs）
+	// base 基线的 baseline_resources.logical_digest 中命中 objects 表的部分
+	//（去重）——活跃计划引用通道的对象面：即使屏障失效导致 base 基线随提交
+	// 被裁，其引用的对象在计划活跃期间也不回收（ADR-0007 §4 红线的对象账目）。
+	PlanBaseDigestHits(ctx context.Context, relationIDs []string) ([]string, error)
+	// UnresolvedRunRefs 返回活跃/未处置运行的恢复引用 digest（去重）：
+	// apply_runs.state ∉ {committed}（活跃运行与未处置 recovery_required）的
+	// recovery_refs_json 中 kind=cas 条目。解析在 Go 侧（JSON 形状引擎定义）。
+	UnresolvedRunRefs(ctx context.Context) ([][]byte, error)
+	// JournalCASRefs 返回运行日志恢复引用中的 cas digest 原始 JSON（去重前的
+	// 全部行，Go 侧解析 kind=cas 条目）——恢复引用的 journal 通道。
+	JournalCASRefs(ctx context.Context) ([][]byte, error)
+	// QuarantineObjects 单事务把候选对象 ready→quarantined（WHERE state='ready'
+	// 保可重入）；返回实际标记数。Has() 只认 ready：标记完成即对 restore/apply
+	// 不可见（ADR-0007 §5 步骤 1）。
+	QuarantineObjects(ctx context.Context, digests []string) (int64, error)
+	// ListQuarantined 返回全部隔离对象（digest、size；入回收站与对账的账目侧）。
+	ListQuarantined(ctx context.Context) ([]GCObjectRef, error)
+	// RestoreObject 复活对象：quarantined→ready（人工复活 CLI 用；Put 幂等
+	// 复活走 CAS.Put 的 UPSERT，不经此方法）。
+	RestoreObject(ctx context.Context, digest string) error
+	// PurgeQuarantinedRows 物理删除隔离行（超期清除随删，ADR-0007 §5 步骤 3；
+	// row-without-file 对账删行同通道）：仅删零引用行（object_refs 外键兜底）。
+	PurgeQuarantinedRows(ctx context.Context, digests []string) error
+	// ObjectState 查询单对象状态（"" = 无行）。
+	ObjectState(ctx context.Context, digest string) (string, error)
+	// ReferencedMissingRows 返回被存活引用指向但文件缺失的 ready 行 digest
+	//（row-without-file 且被引用：不删行——Has() 已按文件缺失返回不可见，
+	// restore 走既有降级分支；返回供引擎记账）。
+	ReferencedMissingRows(ctx context.Context, digests []string) ([]string, error)
+	// HasUnresolvedRuns 回答安全窗口构成项：存在未收口运行（apply_runs.state
+	// ∉ {'committed'}）——活跃 Apply/Restore run 与未处置 recovery_required
+	// 都算（ADR-0007 §3 安全窗口＝无活跃 run ∧ 无 recovery_required）。
+	HasUnresolvedRuns(ctx context.Context) (bool, error)
+}
+
+// GCTrashEntry 是回收站目录条目（digest 从文件名复原，文件 mtime 即
+// trash_days 时钟起点，ADR-0007 §5）。
+type GCTrashEntry struct {
+	Digest     string
+	Path       string
+	ModifiedAt time.Time
+	SizeBytes  int64
+}
+
+// GCObjectFile 是盘上一个对象文件（孤儿三向清扫的 file-without-row 对账用；
+// digest 从路径文件名复原，ADR-0007 §6）。
+type GCObjectFile struct {
+	Digest string
+	Path   string
+}
+
+// GCTrash 是回收站与盘面对象操作的端口（ADR-0007 §5/§6 落盘侧；objectstore.CAS
+// 实现）。全部方法带路径参数/返回值，时间由文件 mtime 承载（无时钟注入点）。
+// 幂等语义见各实现注释：GC 全程可重入，任一步崩溃下一轮重扫自然续上。
+type GCTrash interface {
+	// MoveToTrash 把对象文件 zstd 压缩移入回收站并删原文件（对象文件缺失返回
+	// os.ErrNotExist 语义错误，row-without-file 场景由调用方改走删行对账）。
+	MoveToTrash(digest string) error
+	// RestoreFromTrash 把回收站副本解压回对象位置（人工复活；对象已在盘幂等）。
+	RestoreFromTrash(digest string) error
+	// ListTrash 遍历回收站全部条目（目录不存在视为空）。
+	ListTrash() ([]GCTrashEntry, error)
+	// DeleteTrashEntry 物理删除单个回收站文件（超期清除；DB 隔离行由调用方
+	// 在文件删除成功后随删）。
+	DeleteTrashEntry(entry GCTrashEntry) error
+	// ListObjectFiles 遍历对象库全部在盘文件（digest 从路径复原；非法文件名跳过）。
+	ListObjectFiles() ([]GCObjectFile, error)
+	// ListTmpFiles 返回对象根目录下 .tmp-* 写中断残渣。
+	ListTmpFiles() ([]string, error)
+	// DeleteFile 删除盘上文件（不存在视为成功）。
+	DeleteFile(path string) error
 }
 
 // PlanConfirmationRepository 持久化计划确认令牌（plan_confirmations 收口，

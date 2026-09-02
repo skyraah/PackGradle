@@ -26,21 +26,26 @@ import (
 )
 
 // Options 是生成参数。Mods/TextFiles 供测试收缩规模；生产基线用默认值。
+// PlainMods 是「无 CF 声明 mod」变体数量（票 #60 P3 验收夹具：metafile 只有
+// name/filename/side、无 [download]/[update] 段——回滚判定面的
+// user_object_required / deletion_warn 行来源）。
 type Options struct {
 	OutDir    string // 产物根目录（project/ 与 instance/ 写在其下）
 	Seed      int64  // 全局种子
 	Mods      int    // mod 数量（<=0 时取 DefaultMods）
 	TextFiles int    // config/kubejs/scripts 文件数量（<=0 时取 DefaultTextFiles）
+	PlainMods int    // 无 CF 声明 mod 数量（0 = 不生成）
 }
 
 // Result 是生成结果摘要。
 type Result struct {
-	ProjectRoot  string `json:"project_root"`
-	InstanceDir  string `json:"instance_dir"`
-	Files        int    `json:"files"`         // 写入的文件总数
-	Bytes        int64  `json:"bytes"`         // 写入的总字节数
-	ModCount     int    `json:"mod_count"`     // mod LogicalResource 数
-	ManagedFiles int    `json:"managed_files"` // runtime 受管文件数（JAR + 文本/二进制）
+	ProjectRoot   string `json:"project_root"`
+	InstanceDir   string `json:"instance_dir"`
+	Files         int    `json:"files"`           // 写入的文件总数
+	Bytes         int64  `json:"bytes"`           // 写入的总字节数
+	ModCount      int    `json:"mod_count"`       // mod LogicalResource 数
+	PlainModCount int    `json:"plain_mod_count"` // 无 CF 声明 mod 数（票 #60 变体）
+	ManagedFiles  int    `json:"managed_files"`   // runtime 受管文件数（JAR + 文本/二进制）
 }
 
 // DefaultMods / DefaultTextFiles 是验收规格 §2.1 的生产规模。
@@ -75,6 +80,24 @@ func Generate(ctx context.Context, opts Options) (Result, error) {
 		indexEntries = append(indexEntries,
 			fmt.Sprintf("\n[[files]]\nfile = \"mods/%s\"\nhash = \"%s\"\nmetafile = true\n", metaName, metaDigest))
 	}
+	// 无 CF 声明 mod 变体（票 #60）：metafile 无 [download]/[update] 段，
+	// 运行端配套 JAR；回滚判定面 user_object_required/deletion_warn 行来源。
+	for i := 0; i < opts.PlainMods; i++ {
+		metaName, metaDigest, jarName, err := writeProjectPlainMod(ctx, res.ProjectRoot, opts, i)
+		if err != nil {
+			return res, err
+		}
+		res.Files++
+		indexEntries = append(indexEntries,
+			fmt.Sprintf("\n[[files]]\nfile = \"mods/%s\"\nhash = \"%s\"\nmetafile = true\n", metaName, metaDigest))
+		jarPath := filepath.Join(res.InstanceDir, "minecraft", "mods", jarName)
+		if _, err := writeRandomFile(ctx, jarPath, fileSeed(opts.Seed, 4_000_000+uint64(i)), jarSize(i+opts.Mods)); err != nil {
+			return res, err
+		}
+		res.Files++
+	}
+	res.PlainModCount = opts.PlainMods
+	res.ManagedFiles += opts.PlainMods
 	indexToml := "hash-format = \"sha256\"\n" + strings.Join(indexEntries, "")
 	if _, err := writeFile(ctx, filepath.Join(res.ProjectRoot, "index.toml"), indexToml); err != nil {
 		return res, err
@@ -210,6 +233,18 @@ func writeProjectMod(ctx context.Context, projectRoot string, opts Options, i in
 	metaName = metaFileName(i)
 	metaDigest, err = writeFile(ctx, filepath.Join(projectRoot, "mods", metaName), content)
 	return metaName, metaDigest, err
+}
+
+// writeProjectPlainMod 写入第 i 个「无 CF 声明」mod 的 metafile（票 #60 变体）：
+// 只有 name/filename/side，无 [download]/[update] 段——扫描面有 metafile 身份、
+// 无任何重取信息（「重取性看数据不看出身」的 user_object_required 行来源）。
+// 返回 metafile 文件名、内容摘要与运行端 JAR 文件名。
+func writeProjectPlainMod(ctx context.Context, projectRoot string, opts Options, i int) (metaName, metaDigest, jarName string, err error) {
+	jarName = fmt.Sprintf("plain-mod-%04d-1.0.jar", i)
+	content := fmt.Sprintf("name = \"Plain Mod %04d\"\nfilename = \"%s\"\nside = \"both\"\n", i, jarName)
+	metaName = fmt.Sprintf("fixture-plain-%04d.pw.toml", i)
+	metaDigest, err = writeFile(ctx, filepath.Join(projectRoot, "mods", metaName), content)
+	return metaName, metaDigest, jarName, err
 }
 
 // textRelPath 返回第 i 个受管文件的 root 相对路径：轮换 config/kubejs/scripts

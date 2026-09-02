@@ -1,0 +1,27 @@
+{
+  "schema": "p3-perf-run/1",
+  "captured_at": "2026-09-01T20:36:25Z",
+  "project_root": "C:\\project\\pg-p3-t66\\build\\perf\\fixture\\project",
+  "instance_dir": "C:\\project\\pg-p3-t66\\build\\perf\\fixture\\instance",
+  "data_root": "build/perf/data",
+  "machine": {
+    "host": "Skye",
+    "os": "windows",
+    "arch": "amd64",
+    "go_version": "go1.26.5",
+    "cpus": 16
+  },
+  "scan_phases_ms": {
+    "project_scan": 44,
+    "runtime_scan": 2830,
+    "normalize": 10,
+    "persist": 21
+  },
+  "scan_total_ms": 2913,
+  "run_total_ms": 3099,
+  "hash_cache": {
+    "hits": 0,
+    "misses": 2700,
+    "hit_ratio": 0
+  }
+}

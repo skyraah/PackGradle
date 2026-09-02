@@ -5,8 +5,14 @@ import (
 	"path/filepath"
 	"sync"
 
+	"packgradle/internal/core/model"
+	"packgradle/internal/download"
 	"packgradle/internal/errs"
 )
+
+// CodeSettingsRetentionInvalid 是保留设置越界错误码（契约 06 §10：
+// {0}=字段名，整体拒绝；加载层与写入层共用，文案由前端 locale 提供）。
+const CodeSettingsRetentionInvalid = "err.settings.retention_invalid"
 
 // ProjectEntry 是持久化在配置文件中的一个 packwiz 项目
 type ProjectEntry struct {
@@ -29,6 +35,41 @@ type legacyDirLink struct {
 	InstanceDir string `toml:"instance_dir"`
 }
 
+// DownloadConfig 是全局 config.toml 的 [download] 段：下载引擎韧性参数
+//（ADR-0008 §4）。仅并发度暴露用户配置，其余参数为引擎编译期常量。
+type DownloadConfig struct {
+	// Concurrency 下载并发度。nil = 未配置（引擎取默认 6）；显式配置合法域
+	// 1–16，越界在加载时报错（与引擎构造侧共用 download.NormalizeConcurrency，
+	// 单点口径）。
+	Concurrency *int `toml:"concurrency"`
+}
+
+// EffectiveConcurrency 返回生效并发度（未配置取默认 6）。加载层已拒绝越界值，
+// 本函数对残余非法值（直接构造 ConfigManager 不走加载层的场景）防御性退回默认。
+func (c DownloadConfig) EffectiveConcurrency() int {
+	raw := 0
+	if c.Concurrency != nil {
+		raw = *c.Concurrency
+	}
+	n, err := download.NormalizeConcurrency(raw)
+	if err != nil {
+		n, _ = download.NormalizeConcurrency(0) // 防御：退回默认 6
+	}
+	return n
+}
+
+// RetentionConfig 是 config.toml [retention] 段的原始承载（ADR-0007 §8，票 #57）。
+// 指针字段区分「未写」（nil → 默认值）与显式写 0——preserve_max_bytes=0＝不限，
+// 是合法的显式取值（ADR-0007 §7），不能与未写混淆。编码器跳过 nil 指针，
+// 未配置过的段不落盘。
+type RetentionConfig struct {
+	KeepCommits           *int   `toml:"keep_commits"`
+	KeepDays              *int   `toml:"keep_days"`
+	RelationCapacityBytes *int64 `toml:"relation_capacity_bytes"`
+	PreserveMaxBytes      *int64 `toml:"preserve_max_bytes"`
+	TrashDays             *int   `toml:"trash_days"`
+}
+
 // Config 是持久化在 %AppData%\PackGradle\config.toml 中的应用全局配置。
 // 项目相关的配置（实例关联、目录同步关联）存放于各项目目录下的 packgradle.toml，
 // 不进入全局配置。
@@ -41,8 +82,12 @@ type Config struct {
 	PrismInstancesPath string `toml:"prism_instances_path"`
 	// 程序自动检测到的 Prism 实例根目录（回写持久化，供查看/修改）
 	PrismInstancesDir string `toml:"prism_instances_dir"`
+	// 下载引擎韧性参数（ADR-0008 §4）
+	Download DownloadConfig `toml:"download"`
 	// 用户自行填写的 CurseForge API Key（用于按需查询 mod 版本等）
 	CurseforgeApiKey string `toml:"curseforge_api_key"`
+	// 保留策略设置（ADR-0007 §8；范围校验见 Retention/SetRetention）
+	Retention RetentionConfig `toml:"retention"`
 	// 旧版字段（v1）：项目 ↔ 实例关联与目录同步关联，启动时一次性迁移到项目级配置后清空
 	LegacyLinks    []legacyLink    `toml:"links"`
 	LegacyDirLinks []legacyDirLink `toml:"dir_links"`
@@ -65,11 +110,41 @@ func NewConfigManager() (*ConfigManager, error) {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return nil, errs.NewDetail("err.config.mkdir", err.Error(), dir)
 	}
-	m := &ConfigManager{path: filepath.Join(dir, "config.toml")}
-	if err := ReadToml(m.path, &m.cfg); err != nil {
-		return nil, errs.NewDetail("err.config.read", err.Error())
+	path := filepath.Join(dir, "config.toml")
+	cfg, err := LoadConfigFrom(path)
+	if err != nil {
+		return nil, err
 	}
-	return m, nil
+	return &ConfigManager{path: path, cfg: cfg}, nil
+}
+
+// LoadConfigFrom 从磁盘读取并校验全局配置（NewConfigManager 的可注入内核）。
+// 加载层校验（ADR-0008 §4）：[download] concurrency 显式配置越界（合法 1–16）
+// 即报错——fail fast，让用户修配置而不是带着非法值运行。
+func LoadConfigFrom(path string) (Config, error) {
+	var cfg Config
+	if err := ReadToml(path, &cfg); err != nil {
+		return cfg, errs.NewDetail("err.config.read", err.Error())
+	}
+	if cfg.Download.Concurrency != nil {
+		// 显式配置值直接判界：显式 0 是非法配置（与「未配置」区分，AC：0/17 拒绝）
+		n := *cfg.Download.Concurrency
+		if n < download.MinConcurrency || n > download.MaxConcurrency {
+			return cfg, errs.New(download.CodeConcurrencyInvalid, n)
+		}
+	}
+	return cfg, nil
+}
+
+// NewConfigManagerAtLoaded 用指定路径构造配置管理器并读取磁盘配置（票 #64：
+// headless 验收链与产品同语义——路径可注入且初值来自磁盘，写入的
+// [retention] 键对同一进程内的设置端口读者可见）。
+func NewConfigManagerAtLoaded(path string) (*ConfigManager, error) {
+	cfg, err := LoadConfigFrom(path)
+	if err != nil {
+		return nil, err
+	}
+	return &ConfigManager{path: path, cfg: cfg}, nil
 }
 
 // NewConfigManagerAt 用指定路径构造配置管理器（不读取磁盘），供测试注入
@@ -186,6 +261,67 @@ func (m *ConfigManager) SetPrismInstancesDir(dir string) error {
 	}
 	m.cfg.PrismInstancesDir = dir
 	return m.save()
+}
+
+// Retention 读取并归一保留策略设置（加载层校验，ADR-0007 §8；契约 06 §3.6）：
+// 未写键取默认值；任一键越界整体拒绝，返回 err.settings.retention_invalid
+// （{0}=字段名）。满足 ports.RetentionSettingsStore（settings 应用层端口）。
+func (m *ConfigManager) Retention() (model.RetentionSettings, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.cfg.Retention.materialize()
+}
+
+// SetRetention 校验后整体替换 [retention] 五键并落盘（写入层与加载层同款校验，
+// 契约 06 §3.6）。任一键越界整体拒绝（不落任何键），返回 err.settings.retention_invalid。
+func (m *ConfigManager) SetRetention(s model.RetentionSettings) (model.RetentionSettings, error) {
+	if field, ok := model.ValidateRetention(s); !ok {
+		return model.RetentionSettings{}, errs.New(CodeSettingsRetentionInvalid, field)
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.cfg.Retention = retentionConfigOf(s)
+	if err := m.save(); err != nil {
+		return model.RetentionSettings{}, err
+	}
+	return s, nil
+}
+
+// materialize 把原始 [retention] 段归一为设置值：nil 键取默认，越界整体拒绝。
+func (r RetentionConfig) materialize() (model.RetentionSettings, error) {
+	out := model.DefaultRetention()
+	if r.KeepCommits != nil {
+		out.KeepCommits = *r.KeepCommits
+	}
+	if r.KeepDays != nil {
+		out.KeepDays = *r.KeepDays
+	}
+	if r.RelationCapacityBytes != nil {
+		out.RelationCapacityBytes = *r.RelationCapacityBytes
+	}
+	if r.PreserveMaxBytes != nil {
+		out.PreserveMaxBytes = *r.PreserveMaxBytes
+	}
+	if r.TrashDays != nil {
+		out.TrashDays = *r.TrashDays
+	}
+	if field, ok := model.ValidateRetention(out); !ok {
+		return model.RetentionSettings{}, errs.New(CodeSettingsRetentionInvalid, field)
+	}
+	return out, nil
+}
+
+// retentionConfigOf 把设置值写回原始段（五键全量非 nil，落盘显式化）。
+func retentionConfigOf(s model.RetentionSettings) RetentionConfig {
+	keepCommits, keepDays, trashDays := s.KeepCommits, s.KeepDays, s.TrashDays
+	capacity, preserveMax := s.RelationCapacityBytes, s.PreserveMaxBytes
+	return RetentionConfig{
+		KeepCommits:           &keepCommits,
+		KeepDays:              &keepDays,
+		RelationCapacityBytes: &capacity,
+		PreserveMaxBytes:      &preserveMax,
+		TrashDays:             &trashDays,
+	}
 }
 
 // MigrateLegacyProjectConfigs 将旧版全局 config.toml 中的 [[links]] / [[dir_links]]

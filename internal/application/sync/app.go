@@ -6,6 +6,7 @@ package sync
 import (
 	"context"
 	"fmt"
+	"log"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -14,7 +15,7 @@ import (
 	"packgradle/internal/application/task"
 	"packgradle/internal/application/view"
 	"packgradle/internal/core/model"
-	"packgradle/internal/syncstage"
+	"packgradle/internal/download"
 )
 
 // Application 是 P1 只读核心用例集（transport 依赖此接口而非具体实现）。
@@ -55,30 +56,65 @@ type Application interface {
 	// 前置 run=recovery_required，acknowledged_at 落库 + 关系复位 healthy，
 	// 头基线不动、不建 Commit，发布 relation_invalidated 引导重扫。
 	AcknowledgeRecovery(ctx context.Context, taskID string) (view.WorkspaceView, error)
+	// SetWorkspaceAuthorized 切换工作区授权开关（契约 06 §3.6；票 #57）：
+	// 写 relations.authorized_apply 列，返回更新后工作区投影。
+	SetWorkspaceAuthorized(ctx context.Context, relationID string, enabled bool) (view.WorkspaceView, error)
+	// ---- 回滚计划面（契约 06 §2/§3；票 #59）----
+	// PrepareRestore 准备回滚：目标 baseline 后端推导，四标记判定 + CF 尽力探测，
+	// draft 落 sync_plans(kind=restore) 沿既有计划机器。
+	PrepareRestore(ctx context.Context, input view.PrepareRestoreInput) (view.RestorePlanView, error)
+	// ResolveRestorePlan 回滚决议：仅 partial 逐资源 skip；exact 遇就绪面不满前置拒绝。
+	ResolveRestorePlan(ctx context.Context, input view.ResolveRestorePlanInput) (view.RestorePlanView, error)
+	// GetRestorePlan 回滚计划读伴随（对称 GetPlan；stale/expired 读取时投影）。
+	GetRestorePlan(ctx context.Context, planID string) (view.RestorePlanView, error)
+	// StageUserObject 用户对象补全：字节进 staging 绑 plan 不进 CAS，凭
+	// expected_digest 验收，不改标记只改就绪面。
+	StageUserObject(ctx context.Context, input view.StageUserObjectInput) (view.RestorePlanView, error)
+	// ConfirmRestorePlan 回滚确认（契约 06 §3.4；票 #60）：确认即建 kind=restore
+	// 任务与 apply_runs(prepared) 运行，引擎协程接管执行；幂等口径对齐
+	// ConfirmPlan，failed 终局可重入，committed 后 err.plan.apply_not_reentrant。
+	ConfirmRestorePlan(ctx context.Context, input view.ConfirmRestorePlanInput) (view.TaskView, error)
 }
 
 var _ Application = (*App)(nil)
 
 // AppDeps 是应用依赖（唯一允许注入具体实现的位置是构造调用方）。
 type AppDeps struct {
-	Endpoints     ports.EndpointRepository
-	Relations     ports.RelationRepository
-	Snapshots     ports.SnapshotRepository
-	Baselines     ports.BaselineRepository
-	Plans         ports.PlanRepository
-	Tasks         ports.TaskRepository
-	Mappings      ports.MappingRepository
-	Preparations  ports.PreparationRepository
-	HashCache     ports.HashCacheRepository
-	Events        ports.TaskEventRepository
+	Endpoints    ports.EndpointRepository
+	Relations    ports.RelationRepository
+	Snapshots    ports.SnapshotRepository
+	Baselines    ports.BaselineRepository
+	Plans        ports.PlanRepository
+	Tasks        ports.TaskRepository
+	Mappings     ports.MappingRepository
+	Preparations ports.PreparationRepository
+	HashCache    ports.HashCacheRepository
+	Events       ports.TaskEventRepository
 	// Apply 执行仓库（Phase 2，ADR-0004 事实模型，T01 落库；读投影票 #39 消费）。
 	ApplyRuns ports.ApplyRunRepository
 	Journal   ports.OperationJournalRepository
 	Commits   ports.CommitRepository
 	// Apply 引擎文件层依赖（T04）：CAS 承接 before-content 保全（objectstore.CAS
 	// 满足 syncstage.ContentStore），StagingRoot 是按运行隔离的暂存根目录。
-	CAS         syncstage.ContentStore
+	CAS         CASStore
 	StagingRoot string
+	// Downloads 是下载物化引擎（ADR-0008，票 #58/#63）：download 行经其产
+	// 「已过声明 hash 校验的字节」喂既有 StageContent。生产装配恒提供；
+	// nil 时 download 行按取数失败剔除（不进恢复面），供未接下载面的夹具。
+	Downloads *download.Engine
+	// Probes 是 CF 探测引擎（internal/download.Engine 满足 RestoreProber；
+	// 票 #59 PrepareRestore 尽力探测）。可为 nil（不探测，行内不标 availability）。
+	Probes RestoreProber
+	// Retention 是保留策略设置存取（config.toml [retention]，ADR-0007 §8，票 #64）。
+	// 可选：nil（headless 无设置面）时用 model.DefaultRetention()——PrepareSync
+	// 的 preserve_skip 阈值与 GC 引擎的五键读取都经 retentionSettings() 收口。
+	Retention ports.RetentionSettingsStore
+	// GC 是 GC 引擎的存储面（修剪决策输入/级联删除/对象账目与隔离态，票 #64）。
+	// 可选：nil 时 GC 引擎不可用（RequestGC 报错、收口触发跳过），既有链路零波及。
+	GC ports.GCRepository
+	// GCTrash 是回收站与盘面对象操作（objectstore.CAS 实现，票 #64）。可选：
+	// 与 GC 同生（bootstrap 成对装配）。
+	GCTrash ports.GCTrash
 	// Tx 是多步元数据写入的单事务边界（ADR-0003）；CreateRelation 走 RunInTx。
 	Tx            ports.UnitOfWork
 	Publisher     ports.EventPublisher // 事件出口（transport 桥），可为 nil
@@ -115,6 +151,13 @@ type App struct {
 	// 为 T09 pgheadless -metrics apply 度量供数；runApply 写入，互斥保护）。
 	applyTimingMu   sync.Mutex
 	lastApplyTiming view.ApplyTimingView
+
+	// gcMu 串行化 GC 任务创建段（RequestGC 的单飞检查+创建非原子，进程内
+	// 双保险；跨通道并发触发的后到请求复用首个任务）。gcKick 是安全窗口的
+	// 唤醒通道（任务终态/恢复处置 kick，ADR-0007 §3；带缓冲单槽，无等待者
+	// 时丢弃——轮询兜底）。New 初始化。
+	gcMu   sync.Mutex
+	gcKick chan struct{}
 }
 
 // LastScanTiming 返回最近一次完成的扫描分相耗时（进程生命周期内最后一次；
@@ -188,6 +231,7 @@ func New(deps AppDeps) (*App, error) {
 		deps:   deps,
 		pub:    pub,
 		runner: task.NewRunner(deps.Tasks, pub, deps.IDs, deps.Now),
+		gcKick: make(chan struct{}, 1),
 	}, nil
 }
 
@@ -195,6 +239,21 @@ func New(deps AppDeps) (*App, error) {
 func (a *App) taskRunner() *task.Runner { return a.runner }
 
 func (a *App) nowStr() string { return a.deps.Now().UTC().Format(time.RFC3339) }
+
+// retentionSettings 读取保留策略五键（ADR-0007 §8）：设置存取端口缺失
+//（headless Build）或读取失败时退默认值——GC 是机会主义后台任务，设置面
+// 故障不阻断产品主链路，引擎下轮再取。
+func (a *App) retentionSettings() model.RetentionSettings {
+	if a.deps.Retention == nil {
+		return model.DefaultRetention()
+	}
+	s, err := a.deps.Retention.Retention()
+	if err != nil {
+		log.Printf("gc: 读取保留设置失败（退默认值）: %v", err)
+		return model.DefaultRetention()
+	}
+	return s
+}
 
 func (a *App) relationGate(relationID string) *sync.Mutex {
 	v, _ := a.startGate.LoadOrStore(relationID, &sync.Mutex{})

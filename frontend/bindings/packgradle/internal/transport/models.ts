@@ -7,7 +7,7 @@
  */
 export interface ActionAvailabilityDTO {
     /**
-     * scan|prepare_sync|apply_sync|prepare_restore|apply_restore|rebind
+     * scan|prepare_sync|apply_sync|quick_update|prepare_restore|apply_restore|rebind
      */
     "action": string;
     "available": boolean;
@@ -151,6 +151,12 @@ export interface CommitDTO {
     "summary": CommitSummaryDTO;
     "plan_id": string;
     "changes": CommitChangeDTO[] | null;
+
+    /**
+     * Skipped 是本场剔出的取数失败清单（契约 06 §3.7/ADR-0008 §7，票 #63）：
+     * 成功 N + 跳过 M（带 err.download.* 原因码）；旧行无该记录为空数组。
+     */
+    "skipped": CommitSkippedDTO[] | null;
 }
 
 /**
@@ -160,6 +166,20 @@ export interface CommitPageDTO {
     "schema_version": number;
     "items": CommitSummaryDTO[] | null;
     "next_cursor"?: string;
+
+    /**
+     * PrunedBeforeCount 是墓碑计数（契约 06 §3.8，票 #64）；N=0 前端不渲染。
+     */
+    "pruned_before_count": number;
+}
+
+/**
+ * CommitSkippedDTO 是跳过清单单行：资源 ID + 原因码（文案由前端 locale 提供）。
+ */
+export interface CommitSkippedDTO {
+    "resource_id": string;
+    "reason_code": string;
+    "reason_args"?: string[] | null;
 }
 
 /**
@@ -186,6 +206,15 @@ export interface CommitSummaryDTO {
  * （kind=apply，status=queued，PlanID 字段回填）；幂等重入返回既有任务。
  */
 export interface ConfirmPlanDTO {
+    "plan_id": string;
+}
+
+/**
+ * ConfirmRestorePlanDTO 是回滚确认输入（契约 06 §3.4；票 #60）。成功返回
+ * TaskDTO（kind=restore，status=queued，PlanID 字段回填）；幂等重入返回既有
+ * 任务；failed 终局重入建新运行；committed 后 err.plan.apply_not_reentrant。
+ */
+export interface ConfirmRestorePlanDTO {
     "plan_id": string;
 }
 
@@ -309,6 +338,20 @@ export interface OperationDTO {
     "resource_id": string;
     "preconditions": PreconditionDTO[] | null;
     "reversible": boolean;
+
+    /**
+     * Materialization 是物化模式（契约 06 §3.7，票 #63）：copy|download，由
+     * 后端推导（有重取信息的 mod 写操作 → download，其余 → copy）；旧行空值
+     * ＝copy 兼容。
+     */
+    "materialization"?: string;
+
+    /**
+     * PreserveSkip 是「旧版本不留存」警示行标记（契约 06 §3.7；ADR-0007 §7，
+     * 票 #64）：非 mod 单文件超过 preserve_max_bytes，不做 before 保全。
+     * 只增不删，同「不可重取」警示先例（deletion_warn）。
+     */
+    "preserve_skip"?: boolean;
 }
 
 export interface PlanSummaryDTO {
@@ -506,6 +549,161 @@ export interface ResolvePlanDTO {
 }
 
 /**
+ * ResolveRestorePlanDTO 是回滚决议输入（ADR-0006 §3：无冲突决议面）。
+ */
+export interface ResolveRestorePlanDTO {
+    "plan_id": string;
+
+    /**
+     * exact|allow_partial（沿 P2 枚举；空值缺省 allow_partial）
+     */
+    "requested_exactness": string;
+
+    /**
+     * 逐资源 skip 决议，固化于 resolved plan
+     */
+    "skip_resource_ids": string[] | null;
+}
+
+/**
+ * RestoreBlockedItemDTO 是 exact 阻塞清单行（draft 时点 exact_infeasible 证据，
+ * ADR-0006 §4）。
+ */
+export interface RestoreBlockedItemDTO {
+    "resource_id": string;
+    "relative_path": string;
+    "marker": string;
+}
+
+/**
+ * RestorePlanDTO 是回滚计划投影（Status 沿 sync_plans CHECK 读取时投影；
+ * ExactFeasible 为实时就绪面，非 draft 静态标记）。
+ */
+export interface RestorePlanDTO {
+    "schema_version": number;
+    "plan_id": string;
+    "relation_id": string;
+    "target_commit_id": string;
+
+    /**
+     * draft|resolved|confirmed|applied|expired|stale
+     */
+    "status": string;
+    "exact_feasible": boolean;
+    "blocked_by": RestoreBlockedItemDTO[] | null;
+    "items": RestorePlanItemDTO[] | null;
+
+    /**
+     * resolved 后回填 exact|allow_partial
+     */
+    "requested_exactness"?: string;
+
+    /**
+     * 恒非空（restore_acknowledge）
+     */
+    "confirmation_requirements": ConfirmationRequirementDTO[] | null;
+    "expires_at": string;
+    "created_at": string;
+}
+
+/**
+ * RestorePlanItemDTO 是回滚计划单资源行。Marker 枚举
+ * restorable_from_cas|redownload_required|user_object_required|unrecoverable
+ * （delete 行不占四标记）；MarkerReason 仅 user_object_required 行
+ * （no_redownload_info|cf_unavailable|hash_format_unsupported）；Skipped/Staged
+ * 为读取时实时投影；Availability 仅 redownload_required 行（ok|unknown）；
+ * ExpectedDigest 仅 user_object_required 行（验收入库的目标摘要）。
+ */
+export interface RestorePlanItemDTO {
+    "resource_id": string;
+    "relative_path": string;
+
+    /**
+     * create|modify|delete
+     */
+    "change_kind": string;
+
+    /**
+     * delete 行为空串
+     */
+    "marker": string;
+    "marker_reason"?: string;
+    "skipped": boolean;
+    "staged": boolean;
+
+    /**
+     * 手放 mod 删除＝「不可重取」警示（ADR-0006 §5）
+     */
+    "deletion_warn"?: boolean;
+
+    /**
+     * 「旧版本不留存」警示位（判定归票 #64）
+     */
+    "preserve_skip"?: boolean;
+
+    /**
+     * ok|unknown，仅 redownload_required 行
+     */
+    "availability"?: string;
+
+    /**
+     * 仅 ok 行；仅提示，版本决策归 packwiz
+     */
+    "newer_available"?: boolean;
+
+    /**
+     * user_object_required 行验收入库目标摘要
+     */
+    "expected_digest"?: string;
+}
+
+/**
+ * RestorePrepareDTO 是准备回滚输入（Q4：目标 baseline 后端由 commit 推导，
+ * 不收 baseline id）。
+ */
+export interface RestorePrepareDTO {
+    "relation_id": string;
+
+    /**
+     * 任意历史提交（含 restore 提交=重做）；head 合法（空差异计划）
+     */
+    "commit_id": string;
+}
+
+/**
+ * RetentionSettingsDTO 是保留策略设置投影（config.toml [retention] 承载，
+ * ADR-0007 §2/§7/§8；K=3 硬保底固定不可调，不设键）。
+ */
+export interface RetentionSettingsDTO {
+    "schema_version": number;
+
+    /**
+     * 默认 20，范围 5–200
+     */
+    "keep_commits": number;
+
+    /**
+     * 默认 90，范围 7–365
+     */
+    "keep_days": number;
+
+    /**
+     * 默认 1 GiB，范围 128 MiB–20 GiB
+     */
+    "relation_capacity_bytes": number;
+
+    /**
+     * 默认 32 MiB，范围 1 MiB–512 MiB；0＝不限
+     */
+    "preserve_max_bytes": number;
+
+    /**
+     * 默认 7，范围 1–90
+     */
+    "trash_days": number;
+}
+
+/**
  * RuntimeCandidateDTO 是运行实例发现候选（registered 按 adapter identity 幂等判定）。
  */
 export interface RuntimeCandidateDTO {
@@ -528,6 +726,20 @@ export interface SnapshotSummaryDTO {
     "captured_at": string;
     "snapshot_digest": string;
     "resource_count": number;
+}
+
+/**
+ * StageUserObjectDTO 是用户对象补全输入：读字节→按 expected_digest 校验→暂存
+ * （暂存路径不透出，契约 06 §3.5）。
+ */
+export interface StageUserObjectDTO {
+    "plan_id": string;
+    "resource_id": string;
+
+    /**
+     * 本地绝对路径
+     */
+    "source_path": string;
 }
 
 /**
@@ -610,6 +822,19 @@ export interface UpdateMappingPolicyDTO {
 }
 
 /**
+ * UpdateRetentionSettingsDTO 是保留设置写输入：五键整体替换（设置页表单全量
+ * 提交）。单键范围校验，越界 → err.settings.retention_invalid（{0}=字段名），
+ * 整体拒绝（不落任何键）。
+ */
+export interface UpdateRetentionSettingsDTO {
+    "keep_commits": number;
+    "keep_days": number;
+    "relation_capacity_bytes": number;
+    "preserve_max_bytes": number;
+    "trash_days": number;
+}
+
+/**
  * WorkspaceDTO 是工作区详情。
  */
 export interface WorkspaceDTO {
@@ -620,6 +845,12 @@ export interface WorkspaceDTO {
     "availability": ActionAvailabilityDTO[] | null;
     "latest_project_snapshot"?: SnapshotSummaryDTO | null;
     "latest_runtime_snapshot"?: SnapshotSummaryDTO | null;
+
+    /**
+     * AuthorizedApply 是工作区授权开关投影（relations.authorized_apply，schema v6；
+     * 契约 06 §3.6：只增不删，票 #57）。
+     */
+    "authorized_apply": boolean;
 }
 
 /**

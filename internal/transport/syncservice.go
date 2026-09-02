@@ -319,3 +319,70 @@ func (s *SyncService) AcknowledgeRecovery(taskID string) (WorkspaceDTO, error) {
 	}
 	return workspaceDTO(v), nil
 }
+
+// ---- 回滚计划面（契约 06 §2/§3；票 #59）----
+
+// PrepareRestore 准备回滚：只收 relation_id + commit_id，目标 baseline 后端推导；
+// 四标记判定 + CF 尽力探测，draft 落 sync_plans(kind=restore)（契约 06 §3.1）。
+// 成功 → RestorePlanDTO（status=draft）。
+func (s *SyncService) PrepareRestore(input RestorePrepareDTO) (RestorePlanDTO, error) {
+	v, err := s.app.PrepareRestore(context.Background(), view.PrepareRestoreInput{
+		RelationID: input.RelationID,
+		CommitID:   input.CommitID,
+	})
+	if err != nil {
+		return RestorePlanDTO{}, err
+	}
+	return restorePlanDTO(v), nil
+}
+
+// ResolveRestorePlan 固化回滚决议（契约 06 §3.3）：仅 partial 逐资源 skip，
+// exact 遇就绪面不满前置拒绝（err.restore.exact_infeasible）。
+func (s *SyncService) ResolveRestorePlan(input ResolveRestorePlanDTO) (RestorePlanDTO, error) {
+	v, err := s.app.ResolveRestorePlan(context.Background(), view.ResolveRestorePlanInput{
+		PlanID:             input.PlanID,
+		RequestedExactness: input.RequestedExactness,
+		SkipResourceIDs:    input.SkipResourceIDs,
+	})
+	if err != nil {
+		return RestorePlanDTO{}, err
+	}
+	return restorePlanDTO(v), nil
+}
+
+// GetRestorePlan 查询回滚计划（对称 GetPlan 的读伴随，契约 06 §2；
+// stale/expired 为读取时投影）。
+func (s *SyncService) GetRestorePlan(planID string) (RestorePlanDTO, error) {
+	v, err := s.app.GetRestorePlan(context.Background(), planID)
+	if err != nil {
+		return RestorePlanDTO{}, err
+	}
+	return restorePlanDTO(v), nil
+}
+
+// ConfirmRestorePlan 确认 resolved 回滚计划并创建 restore 任务（契约 06 §3.4；
+// 票 #60）：确认即建 tasks(kind=restore, queued) + apply_runs(prepared)，引擎
+// 协程接管执行（ApplyRestore 不上 wire，Q1）。幂等重入返回既有 TaskDTO；
+// failed 终局可重入建新运行；上一运行已 committed → err.plan.apply_not_reentrant。
+func (s *SyncService) ConfirmRestorePlan(input ConfirmRestorePlanDTO) (TaskDTO, error) {
+	v, err := s.app.ConfirmRestorePlan(context.Background(), view.ConfirmRestorePlanInput{PlanID: input.PlanID})
+	if err != nil {
+		return TaskDTO{}, err
+	}
+	return taskDTO(v), nil
+}
+
+// StageUserObject 用户对象补全（契约 06 §3.5）：draft/resolved 均可补全；
+// 按 expected_digest 验收不符 → err.userobject.hash_mismatch（{0}=期望摘要，
+// 可重试）。成功返回更新后的 RestorePlanDTO（该行 staged=true）。
+func (s *SyncService) StageUserObject(input StageUserObjectDTO) (RestorePlanDTO, error) {
+	v, err := s.app.StageUserObject(context.Background(), view.StageUserObjectInput{
+		PlanID:     input.PlanID,
+		ResourceID: input.ResourceID,
+		SourcePath: input.SourcePath,
+	})
+	if err != nil {
+		return RestorePlanDTO{}, err
+	}
+	return restorePlanDTO(v), nil
+}

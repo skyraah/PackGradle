@@ -33,7 +33,10 @@ func New() *Scanner { return &Scanner{} }
 func (s *Scanner) Name() string { return "packwiz" }
 
 // Version 返回扫描器实现版本（语义变化时递增，参与快照记录但不参与 digest）。
-func (s *Scanner) Version() string { return "1.0.0" }
+// 1.1.0（票 #63/#59）：mod 观察新增 cf_file_id 元数据（CF 免钥匙直链取数的
+// 文件编号，供 sync 计划物化模式推导与 restore 重取判定消费；不进语义摘要
+// 与快照 digest）。
+func (s *Scanner) Version() string { return "1.1.0" }
 
 // Scan 扫描项目端点：index.toml 权威 mod 列表 + MappingPolicy 受管文件规则。
 // 全部端点内路径访问经 Resolver（realpath + root containment）强制入口；
@@ -136,6 +139,15 @@ func (s *Scanner) Scan(ctx context.Context, root string, opts ports.ScanOptions)
 		if meta.Download.HashFormat != "" && meta.Download.Hash != "" {
 			metadata[model.MetaDeclaredHashAlgo] = strings.ToLower(meta.Download.HashFormat)
 			metadata[model.MetaDeclaredHashValue] = meta.Download.Hash
+		}
+		// update.curseforge.file-id：CF 免钥匙直链取数信息（票 #63 sync 物化
+		// 模式推导 + 票 #59 restore 重取判定共用同一键）。缺失或非数值不落键
+		// ——物化模式推导把「无 file-id」视作无重取信息（copy），restore 侧
+		// 同键观察「看数据不看出身」。
+		if cf, ok := meta.Update["curseforge"]; ok {
+			if fid := anyToString(cf["file-id"]); fid != "" {
+				metadata[model.MetaCFFileID] = fid
+			}
 		}
 		if meta.Filename != "" {
 			metadata[model.MetaFilename] = meta.Filename

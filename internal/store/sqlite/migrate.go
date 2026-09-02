@@ -73,8 +73,33 @@ var migrations = []migration{
 			if err := rows.Err(); err != nil {
 				return fmt.Errorf("sqlite: 遍历 foreign_key_check 结果: %w", err)
 			}
+		if bad > 0 {
+			return fmt.Errorf("sqlite: operation_journal 表存在 %d 行悬挂引用（task），迁移中止", bad)
+		}
+		return nil
+	}},
+	{Version: 6, Name: "relations 授权开关列与 apply_runs failed 终局", Stmt: func() string { return schemaV6 },
+		DisableFK: true,
+		Verify: func(ctx context.Context, conn *sql.Conn) error {
+			rows, err := conn.QueryContext(ctx, "PRAGMA foreign_key_check(apply_runs)")
+			if err != nil {
+				return fmt.Errorf("sqlite: foreign_key_check(apply_runs) 失败: %w", err)
+			}
+			defer rows.Close()
+			bad := 0
+			for rows.Next() {
+				var table string
+				var rowid, parent, fkid sql.NullInt64
+				if err := rows.Scan(&table, &rowid, &parent, &fkid); err != nil {
+					return fmt.Errorf("sqlite: 读取 foreign_key_check 结果: %w", err)
+				}
+				bad++
+			}
+			if err := rows.Err(); err != nil {
+				return fmt.Errorf("sqlite: 遍历 foreign_key_check 结果: %w", err)
+			}
 			if bad > 0 {
-				return fmt.Errorf("sqlite: operation_journal 表存在 %d 行悬挂引用（task），迁移中止", bad)
+				return fmt.Errorf("sqlite: apply_runs 表存在 %d 行悬挂引用（task/plan/relation/commit），迁移中止", bad)
 			}
 			return nil
 		}},

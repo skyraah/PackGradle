@@ -303,7 +303,9 @@ func TestMigrateV1ToV2EnforcesTaskReferences(t *testing.T) {
 	}
 
 	ctx := context.Background()
-	relationID := fixtureRelation(t, db, "mv")
+	// v1 库阶段的关系写入用 v1 列集 raw SQL（RelationRepository 自 v6 起列清单含
+	// authorized_apply，v1 schema 无该列）；本测试关注 tasks 的外键迁移。
+	relationID := fixtureRelationRaw(t, db, "mv")
 	snapshots := NewSnapshotRepository(db)
 	snapP, snapR := insertSnapPair(t, snapshots, relationID, "mv")
 	// v1 库阶段的计划写入用 v1 列集 raw SQL（PlanRepository 现按 v3 列集写

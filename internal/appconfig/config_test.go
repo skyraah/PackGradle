@@ -3,7 +3,11 @@ package appconfig
 import (
 	"os"
 	"path/filepath"
+	"strconv"
+	"strings"
 	"testing"
+
+	"packgradle/internal/errs"
 )
 
 // newTestConfig 用临时目录构造 ConfigManager，避免污染真实用户配置
@@ -177,4 +181,67 @@ func TestMigrateLegacySkipsMissingProject(t *testing.T) {
 	if len(m.cfg.LegacyLinks) != 0 {
 		t.Error("不存在的项目应跳过且清空旧字段")
 	}
+}
+
+// [download] concurrency 加载层校验（ADR-0008 §4）：未配置取默认 6，
+// 合法 1–16，越界（0/17 等）加载报错（AC：0/17 拒绝）
+func TestConfigDownloadConcurrency(t *testing.T) {
+	writeConfig := func(t *testing.T, content string) string {
+		t.Helper()
+		path := filepath.Join(t.TempDir(), "config.toml")
+		if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		return path
+	}
+
+	t.Run("未配置取默认6", func(t *testing.T) {
+		cfg, err := LoadConfigFrom(writeConfig(t, ""))
+		if err != nil {
+			t.Fatalf("空配置应加载成功: %v", err)
+		}
+		if got := cfg.Download.EffectiveConcurrency(); got != 6 {
+			t.Fatalf("未配置应取默认 6，实际 %d", got)
+		}
+	})
+
+	t.Run("边界1与16合法", func(t *testing.T) {
+		for _, n := range []int{1, 16, 6} {
+			cfg, err := LoadConfigFrom(writeConfig(t, "[download]\nconcurrency = "+itoa(n)+"\n"))
+			if err != nil {
+				t.Fatalf("concurrency = %d 应合法: %v", n, err)
+			}
+			if got := cfg.Download.EffectiveConcurrency(); got != n {
+				t.Fatalf("concurrency = %d 应生效，实际 %d", n, got)
+			}
+		}
+	})
+
+	t.Run("越界0与17拒绝", func(t *testing.T) {
+		for _, n := range []int{0, 17, -3, 100} {
+			_, err := LoadConfigFrom(writeConfig(t, "[download]\nconcurrency = "+itoa(n)+"\n"))
+			if err == nil {
+				t.Fatalf("concurrency = %d 应被拒绝", n)
+			}
+			if code := errs.CodeOf(err); code != "err.config.download_concurrency_invalid" {
+				t.Fatalf("越界 %d 错误码不符: %q", n, code)
+			}
+		}
+	})
+
+	t.Run("越界值不落盘改写", func(t *testing.T) {
+		// 加载失败路径：配置文件保持原样（fail fast 由用户修复，不静默改写）
+		path := writeConfig(t, "[download]\nconcurrency = 0\n")
+		if _, err := LoadConfigFrom(path); err == nil {
+			t.Fatal("0 应被拒绝")
+		}
+		data, err := os.ReadFile(path)
+		if err != nil || !strings.Contains(string(data), "concurrency = 0") {
+			t.Fatalf("加载失败不得改写配置文件: %v", err)
+		}
+	})
+}
+
+func itoa(n int) string {
+	return strconv.Itoa(n)
 }

@@ -86,6 +86,18 @@ func (m *memTasks) FindActiveByRelationAndKind(_ context.Context, relID, kind st
 	return model.Task{}, false, nil
 }
 
+func (m *memTasks) FindActiveByKind(_ context.Context, kind string) (model.Task, bool, error) {
+	for _, t := range m.rows {
+		if t.Kind == kind {
+			switch t.Status {
+			case model.TaskStatusQueued, model.TaskStatusRunning:
+				return t, true, nil
+			}
+		}
+	}
+	return model.Task{}, false, nil
+}
+
 func (m *memTasks) ListActiveAll(ctx context.Context) ([]model.Task, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err

@@ -147,20 +147,29 @@ func (a *App) GetWorkspace(ctx context.Context, relationID string) (view.Workspa
 		}
 	}
 
-	// apply_sync（契约 05 §1）：在既有三动作之上注册，计划面按可应用计划推导
+	// apply_sync（契约 05 §1）：在既有三动作之上注册，计划面按可应用计划推导；
+	// prepare_restore（契约 06 §1；票 #59）：三条件推导（无活跃任务 ∧ 非
+	// recovery_required ∧ scan ready），原因码已在 PrepareRestore 同码强制。
 	face, err := a.planReadinessForRelation(ctx, rel, proj, rt)
 	if err != nil {
 		return view.WorkspaceView{}, err
 	}
+	// quick_update（契约 06 §1/§4，票 #62）：在 apply_sync 之上注册，授权开关 +
+	// prepare_restore 同款三门禁（无活跃任务 ∧ 非 recovery_required ∧ scan ready）
+	// 由后端推导，前端不得自行推断
 	availability := append(deriveAvailability(string(rel.Health), state.ScanState, hasActiveTask),
-		deriveApplySyncAvailability(string(rel.Health), state.ScanState, hasActiveTask, face))
+		deriveApplySyncAvailability(string(rel.Health), state.ScanState, hasActiveTask, face),
+		deriveQuickUpdateAvailability(string(rel.Health), state.ScanState, hasActiveTask, rel.AuthorizedApply),
+		derivePrepareRestoreAvailability(string(rel.Health), state.ScanState, hasActiveTask),
+		deriveApplyRestoreAvailability(string(rel.Health), state.ScanState, hasActiveTask))
 
 	w := view.WorkspaceView{
-		SchemaVersion: model.CurrentSchemaVersion,
-		Relation:      relationView(rel, proj, rt),
-		State:         state,
-		Features:      workspaceFeatures(),
-		Availability:  availability,
+		SchemaVersion:   model.CurrentSchemaVersion,
+		Relation:        relationView(rel, proj, rt),
+		State:           state,
+		Features:        workspaceFeatures(),
+		Availability:    availability,
+		AuthorizedApply: rel.AuthorizedApply,
 	}
 	if okP {
 		w.LatestProjectSnapshot = snapshotSummary(snapP)
@@ -169,6 +178,18 @@ func (a *App) GetWorkspace(ctx context.Context, relationID string) (view.Workspa
 		w.LatestRuntimeSnapshot = snapshotSummary(snapR)
 	}
 	return w, nil
+}
+
+// SetWorkspaceAuthorized 切换工作区授权开关（契约 06 §3.6；票 #57）：写
+// relations.authorized_apply 后返回更新后的工作区投影（WorkspaceDTO 开关值与
+// 既有字段同源一致）。开关存储与判定解耦：恢复期开关值保留、入口由既有
+// err.recovery.in_progress 门禁挡（CONTEXT.md 授权模式词条）；免确认编排
+// （confirmation_requirements 为空 ∧ authorized）归前端快速更新编排，不在本用例。
+func (a *App) SetWorkspaceAuthorized(ctx context.Context, relationID string, enabled bool) (view.WorkspaceView, error) {
+	if err := a.deps.Relations.UpdateAuthorizedApply(ctx, relationID, enabled); err != nil {
+		return view.WorkspaceView{}, errs.New(CodeRelationNotFound, relationID)
+	}
+	return a.GetWorkspace(ctx, relationID)
 }
 
 func snapshotAfterTask(ok bool, snap model.ObservedSnapshot, t model.Task) bool {

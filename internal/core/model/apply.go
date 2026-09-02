@@ -5,7 +5,8 @@ import "encoding/json"
 // Apply 执行的领域类型（ADR-0004：apply_runs 运行头、operation_journal 逐操作行、
 // operation_journal_events 追加历史三层事实模型；schema v5 落列，票 #34）。
 
-// ApplyRunState 是 Apply 运行的六阶段（ADR-0004 §1/§5）。
+// ApplyRunState 是 Apply 运行阶段（ADR-0004 §1/§5；failed 终局为 P3 增量，
+// schema v6 CHECK 放行，票 #57/#63）。
 const (
 	ApplyRunPrepared         = "prepared"
 	ApplyRunStaged           = "staged"
@@ -13,19 +14,26 @@ const (
 	ApplyRunVerifying        = "verifying"
 	ApplyRunCommitted        = "committed"
 	ApplyRunRecoveryRequired = "recovery_required"
+	// ApplyRunFailed 是 sync 域「全部操作取数失败（无可提交）」的终局
+	// （ADR-0008 §7，票 #63）：网络失败 ≠ 恢复面，不进崩溃恢复、不标记关系
+	// 健康；重试 = 同 plan 重新 Confirm（新任务新运行）或重新快速更新。
+	ApplyRunFailed = "failed"
 )
 
-// ApplyRunTransitions 是运行六阶段的合法迁移表：成功路径固定
+// ApplyRunTransitions 是运行阶段的合法迁移表：成功路径固定
 // prepared→staged→applying→verifying→committed（ADR-0004 §5）；任一阶段失败
-// 进入 recovery_required；committed 与 recovery_required 为终态（人工确认只收口
-// 恢复语义，不再推进运行）。
+// 进入 recovery_required（文件一致性风险面）；prepared（下载 + staging 相位）
+// 在「全部操作取数失败（无可提交）」时进入 failed（ADR-0008 §7，剔出语义的
+// 唯一终局反转，票 #63）——applying 起文件动作已触目标，失败仍是恢复面；
+// committed、recovery_required 与 failed 为终态（人工确认只收口恢复语义）。
 var ApplyRunTransitions = map[string][]string{
-	ApplyRunPrepared:         {ApplyRunStaged, ApplyRunRecoveryRequired},
+	ApplyRunPrepared:         {ApplyRunStaged, ApplyRunRecoveryRequired, ApplyRunFailed},
 	ApplyRunStaged:           {ApplyRunApplying, ApplyRunRecoveryRequired},
 	ApplyRunApplying:         {ApplyRunVerifying, ApplyRunRecoveryRequired},
 	ApplyRunVerifying:        {ApplyRunCommitted, ApplyRunRecoveryRequired},
 	ApplyRunCommitted:        {},
 	ApplyRunRecoveryRequired: {},
+	ApplyRunFailed:           {},
 }
 
 // 逐操作状态（ADR-0004 §2 单调路径）。

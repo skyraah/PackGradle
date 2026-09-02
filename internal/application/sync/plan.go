@@ -96,6 +96,9 @@ func (a *App) PrepareSync(ctx context.Context, input view.PrepareSyncInput) (vie
 		ExpectedBindings:   model.ExpectedBindings{Project: proj.BindingFingerprint, Runtime: rt.BindingFingerprint},
 		RequestedExactness: model.Exactness(input.RequestedExactness),
 		ExpiresAt:          a.deps.Now().UTC().Add(planTTL),
+		// 大文件保全阈值（ADR-0007 §7，票 #64）：prepare 时点判定并固化
+		// preserve_skip 计划行标记（sync 侧；restore 侧归票 #60 同口径复用）。
+		PreserveMaxBytes: a.retentionSettings().PreserveMaxBytes,
 	})
 	if err != nil {
 		return view.SyncPlanView{}, err
@@ -112,6 +115,11 @@ func (a *App) PrepareSync(ctx context.Context, input view.PrepareSyncInput) (vie
 func (a *App) ResolvePlan(ctx context.Context, input view.ResolvePlanInput) (view.SyncPlanView, error) {
 	draft, err := a.deps.Plans.Get(ctx, input.PlanID)
 	if err != nil {
+		return view.SyncPlanView{}, errs.New(CodePlanNotFound, input.PlanID)
+	}
+	// 计划类别门禁（票 #59）：本方法是 sync/initialize 计划的决议入口；restore
+	// 计划归 ResolveRestorePlan。跨类计划按 not_found 同一口径，不泄露形状。
+	if draft.Kind != model.PlanSync && draft.Kind != model.PlanInitialize {
 		return view.SyncPlanView{}, errs.New(CodePlanNotFound, input.PlanID)
 	}
 	if draft.Status != model.PlanDraft {
@@ -136,7 +144,7 @@ func (a *App) ResolvePlan(ctx context.Context, input view.ResolvePlanInput) (vie
 		return view.SyncPlanView{}, errs.New(CodeSyncSnapshotNotFound, draft.InputRuntimeSnapshotID)
 	}
 
-	resolved, err := plan.Resolve(draft, snapP, snapR, input.Resolutions)
+	resolved, err := plan.Resolve(draft, snapP, snapR, input.Resolutions, a.retentionSettings().PreserveMaxBytes)
 	if err != nil {
 		if errors.Is(err, plan.ErrResolutionIncomplete) || errors.Is(err, plan.ErrResolutionUnknown) ||
 			errors.Is(err, plan.ErrResolutionInvalidChoice) {

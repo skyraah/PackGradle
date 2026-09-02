@@ -3,10 +3,12 @@
 
 import * as ProjectService from "./projectservice.js";
 import * as RuntimeService from "./runtimeservice.js";
+import * as SettingsService from "./settingsservice.js";
 import * as SyncService from "./syncservice.js";
 export {
     ProjectService,
     RuntimeService,
+    SettingsService,
     SyncService
 };
 
@@ -21,8 +23,10 @@ export type {
     CommitChangeDTO,
     CommitDTO,
     CommitPageDTO,
+    CommitSkippedDTO,
     CommitSummaryDTO,
     ConfirmPlanDTO,
+    ConfirmRestorePlanDTO,
     ConfirmationRequirementDTO,
     ConflictDTO,
     ContentRefDTO,
@@ -49,12 +53,20 @@ export type {
     RepresentationDTO,
     ResolutionDTO,
     ResolvePlanDTO,
+    ResolveRestorePlanDTO,
+    RestoreBlockedItemDTO,
+    RestorePlanDTO,
+    RestorePlanItemDTO,
+    RestorePrepareDTO,
+    RetentionSettingsDTO,
     RuntimeCandidateDTO,
     SnapshotSummaryDTO,
+    StageUserObjectDTO,
     SyncPlanDTO,
     TaskDTO,
     TaskPageDTO,
     UpdateMappingPolicyDTO,
+    UpdateRetentionSettingsDTO,
     WorkspaceDTO,
     WorkspaceFeaturesDTO,
     WorkspacePageDTO,

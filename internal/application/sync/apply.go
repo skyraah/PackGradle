@@ -51,6 +51,7 @@ func (a *App) startApply(t model.Task) {
 	a.runner.RegisterCancel(t.TaskID, cancel)
 	go func() {
 		defer a.runner.UnregisterCancel(t.TaskID)
+		defer a.kickGC() // 运行收口（committed/failed/recovery_required）= 窗口复查事件
 		a.runApply(applyCtx, t)
 	}()
 }
@@ -189,19 +190,36 @@ func (a *App) runApply(ctx context.Context, queued model.Task) {
 	snaps := map[model.Side]model.ObservedSnapshot{model.SideProject: snapP, model.SideRuntime: snapR}
 
 	plans := deriveApplyFilePlans(plan, snapP, snapR, base, proj.RootPath, rt.RootPath)
+
+	// 下载相位（票 #63）：download 行批量并发取数（.part 置运行暂存 downloads/
+	// 子目录，run 内续传、跨 run 不复用）。单行失败不中断批次——失败行随后在
+	// staging 期按剔除语义落跳过清单；ctx 取消沿既有取消语义收口。
+	if err := a.fetchDownloadOperations(ctx, stgRun, plans); err != nil {
+		failRun(applyResultCode(err), fmt.Errorf("下载相位中止: %w", err))
+		return
+	}
+
 	staged := stageApplyOperations(ctx, a, stgRun, rel.RelationID, plans, snaps, rootBySide)
 	timing.StagingMs = time.Since(stageStart).Milliseconds()
 	timing.OperationCount = total
 
+	// 剔除分流（ADR-0008 §7，票 #63 唯一语义反转）：取数失败剔出本场——不暂存、
+	// 不写入、不进 journal；保留集照常走 applying/verify/commit 原子收口。
+	keep, skips := applySkips(staged)
+	keepPlans := make([]applyFilePlan, 0, len(keep))
+	for _, s := range keep {
+		keepPlans = append(keepPlans, s.fp)
+	}
+
 	// 事实落库：整批操作行（含 staging 事实与逐操作结果）一次写入；随后推进
 	// 运行状态。两步各自原子，崩溃窗口由 T05 恢复管线按 journal/文件证据裁决。
-	rows, failedIdx := buildJournalRows(t.TaskID, plans, staged)
+	rows, failedIdx := buildJournalRows(t.TaskID, keepPlans, keep)
 	if err := a.deps.Journal.InsertBatch(ctx, rows, a.nowStr()); err != nil {
 		failRun(applyResultCode(err), fmt.Errorf("写入操作日志: %w", err))
 		return
 	}
-	refs := make([]map[string]string, 0, len(staged))
-	for _, s := range staged {
+	refs := make([]map[string]string, 0, len(keep))
+	for _, s := range keep {
 		if s.casRef != nil {
 			refs = append(refs, map[string]string{
 				"operation_id": s.fp.op.ID, "kind": "cas",
@@ -219,8 +237,14 @@ func (a *App) runApply(ctx context.Context, queued model.Task) {
 		return
 	}
 	if failedIdx >= 0 {
-		s := staged[failedIdx]
+		s := keep[failedIdx]
 		failRun(s.failCode, fmt.Errorf("操作 %s staging 失败: %v", s.fp.op.ID, s.failErr))
+		return
+	}
+	// 全部失败（无可提交）才 failed 终局（ADR-0008 §7）：网络失败 ≠ 恢复面，
+	// 不进崩溃恢复、不标关系健康；重试 = 重新快速更新（重扫新计划只剩未更新项）。
+	if len(keep) == 0 && len(skips) > 0 {
+		a.failApplyFailed(commitCtx, t, run, skips)
 		return
 	}
 	if err := a.deps.ApplyRuns.AdvanceState(ctx, t.TaskID, model.ApplyRunStaged, a.nowStr()); err != nil {
@@ -243,7 +267,7 @@ func (a *App) runApply(ctx context.Context, queued model.Task) {
 	}
 	state = model.ApplyRunApplying
 
-	if !a.runApplyingBatches(ctx, commitCtx, &t, staged, actionsBySide, advance, failRun) {
+	if !a.runApplyingBatches(ctx, commitCtx, &t, keep, actionsBySide, advance, failRun) {
 		return
 	}
 	timing.ApplyingMs = time.Since(applyingStart).Milliseconds()
@@ -269,7 +293,7 @@ func (a *App) runApply(ctx context.Context, queued model.Task) {
 		failRun(resultIOError, fmt.Errorf("验证复扫失败: %w", err))
 		return
 	}
-	violations, remaining, err := verifyRescan(plan, plans, rescanP, rescanR, base)
+	violations, remaining, err := verifyRescan(plan, keepPlans, rescanP, rescanR, base, skips)
 	if err != nil {
 		failRun(resultVerifyMismatch, fmt.Errorf("验证比较失败: %w", err))
 		return
@@ -302,7 +326,7 @@ func (a *App) runApply(ctx context.Context, queued model.Task) {
 	rescanR.SnapshotID = a.deps.IDs("snap_")
 	rescanR.CapturedAt = nowStr
 	commit := buildSyncCommit(rel, plan, commitID, baselineID, nowStr, completeness, remaining,
-		rescanP.SnapshotID, rescanR.SnapshotID, buildCommitChanges(plans, snapP, snapR, rescanP, rescanR))
+		rescanP.SnapshotID, rescanR.SnapshotID, buildCommitChanges(keepPlans, snapP, snapR, rescanP, rescanR), skips)
 
 	err = a.deps.Tx.RunInTx(commitCtx, func(repos ports.Repos) error {
 		if err := repos.Snapshots.Insert(ctx, rescanP); err != nil {
@@ -318,7 +342,7 @@ func (a *App) runApply(ctx context.Context, queued model.Task) {
 			return fmt.Errorf("写入提交: %w", err)
 		}
 		var casRefs []ports.ObjectRefRow
-		for _, s := range staged {
+		for _, s := range keep {
 			if s.casRef != nil {
 				casRefs = append(casRefs, *s.casRef)
 			}
@@ -339,7 +363,7 @@ func (a *App) runApply(ctx context.Context, queued model.Task) {
 			return err
 		}
 		verifiedAt := nowStr
-		for _, s := range staged {
+		for _, s := range keep {
 			if err := repos.Journal.AdvanceStatus(ctx, t.TaskID, s.fp.op.ID,
 				model.OperationStatusVerified, verifiedAt, nil); err != nil {
 				return fmt.Errorf("操作 %s 标记 verified: %w", s.fp.op.ID, err)
@@ -374,6 +398,10 @@ func (a *App) runApply(ctx context.Context, queued model.Task) {
 		return
 	}
 	_ = a.pub.PublishRelationInvalidated(commitCtx, rel.RelationID)
+
+	// 触发通道②（票 #64，ADR-0007 §3）：提交收口后廉价检查关系占用，
+	// 超容量锚点 C 才建 GC 任务（幂等单飞；异步不阻塞收口）。
+	a.maybeScheduleGCAfterCommit(commitCtx, rel.RelationID)
 }
 
 // applyWorkers 是 staging 与 applying 批内文件动作共用的有界并行度（票 #48：
@@ -399,6 +427,17 @@ type stagedOp struct {
 	casRef   *ports.ObjectRefRow
 	failCode string
 	failErr  error
+	// skipped 标记取数失败被剔出本场（ADR-0008 §7，票 #63 唯一语义反转）：
+	// 不暂存、不写入、不进 journal，其余操作照常原子提交；skipCode/skipArgs
+	// 是跳过清单的原因码与插值参数（err.download.* / hash_format_unsupported /
+	// content_unavailable），skips>0 且有可提交时 commit=partial。
+	skipped   bool
+	skipCode  string
+	skipArgs  []string
+	skipCause string
+	// failArgs 是硬失败行的原因码插值参数（restore 执行器专用：下载失败的
+	// err.download.* args，票 #60；apply 侧恒 nil）。
+	failArgs []string
 }
 
 // stageOneOperation 执行单操作 staging（串行原语的逐操作体）：前置条件复核 →
@@ -410,18 +449,40 @@ func stageOneOperation(ctx context.Context, a *App, run *syncstage.Run, relation
 	rootBySide map[model.Side]string) stagedOp {
 
 	s := stagedOp{fp: fp}
-	if fp.blockedCode != "" {
-		s.failCode, s.failErr = fp.blockedCode, fmt.Errorf("操作不可执行（%s）", fp.blockedCode)
+	if fp.dlFailCode != "" {
+		// 下载相位取数失败（err.download.* 分桶 / hash_format_unsupported 信号）：
+		// 剔出本场（ADR-0008 §7），不终场。
+		markSkipped(&s, fp.dlFailCode, fp.dlFailArgs, fp.dlFailCause)
 		return s
 	}
-	if code := verifyApplyPreconditions(fp.op, snaps, rootBySide); code != "" {
+	if fp.blockedCode != "" {
+		// blocked 分流（票 #63）：取数面不可得（content_unavailable）按剔除语义
+		// 跳过——不终场；其余（前置结构不可执行/未知操作）保持整场失败恢复面。
+		if fp.blockedCode == resultContentUnavailable {
+			markSkipped(&s, skipReasonContentUnavailable, nil, "本地数据源无目标字节（copy 不可得）")
+		} else {
+			s.failCode, s.failErr = fp.blockedCode, fmt.Errorf("操作不可执行（%s）", fp.blockedCode)
+		}
+		return s
+	}
+	if code, srcFailed := verifyApplyPreconditions(fp.op, snaps, rootBySide); code != "" {
+		if srcFailed {
+			// 源侧（取数面）失效——文件在确认后被删/改写，after 字节不可得：
+			// copy/download 一条规矩（ADR-0008 §7，票 #63），剔出本场不终场；
+			// 目标侧失效（文件一致性风险面）保持整场失败恢复面。
+			markSkipped(&s, skipReasonContentUnavailable, nil, "源侧数据在应用前失效（取数不可得）")
+			return s
+		}
 		s.failCode, s.failErr = code, fmt.Errorf("前置条件在磁盘上不成立（%s）", code)
 		return s
 	}
 	// before-content CAS 保全：modify/delete 且 recoverability 策略要求时
-	// 先落 CAS 并独立复核（PreserveBeforeContent 失败零引用）。
+	// 先落 CAS 并独立复核（PreserveBeforeContent 失败零引用）。大文件保全
+	// 阈值（ADR-0007 §7，票 #64）：计划行固化 preserve_skip=true 的操作跳过
+	// 保全——prepare 时点已按 model.ShouldSkipPreserve 判定（计划即契约），
+	// 照常同步写、旧版本不留 CAS；回滚对象缺失走既有降级分支，零新增枚举。
 	if fp.action == applyActionModify || fp.action == applyActionDelete {
-		if syncstage.RequiresCASBackup(fp.recoverability) {
+		if !fp.op.PreserveSkip && syncstage.RequiresCASBackup(fp.recoverability) {
 			ref, preserved, err := syncstage.PreserveBeforeContent(ctx, a.deps.CAS,
 				filepath.Join(fp.root, filepath.FromSlash(fp.targetRel)), fp.recoverability)
 			if err != nil {
@@ -442,7 +503,11 @@ func stageOneOperation(ctx context.Context, a *App, run *syncstage.Run, relation
 		if !fp.targetReady {
 			reader, closer, err := a.afterContentReader(ctx, fp)
 			if err != nil {
-				s.failCode, s.failErr = resultContentUnavailable, err
+				// 取数失败（copy/download 一条规矩，ADR-0008 §7，票 #63 语义
+				// 反转）：剔出本场不进 journal，不终止整场；其余操作照常。
+				s.skipped = true
+				s.skipCode = skipReasonContentUnavailable
+				s.skipCause = err.Error()
 				return s
 			}
 			tempRel, stageErr := run.StageContent(fp.targetRel, reader, fp.afterDigest)
@@ -471,17 +536,19 @@ func stageOneOperation(ctx context.Context, a *App, run *syncstage.Run, relation
 // stageApplyOperations 有界并行执行 staging（P2-T14）：逐操作工作互相独立——
 // 各操作只触碰自己的目标/源文件与按操作隔离的暂存/证明路径（计划每资源一
 // 操作，路径互斥），运行密钥只读，CAS Put 按 digest 寻址并发安全。结果按序
-// 回收；首个失败（最低 ordinal）即停：停止派发后续操作，在途操作自然完成
-// （其暂存事实截断出 journal，孤儿文件留在运行目录内，随运行清理回收），
-// 返回切片保持 plans 前缀契约（buildJournalRows）。取消在操作边界响应：
-// 已在途的操作做完（仅暂存，不触目标），未开始的保持未 staging。
+// 回收。失败分流（票 #63 剔除语义）：skipped（取数失败剔出本场）不截断批次、
+// 不进 journal；首个硬失败（最低 ordinal，前置/暂存复核/证明面）即停：停止
+// 派发后续操作，在途操作自然完成（其暂存事实截断出 journal，孤儿文件留在
+// 运行目录内，随运行清理回收），返回切片保持 plans 前缀契约（buildJournalRows）。
+// 取消在操作边界响应：已在途的操作做完（仅暂存，不触目标），未开始的保持
+// 未 staging。
 func stageApplyOperations(ctx context.Context, a *App, run *syncstage.Run, relationID string,
 	plans []applyFilePlan, snaps map[model.Side]model.ObservedSnapshot,
 	rootBySide map[model.Side]string) []stagedOp {
 
 	results := make([]stagedOp, len(plans))
 	executed := make([]bool, len(plans))
-	var stop atomic.Bool // 首个失败后停止派发（在途操作做完）
+	var stop atomic.Bool // 首个硬失败后停止派发（在途操作做完；skipped 不截断）
 	work := make(chan int)
 	workers := applyWorkers
 	if len(plans) < workers {
@@ -510,8 +577,8 @@ func stageApplyOperations(ctx context.Context, a *App, run *syncstage.Run, relat
 	close(work)
 	wg.Wait()
 
-	// 按序组装：截断到首个失败（含取消点）；失败操作以 failed 事实收尾
-	// （buildJournalRows 据此落初始 failed 行并停止建行）。
+	// 按序组装：skipped（剔出本场）保留在输出中（成功 N + 跳过 M 清单的来源，
+	// buildJournalRows 及后续管线跳过）；硬失败截断（含取消点）。
 	out := make([]stagedOp, 0, len(plans))
 	for i := range plans {
 		if !executed[i] {
@@ -973,6 +1040,10 @@ func buildJournalRows(taskID string, plans []applyFilePlan, staged []stagedOp) (
 
 // buildCommitChanges 把已执行操作编译为提交变化行（目标侧前后表示；
 // before 取输入快照目标侧观察，after 取复扫目标侧观察，delete 的 after 为 nil）。
+// 刻意差异（与 restore_apply.go 的 buildRestoreCommitChanges 近复制但不去重）：
+// sync 计划逐资源单操作、op.ResourceID 天然无重复行，直接逐行产出即可；restore
+// 计划按侧建操作、同一资源可有双侧写回，那边才需要 byResource 去重合并——
+// 两函数形状对称是各自计划形态的忠实投影，勿为「统一」互挪逻辑。
 func buildCommitChanges(plans []applyFilePlan, inP, inR, rescanP, rescanR model.ObservedSnapshot) []model.CommitChange {
 	inBySide := map[model.Side]model.ObservedSnapshot{model.SideProject: inP, model.SideRuntime: inR}
 	rescanBySide := map[model.Side]model.ObservedSnapshot{model.SideProject: rescanP, model.SideRuntime: rescanR}
@@ -995,13 +1066,28 @@ func buildCommitChanges(plans []applyFilePlan, inP, inR, rescanP, rescanR model.
 }
 
 // buildSyncCommit 组装提交头（契约 05 §3.5；completeness 由剩余差异数推导）。
+// skips 非空时 summary 附跳过清单（成功 N + 跳过 M 及逐项原因码，GetCommit
+// 投影消费；票 #63 剔除语义的透出面）。
 func buildSyncCommit(rel model.Relation, plan model.SyncPlan, commitID, baselineID, nowStr, completeness string,
-	remaining int, verifiedP, verifiedR string, changes []model.CommitChange) model.SyncCommit {
+	remaining int, verifiedP, verifiedR string, changes []model.CommitChange, skips []stagedOp) model.SyncCommit {
 
-	summary := marshalJSONRaw(map[string]any{
+	summaryObj := map[string]any{
 		"operation_count": len(plan.Operations),
 		"plan_kind":       string(plan.Kind),
-	})
+		"success_count":   len(changes),
+		"skip_count":      len(skips),
+	}
+	if len(skips) > 0 {
+		entries := make([]skippedEntry, 0, len(skips))
+		for _, s := range skips {
+			entries = append(entries, skippedEntry{
+				ResourceID: string(s.fp.op.ResourceID),
+				ReasonCode: s.skipCode,
+				ReasonArgs: s.skipArgs,
+			})
+		}
+		summaryObj["skipped"] = entries
+	}
 	return model.SyncCommit{
 		CommitID:                  commitID,
 		RelationID:                rel.RelationID,
@@ -1015,7 +1101,7 @@ func buildSyncCommit(rel model.Relation, plan model.SyncPlan, commitID, baseline
 		CommitKind:                string(plan.Kind),
 		Completeness:              completeness,
 		RemainingChangeCount:      remaining,
-		Summary:                   summary,
+		Summary:                   marshalJSONRaw(summaryObj),
 		Changes:                   changes,
 	}
 }

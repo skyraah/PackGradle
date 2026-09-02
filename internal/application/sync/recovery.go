@@ -19,21 +19,23 @@ const CodeScanInterrupted = "err.scan.interrupted"
 const CodeRecoveryNotRequired = "err.recovery.not_required"
 
 // RecoverInterruptedTasks 启动恢复入口（ADR-0004 §4 恢复协议，票 #38）：
-//   - apply 任务 → journal 驱动的恢复管线（recoveryPipeline：probe 四路裁决，
-//     自动路径收口或保持 recovery_required 等人工确认）；
+//   - apply/restore 任务 → journal 驱动的恢复管线（recoveryPipeline：probe 四路
+//     裁决，自动路径收口或保持 recovery_required 等人工确认）——restore 运行
+//     复用 P2 全套恢复协议（ADR-0006 §8，票 #60：运行事实/journal/staging/证明
+//     同形状，崩溃裁决不需要第二套）；
 //   - 其余任务（scan 等，无 journal 事实源）→ 沿 P1 占位口径标记中断。没有这步，
 //     进程中断会留下永远 running 的僵尸任务，并因 StartScan 的「复用活动任务」
 //     语义永久锁死该 Relation 的扫描。
 //
-// 幂等：恢复完成后运行必为终态（committed / recovery_required），重复调用
-// 不再触碰文件系统——不重复补偿、不重复删除、不重复重做。
+// 幂等：恢复完成后运行必为终态（committed / recovery_required / failed），重复
+// 调用不再触碰文件系统——不重复补偿、不重复删除、不重复重做。
 func (a *App) RecoverInterruptedTasks(ctx context.Context) error {
 	actives, err := a.deps.Tasks.ListActiveAll(ctx)
 	if err != nil {
 		return err
 	}
 	for _, t := range actives {
-		if t.Kind != model.TaskKindApply {
+		if t.Kind != model.TaskKindApply && t.Kind != model.TaskKindRestore {
 			interrupted := t
 			a.runner.MarkFailed(ctx, interrupted, CodeScanInterrupted, "进程重启时任务仍在进行，已标记为中断", t.RelationID)
 			log.Printf("recovery: 任务 %s（%s）标记为中断", t.TaskID, t.Kind)
@@ -97,7 +99,7 @@ func (a *App) reconcileTerminalRun(ctx context.Context, active model.Task, run m
 		}
 		active.Status = model.TaskStatusSucceeded
 		active.Phase = "done"
-		active.MessageKey = "msg.task.apply.succeeded"
+		active.MessageKey = taskProgressKey(active.Kind, "succeeded")
 		active.Completed = run.OperationCount
 		active.Total = run.OperationCount
 		active.CommitID = run.CommitID
@@ -110,18 +112,43 @@ func (a *App) reconcileTerminalRun(ctx context.Context, active model.Task, run m
 		log.Printf("recovery: 运行 %s 已 committed，任务成功投影重建完成", run.TaskID)
 		return
 	}
+	// failed 终态（ADR-0008 §7，票 #63）：任务 failed 幂等补齐；网络面终局不设
+	// 恢复门（关系健康不动）、不做任何裁决与文件动作。
+	if run.State == model.ApplyRunFailed {
+		if active.Status != model.TaskStatusQueued && active.Status != model.TaskStatusRunning {
+			return
+		}
+		active.Status = model.TaskStatusFailed
+		active.Phase = "done"
+		active.MessageKey = taskProgressKey(active.Kind, "failed")
+		active.Completed = run.OperationCount
+		active.Total = run.OperationCount
+		if _, err := a.runner.Update(ctx, active); err != nil {
+			log.Printf("recovery: 任务 %s failed 终态补齐失败: %v", active.TaskID, err)
+			return
+		}
+		log.Printf("recovery: 运行 %s 已 failed，任务终态补齐完成", run.TaskID)
+		return
+	}
 	// recovery_required 终态：恢复门与任务终态幂等补齐；不做任何裁决与文件动作。
 	if err := a.deps.Relations.UpdateHealth(ctx, run.RelationID, model.HealthRecoveryRequired); err != nil {
 		log.Printf("recovery: 关系 %s 标记恢复态失败: %v", run.RelationID, err)
 	}
 	if active.Status == model.TaskStatusQueued || active.Status == model.TaskStatusRunning {
 		active.Status = model.TaskStatusRecoveryRequired
-		active.MessageKey = "msg.task.apply.recovery_required"
+		active.MessageKey = taskProgressKey(active.Kind, "recovery_required")
 		active.Problem = &model.Problem{Code: CodeRecoveryInProgress, Detail: "进程中断时运行已处于恢复态"}
 		if _, err := a.runner.Update(ctx, active); err != nil {
 			log.Printf("recovery: 任务 %s 恢复终态落库失败: %v", active.TaskID, err)
 		}
 	}
+}
+
+// taskProgressKey 按任务类别拼进度短语键（msg.task.<kind>.<suffix>；restore
+// 运行复用恢复管线后终态投影按自身类别取键，票 #60）。restore 的
+// failed/recovery_required/succeeded 键随本票入 locale（zh-CN）。
+func taskProgressKey(kind, suffix string) string {
+	return "msg.task." + kind + "." + suffix
 }
 
 // AcknowledgeRecovery 人工确认恢复收口（契约 05 §3.4，单 RunInTx，ADR-0003
@@ -166,6 +193,9 @@ func (a *App) AcknowledgeRecovery(ctx context.Context, taskID string) (view.Work
 		// 事件只在 SQLite 事务提交后发布（ADR-0004 §6）；发布失败不影响已提交事实
 		_ = a.pub.PublishRelationInvalidated(ctx, relationID)
 		log.Printf("recovery: 运行 %s 恢复已人工确认，关系 %s 复位 healthy（头基线不动，引导重扫）", taskID, relationID)
+		// 恢复处置收口=安全窗口复查事件（票 #64，ADR-0007 §3）：唤醒排队中的
+		// GC 任务自动续排。
+		a.kickGC()
 	}
 	return a.GetWorkspace(ctx, relationID)
 }

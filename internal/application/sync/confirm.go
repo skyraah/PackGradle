@@ -60,6 +60,13 @@ func (a *App) ConfirmPlan(ctx context.Context, input view.ConfirmPlanInput) (vie
 		if err != nil {
 			return errs.New(CodePlanNotFound, input.PlanID)
 		}
+		// 计划类别门禁（票 #59）：ConfirmPlan 是 apply 计划的确认入口；restore
+		// 计划的确认归 ConfirmRestorePlan（票 #60），不得经本方法建 apply 运行
+		//（否则 restore 写回操作在本票就获得第二条执行通道）。跨类计划按
+		// not_found 同一口径，不泄露其他类计划的形状（GetRestorePlan 同判）。
+		if p.Kind != model.PlanSync && p.Kind != model.PlanInitialize {
+			return errs.New(CodePlanNotFound, input.PlanID)
+		}
 		if p.Status != model.PlanResolved {
 			return errs.New(CodePlanStale, input.PlanID)
 		}
@@ -101,6 +108,9 @@ func (a *App) ConfirmPlan(ctx context.Context, input view.ConfirmPlanInput) (vie
 				return errs.New(CodeRecoveryInProgress)
 			case planRun.State == model.ApplyRunCommitted:
 				return errs.New(CodePlanApplyNotReentrant, p.PlanID)
+			case planRun.State == model.ApplyRunFailed:
+				// failed 终局可重入（契约 06 Q8，票 #63）：全部取数失败的网络面
+				// 终局不是恢复门——重试 = 同 plan 重新确认，新建任务与运行。
 			default: // prepared/staged/applying/verifying：活跃 → 幂等重入（D4）
 				if err := a.insertConfirmation(ctx, repos, p, now); err != nil {
 					return err
@@ -201,10 +211,12 @@ func (a *App) insertConfirmation(ctx context.Context, repos ports.Repos, p model
 	})
 }
 
-// applyRunTerminal 判定运行是否终局（committed/recovery_required，ADR-0004 §1：
-// 两态在 ApplyRunTransitions 中无后继）。
+// applyRunTerminal 判定运行是否终局（committed/recovery_required/failed，票 #63：
+// 三态在 ApplyRunTransitions 中无后继；failed 是 sync 剔除语义的网络面终局，
+// 不设门禁——同 plan 可重确认）。
 func applyRunTerminal(state string) bool {
-	return state == model.ApplyRunCommitted || state == model.ApplyRunRecoveryRequired
+	return state == model.ApplyRunCommitted || state == model.ApplyRunRecoveryRequired ||
+		state == model.ApplyRunFailed
 }
 
 // aggregatePreconditions 汇总计划全部操作的前置条件为运行级集合（同资源同侧
