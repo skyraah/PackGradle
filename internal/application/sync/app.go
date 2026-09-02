@@ -115,6 +115,10 @@ type AppDeps struct {
 	// GCTrash 是回收站与盘面对象操作（objectstore.CAS 实现，票 #64）。可选：
 	// 与 GC 同生（bootstrap 成对装配）。
 	GCTrash ports.GCTrash
+	// Cleanup 是惰性清理通道存储面（task_events 条数窗口 + 旧数据行物理删除，
+	// ADR-0011 §2/§3，票 #89）。可选：nil 时清理通道整体禁用（RunLazyCleanup
+	// 零操作、任务终态钩子不装配），未接清理面的测试栈零波及。
+	Cleanup ports.CleanupRepository
 	// Tx 是多步元数据写入的单事务边界（ADR-0003）；CreateRelation 走 RunInTx。
 	Tx            ports.UnitOfWork
 	Publisher     ports.EventPublisher // 事件出口（transport 桥），可为 nil
@@ -158,6 +162,10 @@ type App struct {
 	// 时丢弃——轮询兜底）。New 初始化。
 	gcMu   sync.Mutex
 	gcKick chan struct{}
+
+	// cleanupMu 串行化惰性清理通道（ADR-0011 §2/§3，票 #89：启动时 + 任务
+	// 终态后两通道可能并发触发；各删除步骤幂等，互斥只为日志与测试确定性）。
+	cleanupMu sync.Mutex
 }
 
 // LastScanTiming 返回最近一次完成的扫描分相耗时（进程生命周期内最后一次；
@@ -227,12 +235,16 @@ func New(deps AppDeps) (*App, error) {
 		}
 	}
 	pub := task.NewPublisher(deps.Events, deps.Publisher, deps.IDs, deps.Now)
-	return &App{
+	app := &App{
 		deps:   deps,
 		pub:    pub,
 		runner: task.NewRunner(deps.Tasks, pub, deps.IDs, deps.Now),
 		gcKick: make(chan struct{}, 1),
-	}, nil
+	}
+	// 任务终态钩子 = 惰性清理通道的任务终态触发（ADR-0011 §2/§3，票 #89）；
+	// 清理面未装配时钩子内部零操作，装配调用保持无条件（runner 装配一次）。
+	app.runner.SetTerminalHook(app.lazyCleanupAfterTask)
+	return app, nil
 }
 
 // runner 暴露给包内用例。

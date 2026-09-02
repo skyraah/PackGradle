@@ -7,6 +7,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"log"
 
 	"packgradle/internal/adapters/filesystem"
 	"packgradle/internal/adapters/packwiz"
@@ -158,6 +159,10 @@ func build(root string, retention ports.RetentionSettingsStore, dl download.Opti
 		// GCTrash 即 CAS（回收站/孤儿清扫落盘侧）。
 		GC:      sqlite.NewGCRepository(db),
 		GCTrash: cas,
+		// 惰性清理通道存储面（ADR-0011 §2/§3，票 #89）：task_events 条数窗口
+		// + 旧数据行物理删除；启动触发在装配后执行（下方），任务终态触发由
+		// runner 终态钩子承担。
+		Cleanup: sqlite.NewCleanupRepository(db),
 		Tx:            sqlite.NewUnitOfWork(db),
 		Publisher:     transport.NewEventBridge(),
 		ProjectScan:   packwiz.New(),
@@ -177,6 +182,12 @@ func build(root string, retention ports.RetentionSettingsStore, dl download.Opti
 	if err := app.RecoverInterruptedTasks(context.Background()); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("bootstrap: 启动任务恢复失败: %w", err)
+	}
+	// 启动时惰性清理（ADR-0011 §2/§3，票 #89）：task_events 条数窗口截断 +
+	// 旧数据行物理删除（另一触发时机 = 任务终态后，runner 终态钩子承担）。
+	// 机会主义通道：失败只记日志不阻断启动，下一轮触发续清。
+	if err := app.RunLazyCleanup(context.Background()); err != nil {
+		log.Printf("bootstrap: 启动惰性清理失败（不阻断启动，下轮续清）: %v", err)
 	}
 
 	// 端点管理用例（/sources、/runtimes 页）：与 sync 共用同一数据库、

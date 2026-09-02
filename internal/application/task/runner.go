@@ -28,6 +28,26 @@ type Runner struct {
 
 	mu      sync.Mutex
 	cancels map[string]context.CancelFunc
+
+	// onTerminal 是任务终态后的钩子（惰性清理通道的任务终态触发，票 #89）。
+	// 仅在 Update 落库终态成功后同步调用；钩子自身负责异步化。构造后经
+	// SetTerminalHook 装配一次（装配先于任何任务存在，无并发写）。
+	onTerminal func(ctx context.Context, t model.Task)
+}
+
+// 终态任务状态集（queued/running 是活跃态）。
+func isTerminalStatus(status string) bool {
+	switch status {
+	case model.TaskStatusSucceeded, model.TaskStatusFailed,
+		model.TaskStatusCancelled, model.TaskStatusRecoveryRequired:
+		return true
+	}
+	return false
+}
+
+// SetTerminalHook 装配任务终态钩子（每次终态落库成功后调用一次；nil = 无钩子）。
+func (r *Runner) SetTerminalHook(fn func(ctx context.Context, t model.Task)) {
+	r.onTerminal = fn
 }
 
 // NewRunner 构造任务运行器。
@@ -61,7 +81,8 @@ func (r *Runner) Create(ctx context.Context, relationID, kind string, canCancel 
 }
 
 // Update 推进任务状态：递增 Sequence（乐观锁）、持久化并发布 task_updated。
-// 事件发布失败只记日志：Task 持久化状态才是事实源。
+// 事件发布失败只记日志：Task 持久化状态才是事实源。终态落库成功后触发
+// 已装配的终态钩子（同步调用，钩子自行异步化；钩子失败不影响终态事实）。
 func (r *Runner) Update(ctx context.Context, t model.Task) (model.Task, error) {
 	t.Sequence++
 	t.UpdatedAt = r.now().UTC().Format(time.RFC3339)
@@ -73,6 +94,9 @@ func (r *Runner) Update(ctx context.Context, t model.Task) (model.Task, error) {
 	}
 	if err := r.pub.PublishTask(ctx, t); err != nil {
 		log.Printf("task: 发布更新事件失败（任务 %s）: %v", t.TaskID, err)
+	}
+	if r.onTerminal != nil && isTerminalStatus(t.Status) {
+		r.onTerminal(ctx, t)
 	}
 	return t, nil
 }

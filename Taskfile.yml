@@ -157,18 +157,22 @@ tasks:
       - rm -rf build/recovery
       - bin/pgrecovery.exe
 
-  # GC 验收链（验收规格 §6 五件套之 2/3；票 #64/#66）：全新 fixture + 全新数据
-  # 目录 → ①`-commits 25` 连续小 apply 造 >20 提交历史 → ②`-gc` CLI 通道触发
-  # （keep_commits 默认 20：裁 5）断言墓碑 pruned_before_count>0 且被裁行消失、
-  # 存活 ≥K=3、引用图不变式逐 digest 对账零违例、最老存活提交可达闭包逐字节
-  # 复验（回滚承诺不缩水；restore 服务面归票 #60）→ ③`-keep-commits 5` 后
-  # `-gc -probes`：head 前移 + 活跃 draft 计划屏障 + staged/recovery_required
-  # 两个未收口 run 注入（正例②③）→ 安全窗口关闭断言（pending+排队文案）→
-  # 夹具收口 → 开窗自动续排（同一任务跑完）→ 屏障截断存活>N、观察 digest 续跑
-  # 后被回收、引用图对账零违例。三段 -gc 各记 GC 计时（p3-perf-run/1 的 gc 段）
-  # 并归档 p3-gc 记录（同日多轮 -tNN 后缀）。任一断言失败非零退出。
+  # GC 验收链（验收规格 §6 五件套之 2/3；票 #64/#66；孤儿快照扩展票 #89）：
+  # 全新 fixture + 全新数据目录 → ①`-commits 25` 连续小 apply 造 >20 提交历史
+  # → ②`-gc` CLI 通道触发（keep_commits 默认 20：裁 5）断言墓碑
+  # pruned_before_count>0 且被裁行消失、存活 ≥K=3、引用图不变式逐 digest 对账
+  # 零违例、最老存活提交可达闭包逐字节复验（回滚承诺不缩水；restore 服务面归
+  # 票 #60）+ **孤儿快照扩展（ADR-0011 §4）**：两轮纯扫描落「从未进提交的中间
+  # 扫描快照」夹具 → 被裁提交的验证快照自然转孤儿一并删、中间扫描快照除最新外
+  # 同删、resource_representations 随行级联删、引用图不变式对账扩展至快照账面
+  # （清扫后孤儿残留必须为零）→ ③`-keep-commits 5` 后 `-gc -probes`：head 前移
+  # + 活跃 draft 计划屏障 + staged/recovery_required 两个未收口 run 注入
+  # （正例②③）→ 安全窗口关闭断言（pending+排队文案）→ 夹具收口 → 开窗自动
+  # 续排（同一任务跑完）→ 屏障截断存活>N、观察 digest 续跑后被回收、引用图
+  # 对账零违例。三段 -gc 各记 GC 计时（p3-perf-run/1 的 gc 段）并归档 p3-gc
+  # 记录（同日多轮 -tNN 后缀）。任一断言失败非零退出。
   acceptance:gc:
-    summary: Builds a >20-commit history via repeated small applies, runs pgheadless gc (CLI channel) with per-run GC timing records, asserts tombstone/K=3 floor/reference-graph invariant/oldest-commit restorability and the three protection red lines (acceptance L0)
+    summary: Builds a >20-commit history via repeated small applies, runs pgheadless gc (CLI channel) with per-run GC timing records, asserts tombstone/K=3 floor/reference-graph invariant/oldest-commit restorability, the three protection red lines, and the orphan-snapshot sweep extension (commit-pruned verified snapshots + never-committed intermediate scan snapshots + snapshot-account invariant, acceptance L0)
     cmds:
       - go build -o bin/pgheadless.exe ./cmd/pgheadless
       - rm -rf build/gc
