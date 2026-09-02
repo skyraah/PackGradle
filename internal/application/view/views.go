@@ -87,6 +87,10 @@ type WorkspaceStateView struct {
 	RelationHealth   string `json:"relation_health"`
 	ActiveTaskID     string `json:"active_task_id,omitempty"`
 	RelationRevision int    `json:"relation_revision"`
+	// PendingPlanID 是最新一张待人工计划（契约 07 §3.2，票 #86）：status ∈
+	// {draft, resolved} 且读取时投影非 stale/expired/applied（planViewWithStatus
+	// 同判）的计划，按创建时间最新；无则空。系统通知去重依据与前端角标数据源。
+	PendingPlanID string `json:"pending_plan_id,omitempty"`
 }
 
 // SnapshotSummaryView 是快照摘要。
@@ -453,6 +457,24 @@ type RebindPreparationView struct {
 // TaskView（kind=apply，status=queued，PlanID 回填）；幂等重入返回既有任务。
 type ConfirmPlanInput struct {
 	PlanID string `json:"plan_id"`
+}
+
+// ---- 统一快速更新用例投影（契约 07 §3.1；票 #86）----
+
+// QuickUpdateInput 是统一快速更新用例输入：只收 relation_id。requested_exactness
+// 恒 exact 不设入参（沿今天前端硬编码），PrepareSync 输入（revision/双端快照）
+// 由用例内部取最新。
+type QuickUpdateInput struct {
+	RelationID string `json:"relation_id"`
+}
+
+// QuickUpdateResultView 是一次快速更新链的收口结果（Q1：同步三态）。
+// 阻塞到链收口再返回，对 wire 是一次 Promise。
+type QuickUpdateResultView struct {
+	RelationID  string `json:"relation_id"`
+	Outcome     string `json:"outcome"` // no_diff|apply_started|awaiting_confirmation
+	PlanID      string `json:"plan_id,omitempty"`       // apply_started/awaiting_confirmation 回填
+	ApplyTaskID string `json:"apply_task_id,omitempty"` // 仅 apply_started 回填
 }
 
 // ---- 设置域投影（契约 06 §3.6；票 #57）----

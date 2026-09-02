@@ -70,10 +70,18 @@ func (a *App) GetWorkspace(ctx context.Context, relationID string) (view.Workspa
 		}
 	}
 
+	// pending_plan_id（契约 07 §3.2，票 #86）：最新一张待人工计划的投影，
+	// 系统通知去重依据与前端「有待确认计划」角标数据源。读取失败向上传播
+	//（投影是读取面的一部分，不静默降级，与 planReadinessForRelation 同口径）。
+	pending, err := a.pendingPlanIDFor(ctx, rel, proj, rt)
+	if err != nil {
+		return view.WorkspaceView{}, err
+	}
 	state := view.WorkspaceStateView{
 		RelationHealth:   string(rel.Health),
 		ActiveTaskID:     activeTaskID,
 		RelationRevision: rel.Revision,
+		PendingPlanID:    pending,
 	}
 
 	// scan_state

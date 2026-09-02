@@ -46,6 +46,7 @@ export type {
     PrepareSyncDTO,
     ProblemDTO,
     ProjectCandidateDTO,
+    QuickUpdateResultDTO,
     RebindPreparationDTO,
     RegisterEndpointDTO,
     RelationDTO,

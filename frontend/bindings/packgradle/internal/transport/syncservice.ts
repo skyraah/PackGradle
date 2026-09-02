@@ -212,6 +212,15 @@ export function PrepareSync(input: $models.PrepareSyncDTO): $CancellablePromise<
 }
 
 /**
+ * QuickUpdate 统一快速更新（契约 07 §2/§3.1，票 #86）：阻塞到链收口再返回
+ * （对 wire 是一次 Promise），同步三态 no_diff|apply_started|awaiting_confirmation；
+ * 链内失败 AppError 透传零新码。
+ */
+export function QuickUpdate(relationID: string): $CancellablePromise<$models.QuickUpdateResultDTO> {
+    return $Call.ByID(3969617035, relationID);
+}
+
+/**
  * ResolvePlan 将冲突选择固化为新 resolved plan。
  */
 export function ResolvePlan(input: $models.ResolvePlanDTO): $CancellablePromise<$models.SyncPlanDTO> {
