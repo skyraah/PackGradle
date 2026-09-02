@@ -65,3 +65,31 @@ func judgeRestoreMarker(in restoreMarkerInput) (model.RestoreMarker, string) {
 		return model.MarkerUserObjectRequired, model.MarkerReasonNoRedownloadInfo
 	}
 }
+
+// noProjectContentDegrade 报告行是否落 ADR-0012 §4 的存量宽判降标（prepare 期
+// 纯静态零探测的确定函数，全格表驱动单测覆盖）：写回侧含 project ∧ 目标基线
+// 项目侧表示无实测 Content。判定与四标记矩阵正交（矩阵零新维度），在
+// buildRestoreDraft 中作判定后置覆写——不区分原 marker，统一降
+// user_object_required + no_project_content：错写修正（ADR-0012 §7.2）落地后，
+// redownload 成因与 user_object 成因的漂移行同根同死法（项目侧无内容源，
+// 确认后整场 failed），统一语义最少特判。
+func noProjectContentDegrade(projectInWriteSides bool, projRep *model.Representation) bool {
+	return projectInWriteSides && (projRep == nil || projRep.Content == nil)
+}
+
+// degradeNoProjectRow 对已判行执行 ADR-0012 §4 的后置覆写（纯函数）：marker
+// 统一降 user_object_required ＋ marker_reason=no_project_content，重取信息与
+// 验收摘要一并清空——重取信息清空使探测与执行面零残留（探测只认
+// redownload_required 行）；验收摘要清空使该行在就绪公式（ADR-0006 §3.5：
+// user_object ∧ staged）下永不就绪，含它的计划 exact 如实判 infeasible
+//（ADR-0012 §6「修输入不修公式」的输入面），补全通道对降标行另码拒收。
+func degradeNoProjectRow(item model.RestorePlanItem, projectInWriteSides bool, projRep *model.Representation) model.RestorePlanItem {
+	if !noProjectContentDegrade(projectInWriteSides, projRep) {
+		return item
+	}
+	item.Marker = model.MarkerUserObjectRequired
+	item.MarkerReason = model.MarkerReasonNoProjectContent
+	item.Redownload = nil
+	item.ExpectedDigest = ""
+	return item
+}

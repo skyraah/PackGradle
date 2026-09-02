@@ -21,7 +21,13 @@ package main
 //	场景② partial（红线④）：D3 纯外部漂移（运行端 pg-e 改写 → CAS miss →
 //	      user_object_required 行 + 手放 jar 的 deletion_warn 删除行）→ 回滚
 //	      c1：skip + 删除行执行 → committed kind=partial + relation 保持
-//	      dirty。
+//	      dirty；
+//	场景⑥ 存量降级 skip 链（票 #95，ADR-0012 §4 出口③）：造数手术对 c1 基线
+//	      baseline_resources 项目侧 mod 表示直接置空 content 指针（模拟捕获
+//	      上线前的旧基线）→ metafile 再漂移 → 行降 user_object_required +
+//	      no_project_content（纯静态零探测）→ ExactFeasible=false + exact 前置
+//	      拒绝 → jar 字节补全被拒（err.userobject.no_project_content）→
+//	      allow_partial + skip → committed partial + relation 保持 dirty。
 //
 // 夹具：pgfixture -plain-mods N 生成「无 CF 声明 mod」变体（user_object 行
 // 来源）；受管 config 面用 pg-*.toml 种子文件（config 规则由关系建议携带，
@@ -32,6 +38,7 @@ import (
 	"crypto/sha256"
 	"database/sql"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -250,7 +257,7 @@ func runRestoreChain(ctx context.Context, stack *bootstrap.Stack, cdn *cdnproc.S
 	fmt.Println("== 场景③ 补全就绪面 == 通过（CAS miss → hash_mismatch → staged 翻转 → exact committed）")
 
 	// ---- 场景④：重做语义（ADR-0006 §1；先于场景②执行——partial 的 skip 残留按
-// ADR-0006 §9 保持 dirty，head 为目标的空差异断言要求基线与现实一致）----
+	// ADR-0006 §9 保持 dirty，head 为目标的空差异断言要求基线与现实一致）----
 	// 回滚目标 = head（cR2，restore 提交，API 合法）→ 空差异计划合法收口。
 	draft4, err := app.PrepareRestore(ctx, view.PrepareRestoreInput{RelationID: rel.RelationID, CommitID: cR2})
 	if err != nil {
@@ -458,8 +465,154 @@ func runRestoreChain(ctx context.Context, stack *bootstrap.Stack, cdn *cdnproc.S
 		return fmt.Errorf("场景② 手放 jar 应照删（err=%v）", err)
 	}
 	fmt.Printf("== 场景② partial + dirty == 通过（kind=partial + relation dirty + deletion_warn 删除行执行，cR5=%s）\n", cR5)
-	fmt.Println("== -restore == 五场景全部通过（链末保持 dirty：场景② skip 残留的诚实投影）")
+
+	// ---- 场景⑥：存量降级 skip 链（票 #95，ADR-0012 §4 出口③）----
+	// 造数手术：c1 结果基线的项目侧 mod 表示直接置空 content 指针（模拟捕获
+	// 上线前的旧基线，不做捕获开关）→ metafile 再漂移（写回侧仅 project）→
+	// 行降 user_object_required + no_project_content（四标记判定后置覆写，
+	// 纯静态零探测——验收摘要/重取信息/可用性全清）→ ExactFeasible=false +
+	// exact 前置拒绝（ADR-0012 §6 就绪面如实）→ jar 字节补全被拒（声明
+	// sha256 所指对象就是 jar，旧链此处收下字节并错写进 metafile 路径）→
+	// allow_partial + skip → committed partial + relation 保持 dirty。
+	var baseline6 string
+	if err := stack.DB.QueryRow(`SELECT result_baseline_id FROM sync_commits WHERE id=?`, c1).Scan(&baseline6); err != nil {
+		return fmt.Errorf("场景⑥ 读 c1 结果基线: %w", err)
+	}
+	stripped, err := rstStripBaselineProjectContent(stack.DB, baseline6)
+	if err != nil {
+		return fmt.Errorf("场景⑥ 造数手术: %w", err)
+	}
+	if stripped != metaCount {
+		return fmt.Errorf("场景⑥ 手术应置空 %d 个 mod 表示 content 指针，实际 %d", metaCount, stripped)
+	}
+	metaV3 := strings.Replace(string(metaV1), fileIDV1, "file-id = 1000003", 1)
+	if err := os.WriteFile(metaPath, []byte(metaV3), 0o644); err != nil {
+		return err
+	}
+	if err := rstScan(ctx, app, rel.RelationID); err != nil {
+		return err
+	}
+	draft6, err := app.PrepareRestore(ctx, view.PrepareRestoreInput{RelationID: rel.RelationID, CommitID: c1})
+	if err != nil {
+		return fmt.Errorf("场景⑥ PrepareRestore: %w", err)
+	}
+	metaRow6 := rstFindItem(draft6, "mod:curseforge:900001")
+	if metaRow6 == nil || metaRow6.ChangeKind != "modify" {
+		return fmt.Errorf("场景⑥ 缺 metafile 漂移行: %+v", draft6.Items)
+	}
+	if metaRow6.Marker != model.MarkerUserObjectRequired || metaRow6.MarkerReason != model.MarkerReasonNoProjectContent {
+		return fmt.Errorf("场景⑥ 应降标 no_project_content: (%s, %q)", metaRow6.Marker, metaRow6.MarkerReason)
+	}
+	if metaRow6.ExpectedDigest != "" || metaRow6.Redownload != nil || metaRow6.Availability != "" {
+		return fmt.Errorf("场景⑥ 降标行应清空验收摘要/重取信息/可用性: %+v", metaRow6)
+	}
+	blocked6 := false
+	for _, b := range draft6.BlockedBy {
+		if b.ResourceID == string(metaRow6.ResourceID) {
+			blocked6 = true
+		}
+	}
+	if draft6.ExactFeasible || !blocked6 {
+		return fmt.Errorf("场景⑥ 就绪面应如实: feasible=%v 降标行在 blocked_by=%v", draft6.ExactFeasible, blocked6)
+	}
+	// exact 如实（ADR-0012 §6）：含存量无源行的计划 exact 前置拒绝。
+	if _, err := app.ResolveRestorePlan(ctx, view.ResolveRestorePlanInput{PlanID: draft6.PlanID, RequestedExactness: "exact"}); err == nil ||
+		errs.CodeOf(err) != "err.restore.exact_infeasible" {
+		return fmt.Errorf("场景⑥ exact 应前置拒绝: %v", err)
+	}
+	// 补全通道关闭（ADR-0012 §4）：jar 字节=目标声明 sha256 所指对象，旧链在此
+	// 收下 jar 字节并经补全分支错写进 metafile 路径；新码拒绝而非落盘。
+	if _, err := app.StageUserObject(ctx, view.StageUserObjectInput{
+		PlanID: draft6.PlanID, ResourceID: string(metaRow6.ResourceID), SourcePath: filepath.Join(gameDir, "mods", jarName),
+	}); err == nil || errs.CodeOf(err) != "err.userobject.no_project_content" {
+		return fmt.Errorf("场景⑥ 降标行补全应 no_project_content 拒收: %v", err)
+	}
+	// skip 链（出口通路）：allow_partial + 剔除全部降标行（无声明 hash 的
+	// plain mod 行语义哈希随 Content 参与摘要，手术置空后与实测面如实显差，
+	// 同落降标）+ ② 的 pg-e 残留差异行 → committed partial 不谎报。
+	skip6 := []string{"file:config/pg-e.toml"}
+	for i := range draft6.Items {
+		if draft6.Items[i].MarkerReason == model.MarkerReasonNoProjectContent {
+			skip6 = append(skip6, string(draft6.Items[i].ResourceID))
+		}
+	}
+	resolved6, err := app.ResolveRestorePlan(ctx, view.ResolveRestorePlanInput{
+		PlanID:             draft6.PlanID,
+		RequestedExactness: "allow_partial",
+		SkipResourceIDs:    skip6,
+	})
+	if err != nil {
+		return fmt.Errorf("场景⑥ resolve allow_partial: %w", err)
+	}
+	cR6, err := rstConfirmAndRestore(ctx, app, rel, resolved6.PlanID, model.TaskOutcomePartial)
+	if err != nil {
+		return fmt.Errorf("场景⑥ restore: %w", err)
+	}
+	head6, err := app.GetCommit(ctx, rel.RelationID, cR6)
+	if err != nil {
+		return err
+	}
+	if head6.Summary.RemainingChangeCnt != len(skip6) {
+		return fmt.Errorf("场景⑥ remaining = %d，期望 %d（partial 不谎报）", head6.Summary.RemainingChangeCnt, len(skip6))
+	}
+	if err := rstAssertDirty(ctx, app, rel.RelationID); err != nil {
+		return fmt.Errorf("场景⑥: %w", err)
+	}
+	if got, rerr := os.ReadFile(metaPath); rerr != nil || string(got) != metaV3 {
+		return fmt.Errorf("场景⑥ skip 行应保持 v3 漂移现状（jar 字节绝不落 metafile）: %q（err=%v）", string(got), rerr)
+	}
+	fmt.Printf("== 场景⑥ 存量降级 skip 链 == 通过（降标 no_project_content + exact 如实拒绝 + 补全拒收 + 剔除 %d 行 partial dirty，cR6=%s）\n", len(skip6), cR6)
+	fmt.Println("== -restore == 六场景全部通过（链末保持 dirty：存量降级 skip 残留的诚实投影）")
 	return nil
+}
+
+// rstStripBaselineProjectContent 存量基线造数手术（票 #95，ADR-0012 §4）：对
+// baseline_resources 的项目侧 mod 表示 JSON 直接置空 content 指针，模拟捕获
+// 上线前的旧基线（不做捕获开关）。文件/文本资源 Content v1 已在不缺，mod
+// metafile 捕获是 ADR-0012 §2 新增——手术只落 mod 行。返回置空的表示数。
+func rstStripBaselineProjectContent(db *sql.DB, baselineID string) (int, error) {
+	rows, err := db.Query(`
+SELECT resource_id, project_representation_json FROM baseline_resources
+WHERE baseline_id=? AND project_representation_json IS NOT NULL`, baselineID)
+	if err != nil {
+		return 0, err
+	}
+	defer rows.Close()
+	type repUpdate struct{ id, raw string }
+	var updates []repUpdate
+	for rows.Next() {
+		var id, raw string
+		if err := rows.Scan(&id, &raw); err != nil {
+			return 0, err
+		}
+		if !strings.HasPrefix(id, "mod:") {
+			continue
+		}
+		var rep map[string]any
+		if err := json.Unmarshal([]byte(raw), &rep); err != nil {
+			return 0, err
+		}
+		if _, ok := rep["content"]; !ok {
+			continue
+		}
+		delete(rep, "content")
+		b, err := json.Marshal(rep)
+		if err != nil {
+			return 0, err
+		}
+		updates = append(updates, repUpdate{id, string(b)})
+	}
+	if err := rows.Err(); err != nil {
+		return 0, err
+	}
+	for _, u := range updates {
+		if _, err := db.Exec(`
+UPDATE baseline_resources SET project_representation_json=?
+WHERE baseline_id=? AND resource_id=?`, u.raw, baselineID, u.id); err != nil {
+			return 0, err
+		}
+	}
+	return len(updates), nil
 }
 
 // ---- 链路辅助 ----
