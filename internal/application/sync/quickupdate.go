@@ -9,7 +9,7 @@ package sync
 
 import (
 	"context"
-	"log"
+	"log/slog"
 	"time"
 
 	"packgradle/internal/application/ports"
