@@ -421,8 +421,10 @@ func resolveGCProbes(ctx context.Context, stack *bootstrap.Stack) error {
 }
 
 // auditReferenceGraph 采集四侧事实并调 core/gc.Audit 逐 digest 对账。
-// 可达闭包 = 存活提交 object_refs ∪ 存活基线 logical_digest 命中 ∪ 活跃/未处置
-// run 恢复引用（run 级 + journal 级，kind=cas）。
+// 可达闭包 = 存活提交 object_refs ∪ 存活基线 logical_digest 命中 ∪ 存活基线
+// 表示 Content 引用（baseline_resources JSON 内 content_digest，ADR-0012
+// §3/§8.6 的输入侧扩展）∪ 活跃/未处置 run 恢复引用（run 级 + journal 级，
+// kind=cas）。
 func auditReferenceGraph(ctx context.Context, stack *bootstrap.Stack, app syncapp.Application, relationID string) ([]gc.AuditFinding, map[string]int, error) {
 	gcRepo := stack.GCRepo
 	rels, err := stack.RelationIDs(ctx)
@@ -444,6 +446,13 @@ func auditReferenceGraph(ctx context.Context, stack *bootstrap.Stack, app syncap
 		return nil, nil, err
 	}
 	for _, d := range hits {
+		reach[d] = true
+	}
+	contentHits, err := gcRepo.BaselineContentDigestHits(ctx, rels)
+	if err != nil {
+		return nil, nil, err
+	}
+	for _, d := range contentHits {
 		reach[d] = true
 	}
 	planHits, err := gcRepo.PlanBaseDigestHits(ctx, rels)
@@ -626,12 +635,14 @@ WHERE br.baseline_id=?`, baselineID)
 	return out, rows.Err()
 }
 
-// commitExclusiveDigest 返回提交 object_refs 中第一个 digest（观察对象；
-// 链首区提交必然被裁，其独占对象无保护时必成候选）。
+// commitExclusiveDigest 返回提交 object_refs 中第一个 before_preservation
+// digest（观察对象；链首区提交必然被裁，其独占对象无保护时必成候选）。
+// 票 #88 起 object_refs 另含 baseline_content 引用——metafile 摘要跨提交共享
+// （内容寻址去重），不满足「被裁后应回收」的观察语义，显式排除。
 func commitExclusiveDigest(db *sql.DB, relationID, commitID string) (string, error) {
 	var d string
 	err := db.QueryRow(
-		"SELECT digest FROM object_refs WHERE owner_type='commit' AND owner_id=? LIMIT 1", commitID).Scan(&d)
+		"SELECT digest FROM object_refs WHERE owner_type='commit' AND owner_id=? AND purpose='before_preservation' LIMIT 1", commitID).Scan(&d)
 	if err == sql.ErrNoRows {
 		return "", fmt.Errorf("提交 %s 无对象引用", commitID)
 	}

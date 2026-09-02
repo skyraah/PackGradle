@@ -325,8 +325,12 @@ func (a *App) runApply(ctx context.Context, queued model.Task) {
 	rescanP.CapturedAt = nowStr
 	rescanR.SnapshotID = a.deps.IDs("snap_")
 	rescanR.CapturedAt = nowStr
+	// 基线内容摄取（ADR-0012 §2/规格 §F2）：result baseline 持久化前，项目侧
+	// mod 表示按 Content digest 统一从工作树读字节入 CAS（Put 幂等；竞态降级
+	// 记诊断不失败提交）。引用行与提交同事务落 object_refs（引用完整性前提）。
+	contentRefs, ingestDiags := a.ingestBaselineProjectContent(ctx, proj.RootPath, &newBaseline)
 	commit := buildSyncCommit(rel, plan, commitID, baselineID, nowStr, completeness, remaining,
-		rescanP.SnapshotID, rescanR.SnapshotID, buildCommitChanges(keepPlans, snapP, snapR, rescanP, rescanR), skips)
+		rescanP.SnapshotID, rescanR.SnapshotID, buildCommitChanges(keepPlans, snapP, snapR, rescanP, rescanR), skips, ingestDiags)
 
 	err = a.deps.Tx.RunInTx(commitCtx, func(repos ports.Repos) error {
 		if err := repos.Snapshots.Insert(ctx, rescanP); err != nil {
@@ -347,6 +351,7 @@ func (a *App) runApply(ctx context.Context, queued model.Task) {
 				casRefs = append(casRefs, *s.casRef)
 			}
 		}
+		casRefs = append(casRefs, contentRefs...)
 		if err := repos.Commits.InsertObjectRefs(ctx, "commit", commitID, casRefs); err != nil {
 			return fmt.Errorf("写入对象引用: %w", err)
 		}
@@ -1067,9 +1072,11 @@ func buildCommitChanges(plans []applyFilePlan, inP, inR, rescanP, rescanR model.
 
 // buildSyncCommit 组装提交头（契约 05 §3.5；completeness 由剩余差异数推导）。
 // skips 非空时 summary 附跳过清单（成功 N + 跳过 M 及逐项原因码，GetCommit
-// 投影消费；票 #63 剔除语义的透出面）。
+// 投影消费；票 #63 剔除语义的透出面）；ingestDiags 非空时 summary 附基线内容
+// 摄取降级清单（ADR-0012 §2：竞态降级的提交面证据，DTO 投影不读取该键）。
 func buildSyncCommit(rel model.Relation, plan model.SyncPlan, commitID, baselineID, nowStr, completeness string,
-	remaining int, verifiedP, verifiedR string, changes []model.CommitChange, skips []stagedOp) model.SyncCommit {
+	remaining int, verifiedP, verifiedR string, changes []model.CommitChange, skips []stagedOp,
+	ingestDiags []model.Diagnostic) model.SyncCommit {
 
 	summaryObj := map[string]any{
 		"operation_count": len(plan.Operations),
@@ -1087,6 +1094,15 @@ func buildSyncCommit(rel model.Relation, plan model.SyncPlan, commitID, baseline
 			})
 		}
 		summaryObj["skipped"] = entries
+	}
+	if len(ingestDiags) > 0 {
+		entries := make([]ingestDiagEntry, 0, len(ingestDiags))
+		for _, d := range ingestDiags {
+			entries = append(entries, ingestDiagEntry{
+				ResourceID: string(d.ResourceID), Code: d.Code, Detail: d.Detail,
+			})
+		}
+		summaryObj["content_ingest"] = entries
 	}
 	return model.SyncCommit{
 		CommitID:                  commitID,

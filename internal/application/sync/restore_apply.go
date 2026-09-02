@@ -312,8 +312,12 @@ func (a *App) runRestore(ctx context.Context, queued model.Task) {
 	rescanP.CapturedAt = nowStr
 	rescanR.SnapshotID = a.deps.IDs("snap_")
 	rescanR.CapturedAt = nowStr
+	// 基线内容摄取（ADR-0012 §2/规格 §F2）：restore 结果基线与 sync 同款通道，
+	// 项目侧 mod 表示按 Content digest 统一从工作树读字节入 CAS（Put 幂等；
+	// 竞态降级记诊断不失败提交）。引用行与提交同事务落 object_refs。
+	contentRefs, ingestDiags := a.ingestBaselineProjectContent(ctx, proj.RootPath, &newBaseline)
 	commit := buildSyncCommit(rel, plan, commitID, baselineID, nowStr, completeness, remaining,
-		rescanP.SnapshotID, rescanR.SnapshotID, buildRestoreCommitChanges(keepPlans, snapP, snapR, rescanP, rescanR), nil)
+		rescanP.SnapshotID, rescanR.SnapshotID, buildRestoreCommitChanges(keepPlans, snapP, snapR, rescanP, rescanR), nil, ingestDiags)
 	// restore 账目（ADR-0006 §9）：parent=当前 head（历史追加不改写）、
 	// previous_baseline=回滚前的头基线（计划 BaseBaselineID 是目标基线，不是
 	// 回滚前的头）；kind=restore 由 buildSyncCommit 沿 plan.Kind 承载。
@@ -338,6 +342,7 @@ func (a *App) runRestore(ctx context.Context, queued model.Task) {
 				casRefs = append(casRefs, *s.casRef)
 			}
 		}
+		casRefs = append(casRefs, contentRefs...)
 		if err := repos.Commits.InsertObjectRefs(ctx, "commit", commitID, casRefs); err != nil {
 			return fmt.Errorf("写入对象引用: %w", err)
 		}

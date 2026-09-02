@@ -2,6 +2,8 @@ package packwiz
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"os"
@@ -9,6 +11,7 @@ import (
 	"strings"
 	"testing"
 
+	"packgradle/internal/adapters/filesystem"
 	"packgradle/internal/application/ports"
 	"packgradle/internal/core/model"
 )
@@ -353,5 +356,87 @@ metafile = false
 		if o.Representation.RelativePath == "config/jei.ini" || o.Representation.RelativePath == "README.md" {
 			t.Errorf("ignored 条目不应产出观察: %+v", o)
 		}
+	}
+}
+
+// TestScanMetafileContentCaptured（票 #88，ADR-0012 §2）：mod 分支接入
+// HashFile 闭包后，metafile 实测 sha256+size 落表示 Content；损坏 metafile 的
+// 低置信观察同样带实测 Content（捕获只认实测）；缺 hasher → managedfiles
+// 同款 hasher_missing 诊断，观察保留、表示无 Content。
+func TestScanMetafileContentCaptured(t *testing.T) {
+	dir := makeProject(t)
+	hasher := filesystem.NewHasher()
+	report, err := New().Scan(context.Background(), dir, ports.ScanOptions{
+		Policy:   modsOnlyPolicy(),
+		HashFile: func(ctx context.Context, abs string) (model.ContentRef, ports.FileFacts, error) {
+			return hasher.HashFile(ctx, abs)
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(report.Observations) != 3 {
+		t.Fatalf("应有 3 个 metafile 观察: %d", len(report.Observations))
+	}
+	for _, o := range report.Observations {
+		c := o.Representation.Content
+		if c == nil {
+			t.Fatalf("%s 应带实测 Content", o.ResourceID)
+		}
+		if c.Algorithm != "sha256" || len(c.Digest) != 64 || c.Size <= 0 {
+			t.Fatalf("%s Content 形状: %+v", o.ResourceID, c)
+		}
+		raw, rerr := os.ReadFile(filepath.Join(dir, filepath.FromSlash(o.Representation.RelativePath)))
+		if rerr != nil {
+			t.Fatal(rerr)
+		}
+		sum := sha256.Sum256(raw)
+		if c.Digest != hex.EncodeToString(sum[:]) || c.Size != int64(len(raw)) {
+			t.Fatalf("%s 实测摘要不符: %+v", o.ResourceID, c)
+		}
+	}
+
+	// 损坏 metafile：低置信观察保留且带实测 Content（捕获与解析成败无关）。
+	if err := os.WriteFile(filepath.Join(dir, "mods", "local.pw.toml"), []byte("this is [ not toml"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	report, err = New().Scan(context.Background(), dir, ports.ScanOptions{
+		Policy: modsOnlyPolicy(),
+		HashFile: func(ctx context.Context, abs string) (model.ContentRef, ports.FileFacts, error) {
+			return hasher.HashFile(ctx, abs)
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, o := range report.Observations {
+		if o.ResourceID == "mod:path:mods/local.pw.toml" && o.Representation.Content == nil {
+			t.Fatal("损坏 metafile 的观察也应带实测 Content")
+		}
+	}
+
+	// 缺 hasher：managedfiles 同款诊断语义（观察保留、表示退无 Content）。
+	report, err = New().Scan(context.Background(), dir, ports.ScanOptions{Policy: modsOnlyPolicy()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	missing := 0
+	for _, o := range report.Observations {
+		if o.Representation.Content != nil {
+			t.Fatalf("缺 hasher 时 %s 不应有 Content", o.ResourceID)
+		}
+		missing++
+	}
+	if missing != 3 {
+		t.Fatalf("观察应保留: %d", missing)
+	}
+	found := false
+	for _, d := range report.Diagnostics {
+		if d.Code == "diag.scan.hasher_missing" && strings.HasPrefix(d.RelativePath, "mods/") {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("缺 hasher 应落 hasher_missing 诊断: %+v", report.Diagnostics)
 	}
 }

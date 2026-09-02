@@ -148,7 +148,9 @@ func TestScanPolicyPrefixLinkInsideRootFollowed(t *testing.T) {
 			}
 		}
 	}
-	if !found || hashed != 1 {
+	// hashed = 3 个 metafile 实测捕获（#88 起扫描器 mod 分支接入 HashFile）
+	// + 1 个链接内文本文件。
+	if !found || hashed != 4 {
 		t.Fatalf("root 内链接应产出观察并哈希: found=%v hashed=%d", found, hashed)
 	}
 }
