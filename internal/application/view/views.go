@@ -294,15 +294,16 @@ type ChangeView struct {
 
 // ChangesSummary 是全量分组计数（不受筛选影响），供筛选条与页脚展示。
 type ChangesSummary struct {
-	Total           int `json:"total"`
-	NoopCount       int `json:"noop_count"`
-	ConvergedCount  int `json:"converged_count"`
-	AdoptEqualCount int `json:"adopt_equal_count"`
-	InitChoiceCount int `json:"init_choice_count"`
-	CreateCount     int `json:"create_count"`
-	ModifyCount     int `json:"modify_count"`
-	DeleteCount     int `json:"delete_count"`
-	ConflictCount   int `json:"conflict_count"`
+	Total            int `json:"total"`
+	NoopCount        int `json:"noop_count"`
+	ConvergedCount   int `json:"converged_count"`
+	AdoptEqualCount  int `json:"adopt_equal_count"`
+	InitChoiceCount  int `json:"init_choice_count"`
+	CreateCount      int `json:"create_count"`
+	ModifyCount      int `json:"modify_count"`
+	DeleteCount      int `json:"delete_count"`
+	ConflictCount    int `json:"conflict_count"`
+	MergedCleanCount int `json:"merged_clean_count"` // 干净合并行数（ADR-0009 §4，票 #87；不并入 modify）
 }
 
 // ChangesPage 是资源级 Diff 分页。
@@ -419,10 +420,10 @@ type CommitSkippedView struct {
 // CommitView 是单提交详情（changes 全量，单 commit 不分页；契约 05 §3.5）。
 // Skipped 从提交头 summary JSON 解析（引擎定义形状；旧行无该记录为空切片）。
 type CommitView struct {
-	SchemaVersion int                `json:"schema_version"`
-	Summary       CommitSummaryView  `json:"summary"`
-	PlanID        string             `json:"plan_id"`
-	Changes       []CommitChangeView `json:"changes"`
+	SchemaVersion int                 `json:"schema_version"`
+	Summary       CommitSummaryView   `json:"summary"`
+	PlanID        string              `json:"plan_id"`
+	Changes       []CommitChangeView  `json:"changes"`
 	Skipped       []CommitSkippedView `json:"skipped"`
 }
 

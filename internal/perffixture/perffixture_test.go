@@ -10,6 +10,7 @@ import (
 	"encoding/hex"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -88,7 +89,7 @@ func TestGenerateLayoutAndSizes(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if want := mods*2 + textFiles + 3; res.Files != want { // metafile+jar 各 mods、text、index/pack/instance.cfg
+	if want := mods*2 + textFiles + 7; res.Files != want { // metafile+jar 各 mods、text、index/pack/instance.cfg、双侧合并样本 ×2（票 #87）
 		t.Fatalf("文件数 = %d, 期望 %d", res.Files, want)
 	}
 	if res.ModCount != mods || res.ManagedFiles != mods+textFiles {
@@ -162,4 +163,100 @@ func TestGenerateContentNotDegenerate(t *testing.T) {
 			t.Fatalf("%s 应为行式文本", name)
 		}
 	}
+}
+
+// TestGenerateMergeSamples（票 #87）：手工注释 toml 与二进制资源样本双侧
+// 同字节落盘，样本含注释/键序/空行/缩进要素与两个注入锚点。
+func TestGenerateMergeSamples(t *testing.T) {
+	dir := t.TempDir()
+	if _, err := Generate(context.Background(), Options{OutDir: dir, Seed: 7, Mods: 2, TextFiles: 2}); err != nil {
+		t.Fatal(err)
+	}
+	projSample := filepath.Join(dir, "project", filepath.FromSlash(HandmadeTomlRel))
+	rtSample := filepath.Join(dir, "instance", "minecraft", filepath.FromSlash(HandmadeTomlRel))
+	projBin := filepath.Join(dir, "project", filepath.FromSlash(BinarySampleRel))
+	rtBin := filepath.Join(dir, "instance", "minecraft", filepath.FromSlash(BinarySampleRel))
+	for _, p := range []string{projSample, rtSample, projBin, rtBin} {
+		if _, err := os.Stat(p); err != nil {
+			t.Fatalf("缺少合并样本 %s: %v", p, err)
+		}
+	}
+	// 双侧同字节：初次同步后进基线的前提。
+	a, _ := os.ReadFile(projSample)
+	b, _ := os.ReadFile(rtSample)
+	if !bytes.Equal(a, b) || string(a) != HandmadeToml {
+		t.Fatal("手工注释 toml 样本双侧应同字节且等于常量定义")
+	}
+	c, _ := os.ReadFile(projBin)
+	d, _ := os.ReadFile(rtBin)
+	if !bytes.Equal(c, d) {
+		t.Fatal("二进制资源样本双侧应同字节")
+	}
+	if bytes.IndexByte(c, 0) < 0 {
+		t.Fatal("二进制样本应含 NUL（真二进制而非文本）")
+	}
+	for _, want := range []string{"# 手工注释样本", "  render_distance", `[project_anchor]`, `[runtime_anchor]`,
+		`project_marker = "untouched"`, `runtime_marker = "untouched"`} {
+		if !strings.Contains(string(a), want) {
+			t.Fatalf("样本缺要素 %q", want)
+		}
+	}
+}
+
+// TestDualEditVariants（票 #87）：merge 变体两侧互不重叠改动；conflict 变体
+// 双侧同段不同改动；project 侧文件缺失即报错。
+func TestDualEditVariants(t *testing.T) {
+	newFixture := func(t *testing.T) string {
+		t.Helper()
+		dir := t.TempDir()
+		if _, err := Generate(context.Background(), Options{OutDir: dir, Seed: 9, Mods: 1, TextFiles: 1}); err != nil {
+			t.Fatal(err)
+		}
+		return dir
+	}
+	t.Run("merge 变体互不重叠", func(t *testing.T) {
+		dir := newFixture(t)
+		if err := DualEdit(dir, "merge"); err != nil {
+			t.Fatalf("DualEdit: %v", err)
+		}
+		proj, _ := os.ReadFile(filepath.Join(dir, "project", filepath.FromSlash(HandmadeTomlRel)))
+		rt, _ := os.ReadFile(filepath.Join(dir, "instance", "minecraft", filepath.FromSlash(HandmadeTomlRel)))
+		if !strings.Contains(string(proj), `project_marker = "edited-by-project"`) ||
+			strings.Contains(string(proj), `runtime_marker = "edited-by-runtime"`) {
+			t.Fatalf("project 侧应只改 project_anchor:\n%s", proj)
+		}
+		if !strings.Contains(string(rt), `runtime_marker = "edited-by-runtime"`) ||
+			strings.Contains(string(rt), `project_marker = "edited-by-project"`) {
+			t.Fatalf("runtime 侧应只改 runtime_anchor:\n%s", rt)
+		}
+	})
+	t.Run("conflict 变体双侧同段不同改动", func(t *testing.T) {
+		dir := newFixture(t)
+		if err := DualEdit(dir, "conflict"); err != nil {
+			t.Fatalf("DualEdit: %v", err)
+		}
+		proj, _ := os.ReadFile(filepath.Join(dir, "project", filepath.FromSlash(HandmadeTomlRel)))
+		rt, _ := os.ReadFile(filepath.Join(dir, "instance", "minecraft", filepath.FromSlash(HandmadeTomlRel)))
+		if !strings.Contains(string(proj), `project_marker = "project-side"`) {
+			t.Fatalf("project 侧应改 project_anchor:\n%s", proj)
+		}
+		if !strings.Contains(string(rt), `project_marker = "runtime-side"`) {
+			t.Fatalf("runtime 侧应同改 project_anchor:\n%s", rt)
+		}
+	})
+	t.Run("未知变体报错", func(t *testing.T) {
+		if err := DualEdit(newFixture(t), "bogus"); err == nil {
+			t.Fatal("未知变体应报错")
+		}
+	})
+	t.Run("project 侧文件缺失报错", func(t *testing.T) {
+		dir := newFixture(t)
+		// 模拟未同步：删除 project 侧副本
+		if err := os.Remove(filepath.Join(dir, "project", filepath.FromSlash(HandmadeTomlRel))); err != nil {
+			t.Fatal(err)
+		}
+		if err := DualEdit(dir, "merge"); err == nil {
+			t.Fatal("project 侧文件缺失应报错")
+		}
+	})
 }

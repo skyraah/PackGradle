@@ -32,6 +32,7 @@ var changeClassifications = map[diff.Classification]bool{
 	diff.ClassConflictDeleteModify:   true,
 	diff.ClassAdoptEqual:             true,
 	diff.ClassInitChoice:             true,
+	diff.ClassMergedClean:            true, // ADR-0009 §4，票 #87（契约 07 §3.3 枚举扩展）
 }
 
 // changeResourceKinds 是 GetChanges 资源类型筛选的合法值。
@@ -57,6 +58,15 @@ func (a *App) GetChanges(ctx context.Context, input view.GetChangesInput) (view.
 	if input.ResourceKind != "" && !changeResourceKinds[model.ResourceKind(input.ResourceKind)] {
 		return view.ChangesPage{}, errs.New(CodeSyncInvalidFilter, "resource_kind", input.ResourceKind)
 	}
+	// 端点根目录：合并判定的三侧全文读取缝所需（票 #87，ADR-0009 §1）
+	projEnd, err := a.deps.Endpoints.GetProject(ctx, rel.ProjectID)
+	if err != nil {
+		return view.ChangesPage{}, err
+	}
+	rtEnd, err := a.deps.Endpoints.GetRuntime(ctx, rel.RuntimeID)
+	if err != nil {
+		return view.ChangesPage{}, err
+	}
 	snapP, err := a.changesSnapshot(ctx, input.RelationID, input.ProjectSnapshotID, model.SideProject)
 	if err != nil {
 		return view.ChangesPage{}, err
@@ -75,7 +85,8 @@ func (a *App) GetChanges(ctx context.Context, input view.GetChangesInput) (view.
 		base = &b
 	}
 
-	result, err := diff.ThreeWay(diff.Input{RelationID: input.RelationID, Base: base, Project: snapP, Runtime: snapR})
+	result, err := diff.ThreeWay(diff.Input{RelationID: input.RelationID, Base: base, Project: snapP, Runtime: snapR,
+		Merge: a.mergeSources(ctx, projEnd.RootPath, rtEnd.RootPath)})
 	if err != nil {
 		return view.ChangesPage{}, err
 	}
@@ -259,6 +270,8 @@ func changesSummary(diffs []diff.ResourceDiff) view.ChangesSummary {
 			s.DeleteCount++
 		case diff.ClassConflictModify, diff.ClassConflictDeleteModify:
 			s.ConflictCount++
+		case diff.ClassMergedClean:
+			s.MergedCleanCount++
 		}
 	}
 	return s

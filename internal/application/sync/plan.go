@@ -99,6 +99,8 @@ func (a *App) PrepareSync(ctx context.Context, input view.PrepareSyncInput) (vie
 		// 大文件保全阈值（ADR-0007 §7，票 #64）：prepare 时点判定并固化
 		// preserve_skip 计划行标记（sync 侧；restore 侧归票 #60 同口径复用）。
 		PreserveMaxBytes: a.retentionSettings().PreserveMaxBytes,
+		// 合并判定三侧全文读取缝（票 #87，ADR-0009 §1）：CAS + 端点活文件。
+		Merge: a.mergeSources(ctx, proj.RootPath, rt.RootPath),
 	})
 	if err != nil {
 		return view.SyncPlanView{}, err

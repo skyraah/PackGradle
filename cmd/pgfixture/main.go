@@ -16,6 +16,11 @@
 // 假 CDN 进程模式（票 #66；验收规格 §5.1，实现见 serve.go）：
 //
 //	pgfixture -serve [127.0.0.1:PORT]
+//
+// 双侧变更注入（票 #87；P4 验收规格 §3.3）：对已生成并完成初次同步的
+// fixture，同一 config/handmade.toml 注入两侧不同改动：
+//
+//	pgfixture -out <目录> -dual-edit merge|conflict
 package main
 
 import (
@@ -51,6 +56,7 @@ func main() {
 	plainMods := flag.Int("plain-mods", 0, "无 CF 声明 mod 数量（票 #60 -restore 验收变体）")
 	eval := flag.String("eval", "", "评估模式：逗号分隔的 cold,warm[,apply[,restore[,gc]]] 记录路径（apply 及之后可选）")
 	serveAddr := flag.String("serve", "", "假 CDN 进程模式（票 #66）：监听地址（空串不启用；127.0.0.1:0 自动分配）")
+	dualEdit := flag.String("dual-edit", "", "双侧变更注入（票 #87）：对 -out 指定的已生成并完成初次同步的 fixture，同一 config/handmade.toml 注入两侧不同改动；取值 merge（互不重叠→干净合并）| conflict（同段改动→真冲突）")
 	flag.Parse()
 
 	switch {
@@ -58,9 +64,26 @@ func main() {
 		runServe(serveOptions{addr: *serveAddr})
 	case *eval != "":
 		os.Exit(runEval(*eval))
+	case *dualEdit != "":
+		os.Exit(runDualEdit(*out, *dualEdit))
 	default:
 		runGenerate(*out, *mods, *textFiles, *plainMods, *seed)
 	}
+}
+
+// runDualEdit 双侧变更注入入口（票 #87，验收规格 §3.3）。输出形态独立于
+// 生成/评估模式（既有 stderr 断言不受影响）；失败写 stderr 并退出码 1。
+func runDualEdit(out, variant string) int {
+	if out == "" {
+		fmt.Fprintln(os.Stderr, "-dual-edit 需要与 -out 同时指定（fixture 目标目录）")
+		return 2
+	}
+	if err := perffixture.DualEdit(out, variant); err != nil {
+		fmt.Fprintln(os.Stderr, "双侧变更注入失败:", err)
+		return 1
+	}
+	fmt.Printf("双侧变更注入完成（variant=%s）:\n  project: config/handmade.toml\n  runtime: minecraft/config/handmade.toml\n", variant)
+	return 0
 }
 
 func runGenerate(out string, mods, textFiles, plainMods int, seed int64) {
@@ -212,8 +235,8 @@ func evalRecords(cold, warm *perfRecord, applyRec *applyMetrics, restoreRec *res
 // p2-perf-run/1 追加 apply 段；P3 起为 p3-perf-run/1 追加 restore/gc 段，票
 // #66）。eval 只读门槛相关字段。
 type perfRecord struct {
-	Schema      string        `json:"schema"`
-	ScanTotalMS int64         `json:"scan_total_ms"`
+	Schema      string `json:"schema"`
+	ScanTotalMS int64  `json:"scan_total_ms"`
 	HashCache   struct {
 		Hits     int64   `json:"hits"`
 		Misses   int64   `json:"misses"`
@@ -239,16 +262,16 @@ type applyMetrics struct {
 // restoreMetrics / gcMetrics 是记录的 restore/gc 段（p3-perf-run/1；形态定义
 // 见 cmd/pgheadless/restorecold.go 与 gc.go，票 #66）。
 type restoreMetrics struct {
-	Kind              string `json:"kind"`
-	OperationCount    int    `json:"operation_count"`
-	PrepareMS         int64  `json:"prepare_ms"`
-	PhasesMS          struct {
+	Kind           string `json:"kind"`
+	OperationCount int    `json:"operation_count"`
+	PrepareMS      int64  `json:"prepare_ms"`
+	PhasesMS       struct {
 		Staging   int64 `json:"staging"`
 		Applying  int64 `json:"applying"`
 		Verifying int64 `json:"verifying"`
 	} `json:"phases_ms"`
-	StagingDownloadMS int64  `json:"staging_download_ms"`
-	RestoreTotalMS    int64  `json:"restore_total_ms"`
+	StagingDownloadMS int64 `json:"staging_download_ms"`
+	RestoreTotalMS    int64 `json:"restore_total_ms"`
 	PeakMemory        struct {
 		Metric     string  `json:"metric"`
 		DeltaBytes uint64  `json:"delta_bytes"`

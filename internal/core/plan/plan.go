@@ -4,6 +4,7 @@
 package plan
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"sort"
@@ -36,6 +37,9 @@ type BuildInput struct {
 	//（「旧版本不留存」警示 + 引擎跳过 before 保全）。判定口径共享
 	// model.ShouldSkipPreserve；未设置（负值）按 0=不限处理。
 	PreserveMaxBytes int64
+	// Merge 是合并判定的三侧全文读取缝（票 #87，ADR-0009 §1）：原样透传给
+	// diff.ThreeWay；nil = 合并面禁用（双侧同改维持 conflict_modify 现状）。
+	Merge *diff.MergeSources
 }
 
 // 校验错误。Resolve 拒绝的输入以 error 返回，不 panic。
@@ -91,6 +95,7 @@ func BuildDraft(in BuildInput) (model.SyncPlan, error) {
 		Base:       in.Base,
 		Project:    in.Project,
 		Runtime:    in.Runtime,
+		Merge:      in.Merge,
 	})
 	if err != nil {
 		return model.SyncPlan{}, fmt.Errorf("plan: 三方差异计算失败: %w", err)
@@ -133,14 +138,19 @@ func BuildDraft(in BuildInput) (model.SyncPlan, error) {
 				removePreconditions(d.ResourceID, sideProject, projObs))
 		case diff.ClassAdoptEqual:
 			summary.AdoptEqualCount++
+		case diff.ClassMergedClean:
+			// 干净合并行（ADR-0009 §4，票 #87）：非冲突操作计数，不并入
+			// modify；write_merged 操作面归执行票（暂存期按三侧快照重算）。
+			summary.MergedCleanCount++
 		}
 		if op != nil && opAllowed(direction, op.Kind) {
 			ops = append(ops, *op)
 		}
 		if c, ok := conflictByResource[d.ResourceID]; ok {
 			// 方向写入 Detail（PlanDigest 只取 resource_id+kind，不受影响），
-			// 供 Resolve 在没有 Policy 的情况下过滤 resolution 生成的操作。
-			c.Detail = directionDetail(direction)
+			// 供 Resolve 在没有 Policy 的情况下过滤 resolution 生成的操作；
+			// detail 已携带 hunk JSON 证据时（票 #87）以兄弟键并入，不覆盖证据。
+			c.Detail = withDirectionDetail(c.Detail, direction)
 			conflicts = append(conflicts, c)
 		}
 	}
@@ -299,9 +309,10 @@ func Resolve(draft model.SyncPlan, project, runtime model.ObservedSnapshot, reso
 		Resolutions:        sorted,
 		Diagnostics:        draft.Diagnostics,
 		Summary: model.PlanSummary{
-			ResourceTotal:   draft.Summary.ResourceTotal,
-			AdoptEqualCount: draft.Summary.AdoptEqualCount,
-			ConflictCount:   len(draft.Conflicts),
+			ResourceTotal:    draft.Summary.ResourceTotal,
+			AdoptEqualCount:  draft.Summary.AdoptEqualCount,
+			MergedCleanCount: draft.Summary.MergedCleanCount,
+			ConflictCount:    len(draft.Conflicts),
 		},
 	}
 	out.Summary.CreateCount, out.Summary.ModifyCount, out.Summary.DeleteCount =
@@ -629,11 +640,46 @@ func directionDetail(direction string) string {
 	return "direction=" + direction
 }
 
-// detailDirection 反解 Conflict.Detail 中的方向；缺失视为 bidirectional
+// withDirectionDetail 在保留既有 Detail 证据的前提下写入方向（票 #87）：
+// detail 为空走既有纯文本形态（directionDetail）；detail 已是 hunk JSON
+// （契约 07 §3.3）时以 direction 兄弟键并入，不覆盖块证据；非 JSON 形态
+// 原样保留（防御，方向仍可由 Policy 重推导）。
+func withDirectionDetail(detail, direction string) string {
+	if detail == "" {
+		return directionDetail(direction)
+	}
+	if direction == directionBidirectional {
+		return detail
+	}
+	if !json.Valid([]byte(detail)) {
+		return detail
+	}
+	var obj map[string]any
+	if err := json.Unmarshal([]byte(detail), &obj); err != nil {
+		return detail
+	}
+	obj["direction"] = direction
+	b, err := json.Marshal(obj)
+	if err != nil {
+		return detail
+	}
+	return string(b)
+}
+
+// detailDirection 反解 Conflict.Detail 中的方向；兼容纯文本（direction= 前缀）
+// 与 hunk JSON（direction 兄弟键）两种形态，缺失视为 bidirectional
 // （兼容非本包构建的 draft）。
 func detailDirection(detail string) string {
 	if strings.HasPrefix(detail, "direction=") {
 		return strings.TrimPrefix(detail, "direction=")
+	}
+	if json.Valid([]byte(detail)) {
+		var obj struct {
+			Direction string `json:"direction"`
+		}
+		if err := json.Unmarshal([]byte(detail), &obj); err == nil && obj.Direction != "" {
+			return obj.Direction
+		}
 	}
 	return directionBidirectional
 }

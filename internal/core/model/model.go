@@ -404,6 +404,10 @@ type PlanSummary struct {
 	ModifyCount     int `json:"modify_count"`
 	DeleteCount     int `json:"delete_count"`
 	ConflictCount   int `json:"conflict_count"`
+	// MergedCleanCount 是干净合并行数（ADR-0009 §4，票 #87）：双侧同改经
+	// diff3 零冲突块且类型校验通过的非冲突操作数；不并入 modify 计数
+	//（「这次合并了 N 处」是用户可读信息，契约 07 §3.3）。
+	MergedCleanCount int `json:"merged_clean_count"`
 }
 
 // ExpectedBindings 是计划建立时锁定的两端 binding fingerprint。
