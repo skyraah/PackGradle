@@ -599,9 +599,12 @@ type RestoreBlockedItemDTO struct {
 // RestorePlanItemDTO 是回滚计划单资源行。Marker 枚举
 // restorable_from_cas|redownload_required|user_object_required|unrecoverable
 //（delete 行不占四标记）；MarkerReason 仅 user_object_required 行
-//（no_redownload_info|cf_unavailable|hash_format_unsupported）；Skipped/Staged
+//（no_redownload_info|cf_unavailable|hash_format_unsupported|no_project_content
+// ——末值为 ADR-0012 §4 存量宽判降级：目标基线项目侧无实测 Content，补全通道
+// 关闭，skip 或项目端改回目标语义后重新 prepare 是仅有的出口）；Skipped/Staged
 // 为读取时实时投影；Availability 仅 redownload_required 行（ok|unknown）；
-// ExpectedDigest 仅 user_object_required 行（验收入库的目标摘要）。
+// ExpectedDigest 仅 user_object_required 行（验收入库的目标摘要；
+// no_project_content 行恒空——该行永不就绪）。
 type RestorePlanItemDTO struct {
 	ResourceID     string `json:"resource_id"`
 	RelativePath   string `json:"relative_path"`

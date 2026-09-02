@@ -35,6 +35,13 @@ const (
 	// ADR-0008 不验不装）：与下载引擎 hash_format_unsupported 信号同字面
 	//（internal/download codeHashFormatUnsupported）。
 	MarkerReasonHashFormatUnsupported = "hash_format_unsupported"
+	// MarkerReasonNoProjectContent 目标基线项目侧表示无实测 Content（ADR-0012
+	// §4 存量宽判降级：捕获上线前的旧基线没有 metafile 字节，回滚无项目侧内容
+	// 源）。按症状命名——项目侧内容缺失不会变，「存量基线」只是当前唯一成因。
+	// prepare 期纯静态零探测的后置覆写（不区分原 marker）；补全通道对该值关闭
+	//（StageUserObject 拒收），skip 与「项目端改回目标语义后重新 prepare」是
+	// 仅有的出口。契约 06 §3.2 注记（PR #84），plan_json 字符串零 schema 变更。
+	MarkerReasonNoProjectContent = "no_project_content"
 )
 
 // 行内 CF 可用性枚举（契约 06 §5：ok|unknown；unavailable 不是行内态而是降标）。
@@ -57,10 +64,10 @@ const (
 // RedownloadInfo 是重取信息（prepare 时点从目标基线项目侧 metafile 元数据固化；
 // redownload_required 行专用，执行票 #60 经引擎消费，不透出 DTO）。
 type RedownloadInfo struct {
-	FileID       int64  `json:"file_id"`                  // update.curseforge.file-id
-	Filename     string `json:"filename"`                 // pw.toml filename（jar 落盘名）
-	HashFormat   string `json:"hash_format"`              // 声明 hash 格式（引擎可验集）
-	DeclaredHash string `json:"declared_hash"`            // 声明 hex 摘要（jar 内容）
+	FileID       int64  `json:"file_id"`       // update.curseforge.file-id
+	Filename     string `json:"filename"`      // pw.toml filename（jar 落盘名）
+	HashFormat   string `json:"hash_format"`   // 声明 hash 格式（引擎可验集）
+	DeclaredHash string `json:"declared_hash"` // 声明 hex 摘要（jar 内容）
 }
 
 // RestorePlanItem 是回滚计划单资源行（契约 06 §3.2 RestorePlanItemDTO 的持久化

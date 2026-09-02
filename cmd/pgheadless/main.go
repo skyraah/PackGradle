@@ -58,7 +58,7 @@ func main() {
 	gcRun := flag.Bool("gc", false, "RequestGC → 等终态 → 墓碑/存活/引用图不变式断言链（票 #64 acceptance:gc 主链）")
 	revive := flag.String("revive", "", "从回收站人工复活指定 digest（票 #64 CLI 形态；解压回 objects 并置回 ready）")
 	keepCommits := flag.Int("keep-commits", 0, "写入 config.toml [retention] keep_commits 后继续（0=不动配置；验收 K=3 保底用）")
-	restore := flag.Bool("restore", false, "回滚五场景断言链（P3 票 #60 四场景 + 票 #88 metafile 捕获回滚：ADR-0012 出口①；需 -plain-mods 夹具；假 CDN 进程自动拉起供探测端点）")
+	restore := flag.Bool("restore", false, "回滚六场景断言链（P3 票 #60 四场景 + 票 #88 metafile 捕获回滚：ADR-0012 出口① + 票 #95 存量降级 skip 链：ADR-0012 出口③；需 -plain-mods 夹具；假 CDN 进程自动拉起供探测端点）")
 	cdnURL := flag.String("cdn", "", "假 CDN BaseURL（票 #66 验收缝，如 http://127.0.0.1:PORT/files）：下载引擎与 CF 探测指向假 CDN 进程（pgfixture -serve），零真网；空 = 生产 CDN 前缀")
 	downloadChain := flag.Bool("download", false, "假 CDN 五场景断言链（票 #66 acceptance:download：成功链/探测降标/failed 可重入/剔除语义/续传；零真网。独立 fixture 与数据目录；-cdn 为空时自动拉起 pgfixture -serve）")
 	restoreTarget := flag.Bool("restore-target", false, "restore 强杀目标进程（票 #66 acceptance:recovery:restore）：建夹具历史（c1/c2）→ PrepareRestore(最老提交) → ConfirmRestorePlan → 轮询至 committed；stdout 相位标记供 pgrecovery killwindow 观察（-cdn 为空时自动拉起假 CDN 进程）")

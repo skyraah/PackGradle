@@ -39,6 +39,11 @@ const (
 	// CodeUserObjectNotRequired 是 StageUserObject 作用于非 user_object_required
 	// 行（args {0}=resource_id）。
 	CodeUserObjectNotRequired = "err.userobject.not_required"
+	// CodeUserObjectNoProjectContent 是 StageUserObject 作用于 no_project_content
+	// 降标行（args {0}=resource_id；ADR-0012 §4：补 jar 救不了项目侧，补全通道
+	// 对该值关闭——skip 或「项目端改回目标语义后重新 prepare」是仅有的出口，
+	// 放行即复现「确认后必败」）。
+	CodeUserObjectNoProjectContent = "err.userobject.no_project_content"
 	// CodeUserObjectHashMismatch 是用户对象与目标摘要不符（args {0}=期望摘要，
 	// 可重试）。
 	CodeUserObjectHashMismatch = "err.userobject.hash_mismatch"
@@ -271,7 +276,7 @@ func (a *App) buildRestoreDraft(ctx context.Context, b restoreBuild) (
 			switch {
 			case tRep != nil && (curObs == nil || cSem != tSem):
 				writeSides = append(writeSides, side)
-				writeTargetDigests[si] = restoreTargetDigest(tRep)
+				writeTargetDigests[si] = restoreTargetDigest(side, tRep)
 				writeCurrentPresent[si] = curObs != nil
 			case tRep == nil && curObs != nil:
 				deleteSides = append(deleteSides, side)
@@ -303,6 +308,12 @@ func (a *App) buildRestoreDraft(ctx context.Context, b restoreBuild) (
 			item.StageRel = restoreStageRel(&tgt, writeSides)
 			item.Marker, item.MarkerReason, item.Redownload, item.ExpectedDigest =
 				a.judgeRestoreRow(ctx, &tgt, writeSides, writeTargetDigests)
+			// ADR-0012 §4 存量宽判降标（四标记判定后置覆写，矩阵零新维度）：
+			// 写回侧含 project ∧ 目标基线项目侧表示无实测 Content → 不区分原
+			// marker 统一降 user_object_required + no_project_content（纯静态
+			// 零探测——覆写清空 Redownload，probeRestoreItems 自然不再探测）。
+			item = degradeNoProjectRow(item, writeSidesContains(writeSides, model.SideProject),
+				baselineRep(&tgt, model.SideProject))
 		}
 
 		// 写回操作（执行票 #60 消费）：前置条件断言 prepare 时点的目标侧现状
@@ -556,12 +567,13 @@ func (a *App) GetRestorePlan(ctx context.Context, planID string) (view.RestorePl
 // ---- StageUserObject ----
 
 // StageUserObject 用户对象补全（契约 06 §3.5）：draft/resolved 均可补全（confirm
-// 前补齐）；仅对 user_object_required 行合法（否则 err.userobject.not_required）；
-// 按目标 expected_digest 验收（不符 → err.userobject.hash_mismatch {0}=期望摘要，
-// 可重试）。通过后字节进 staging 绑 plan（<stagingRoot>/<plan_id>，沿 syncstage
-// 暂存机器与 StageContent 校验）、不进 CAS、不参与 plan_digest；marker 是
-// prepare 时点确定函数，补全不改标记，只改就绪面（staged 即入 exact 就绪面，
-// ExactFeasible 实时翻转）。
+// 前补齐）；仅对 user_object_required 行合法（否则 err.userobject.not_required；
+// no_project_content 降标行补全通道关闭，另码 err.userobject.no_project_content
+// 拒收，ADR-0012 §4）；按目标 expected_digest 验收（不符 →
+// err.userobject.hash_mismatch {0}=期望摘要，可重试）。通过后字节进 staging 绑
+// plan（<stagingRoot>/<plan_id>，沿 syncstage 暂存机器与 StageContent 校验）、
+// 不进 CAS、不参与 plan_digest；marker 是 prepare 时点确定函数，补全不改标记，
+// 只改就绪面（staged 即入 exact 就绪面，ExactFeasible 实时翻转）。
 func (a *App) StageUserObject(ctx context.Context, input view.StageUserObjectInput) (view.RestorePlanView, error) {
 	p, err := a.deps.Plans.Get(ctx, input.PlanID)
 	if err != nil || p.Kind != model.PlanRestore {
@@ -581,6 +593,12 @@ func (a *App) StageUserObject(ctx context.Context, input view.StageUserObjectInp
 		return view.RestorePlanView{}, errs.New(CodePlanStale, input.PlanID)
 	}
 	it := restoreFindItem(p, model.ResourceID(input.ResourceID))
+	if it != nil && it.MarkerReason == model.MarkerReasonNoProjectContent {
+		// no_project_content 降标行补全通道关闭（ADR-0012 §4，先于 not_required
+		// 拆码）：该行无项目侧目标内容，补 jar 救不了项目侧——放行即复现
+		// 「确认后必败」，拒绝而非落盘是错写链第二道锁。
+		return view.RestorePlanView{}, errs.New(CodeUserObjectNoProjectContent, input.ResourceID)
+	}
 	if it == nil || it.Marker != model.MarkerUserObjectRequired || it.ExpectedDigest == "" || it.StageRel == "" {
 		// 非补全行（含缺验收摘要的不可补全行）一律 not_required（契约 06 §3.5）
 		return view.RestorePlanView{}, errs.New(CodeUserObjectNotRequired, input.ResourceID)
@@ -887,16 +905,21 @@ func redownloadInfoOf(projRep *model.Representation) (*model.RedownloadInfo, boo
 }
 
 // restoreTargetDigest 提取表示的 sha256 内容摘要（CAS/staging 均为 sha256 寻址
-// 口径）：Content 优先（扫描实测），声明 sha256 兜底（packwiz [download] hash
-// 即文件内容摘要）；两者皆无返回空串。
-func restoreTargetDigest(rep *model.Representation) string {
+// 口径）：Content 优先（扫描实测）。声明 sha256 兜底仅限 runtime 侧——项目侧
+// mod 表示的声明 hash（packwiz [download] hash）所指对象是 jar 载体而非
+// metafile 自身，作项目侧兜底即「jar 摘要误标为 metafile 目标摘要」的错写链
+// 源头（补全分支 digest 等值通过 → jar 字节整文件写入 .pw.toml → verify 才拦，
+// 字节已落盘）：项目侧目标摘要只认实测 Content，声明哈希一律不作项目侧兜底
+//（ADR-0012 §7.2，兜底删除＋降标行补全拒收＋digest 等值自然失配＋verify 复扫
+// 四层锁定）；两者皆无返回空串。
+func restoreTargetDigest(side model.Side, rep *model.Representation) string {
 	if rep == nil {
 		return ""
 	}
 	if rep.Content != nil && strings.EqualFold(rep.Content.Algorithm, "sha256") && rep.Content.Digest != "" {
 		return strings.ToLower(rep.Content.Digest)
 	}
-	if strings.EqualFold(rep.Metadata[model.MetaDeclaredHashAlgo], "sha256") {
+	if side == model.SideRuntime && strings.EqualFold(rep.Metadata[model.MetaDeclaredHashAlgo], "sha256") {
 		if v := strings.TrimSpace(rep.Metadata[model.MetaDeclaredHashValue]); v != "" {
 			return strings.ToLower(v)
 		}
