@@ -620,12 +620,15 @@ func (a *App) completeRecoveredRun(ctx context.Context, active model.Task, run m
 	rescanP.CapturedAt = nowStr
 	rescanR.SnapshotID = a.deps.IDs("snap_")
 	rescanR.CapturedAt = nowStr
+	// 基线内容摄取（ADR-0012 §2/规格 §F2）：恢复收口的提交与引擎提交同款通道。
+	contentRefs, ingestDiags := a.ingestBaselineProjectContent(ctx, proj.RootPath, &newBaseline)
 	commit := buildSyncCommit(rel, plan, commitID, baselineID, nowStr, completeness, remaining,
-		rescanP.SnapshotID, rescanR.SnapshotID, buildCommitChanges(plans, snapP, snapR, rescanP, rescanR), nil)
+		rescanP.SnapshotID, rescanR.SnapshotID, buildCommitChanges(plans, snapP, snapR, rescanP, rescanR), nil, ingestDiags)
 
 	// object_refs：运行级恢复引用中的 CAS before 保全引用（恢复完成的运行重建
-	// 引用行；引擎路径的 size 事实在恢复引用中不携带，此处按缺省 0 落库）。
-	casRefs := casRefRows(run)
+	// 引用行；引擎路径的 size 事实在恢复引用中不携带，此处按缺省 0 落库）
+	// ∪ 基线内容摄取引用。
+	casRefs := append(casRefRows(run), contentRefs...)
 
 	err = a.deps.Tx.RunInTx(ctx, func(repos ports.Repos) error {
 		if err := repos.Snapshots.Insert(ctx, rescanP); err != nil {

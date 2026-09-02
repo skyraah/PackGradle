@@ -346,6 +346,12 @@ type GCRepository interface {
 	// baseline_resources.logical_digest 中命中 objects 表的部分（去重）——
 	// 保护根集 1 的基线通道（ADR-0007 §4）。
 	BaselineDigestHits(ctx context.Context, relationIDs []string) ([]string, error)
+	// BaselineContentDigestHits 返回存活基线 baseline_resources 的表示 JSON 内
+	// content.digest（project/runtime 两侧表示的 Content 指针）命中 objects 表
+	// 的部分（去重）——ADR-0012 §3/§8.6：baseline Content 引用形态纳入引用图
+	// 对账可达闭包（gc.Audit 输入侧扩展；对象保护本体经提交 object_refs 的
+	// baseline_content 引用通道，GC 决策与容量口径零新参数）。
+	BaselineContentDigestHits(ctx context.Context, relationIDs []string) ([]string, error)
 	// PlanBaseDigestHits 返回活跃计划（单活跃口径，同 ProtectedBaselineIDs）
 	// base 基线的 baseline_resources.logical_digest 中命中 objects 表的部分
 	//（去重）——活跃计划引用通道的对象面：即使屏障失效导致 base 基线随提交

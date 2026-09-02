@@ -1,8 +1,8 @@
 package main
 
-// pgheadless -restore（P3 票 #60；验收规格 §3）：A 口径回滚四场景断言链——
-// 离线面（零 CDN，回滚行全部 restorable_from_cas / user_object / 删除行），
-// 在同一数据目录顺序执行（③ 先于 ②：partial 的 skip 残留按 ADR-0006 §9 保持
+// pgheadless -restore（P3 票 #60；验收规格 §3）：A 口径回滚断言链——离线面
+//（零 CDN，回滚行全部 restorable_from_cas / user_object / 删除行），在同一
+// 数据目录顺序执行（③ 先于 ②：partial 的 skip 残留按 ADR-0006 §9 保持
 // dirty，不干扰后续 exact 场景的就绪面）：
 //
 //	场景① exact 经 CAS：D1 漂移（改项目侧 pg-a + 删运行端 pg-b）→ c2 →
@@ -12,12 +12,16 @@ package main
 //	      直删 CAS 对象构造 miss → user_object_required + exact_infeasible
 //	      前置拒绝 → 错字节 hash_mismatch → 对字节 staged 翻转 → exact
 //	      committed（写回零 CAS 回填）；
+//	场景④ 重做语义（ADR-0006 §1）：回滚目标 = head（restore 提交，API 合法）
+//	      → 空差异计划合法收口 committed；
+//	场景⑤ metafile 捕获回滚（票 #88，ADR-0012 §2 出口①）：D5 项目侧
+//	      fixture mod metafile 外部漂移（file-id 换代，jar 载体不变 → 写回侧
+//	      仅 project）→ 捕获对象 CAS 命中、漂移态零对象 → write_project 侧
+//	      行零网络零用户介入 exact 收口 + baseline_content 引用跨提交去重；
 //	场景② partial（红线④）：D3 纯外部漂移（运行端 pg-e 改写 → CAS miss →
 //	      user_object_required 行 + 手放 jar 的 deletion_warn 删除行）→ 回滚
 //	      c1：skip + 删除行执行 → committed kind=partial + relation 保持
-//	      dirty；
-//	场景④ 重做语义（ADR-0006 §1）：回滚目标 = head（restore 提交，API 合法）
-//	      → 空差异计划合法收口 committed。
+//	      dirty。
 //
 // 夹具：pgfixture -plain-mods N 生成「无 CF 声明 mod」变体（user_object 行
 // 来源）；受管 config 面用 pg-*.toml 种子文件（config 规则由关系建议携带，
@@ -26,15 +30,19 @@ package main
 import (
 	"context"
 	"crypto/sha256"
+	"database/sql"
 	"encoding/hex"
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"packgradle/internal/application/ports"
 	syncapp "packgradle/internal/application/sync"
 	"packgradle/internal/application/view"
+	"packgradle/internal/bootstrap"
+	"packgradle/internal/cdnproc"
 	"packgradle/internal/core/model"
 	"packgradle/internal/core/normalize"
 	"packgradle/internal/errs"
@@ -81,9 +89,11 @@ func rstSeedFiles(projectRoot, gameDir string) error {
 	return nil
 }
 
-// runRestoreChain 执行 -restore 四场景断言链。rel 为已登记 Relation（主链路
-// 已完成首轮扫描——种子文件须在首次扫描前落位）。
-func runRestoreChain(ctx context.Context, app syncapp.Application, rel view.RelationView,
+// runRestoreChain 执行 -restore 断言链。rel 为已登记 Relation（主链路已完成
+// 首轮扫描——种子文件须在首次扫描前落位）；stack 供 CAS 实存与 object_refs
+// 账目断言（场景⑤，票 #88）；cdn 是假 CDN 进程句柄（场景⑤ redownload 候选
+// 行的探测端点，确定性零真网）。
+func runRestoreChain(ctx context.Context, stack *bootstrap.Stack, cdn *cdnproc.Serve, app syncapp.Application, rel view.RelationView,
 	projectRoot, instanceDir, dataRoot string) error {
 
 	projCfg := filepath.Join(projectRoot, "config")
@@ -159,7 +169,8 @@ func runRestoreChain(ctx context.Context, app syncapp.Application, rel view.Rela
 	if err := os.Remove(filepath.Join(gameCfg, "pg-c.toml")); err != nil {
 		return err
 	}
-	if _, err := rstApplyRound(ctx, app, rel); err != nil {
+	c3, err := rstApplyRound(ctx, app, rel)
+	if err != nil {
 		return fmt.Errorf("D2 apply: %w", err)
 	}
 	// prepare#1：CAS 实存 → restorable_from_cas。
@@ -270,6 +281,119 @@ func runRestoreChain(ctx context.Context, app syncapp.Application, rel view.Rela
 	}
 	fmt.Printf("== 场景④ 重做语义 == 通过（head 为目标空差异合法收口 cR3=%s）\n", cR3)
 
+	// ---- 场景⑤：metafile 捕获回滚（票 #88，ADR-0012 §2 出口①）----
+	// D5：项目侧 fixture-mod-0001.pw.toml（CF 身份 mod:curseforge:900001）
+	// 外部漂移——packwiz 版本决策的真实形状（file-id 换代，纯外部写者，不经
+	// sync；jar 载体字节不变 → 写回侧仅 project）。捕获链：c1 收口时 8 个
+	// metafile 实测摘要已入 CAS（baseline_content 引用）；回滚 c1：漂移行四
+	// 标记沿未改判定矩阵判 redownload_required（jar 载体重取语义不变，ADR-0012
+	// §2「矩阵零新输入维度」），write_project 侧行从「无内容源」变 CAS 命中，
+	// 零网络零用户介入 exact 收口。
+	metaPath := filepath.Join(projectRoot, "mods", "fixture-mod-0001.pw.toml")
+	metaV1, err := os.ReadFile(metaPath)
+	if err != nil {
+		return fmt.Errorf("场景⑤ 读 metafile v0: %w", err)
+	}
+	const fileIDV1, fileIDV2 = "file-id = 1000001", "file-id = 1000002"
+	if !strings.Contains(string(metaV1), fileIDV1) {
+		return fmt.Errorf("场景⑤ fixture metafile 形状不符（缺 %s）", fileIDV1)
+	}
+	metaV2 := strings.Replace(string(metaV1), fileIDV1, fileIDV2, 1)
+	if err := os.WriteFile(metaPath, []byte(metaV2), 0o644); err != nil {
+		return err
+	}
+	if err := rstScan(ctx, app, rel.RelationID); err != nil {
+		return err
+	}
+	d1, d2 := rsha256(string(metaV1)), rsha256(string(metaV2))
+	// 探测端点确定性（零真网）：把 jar 载体字节登记进假 CDN 的直链路径，
+	// PrepareRestore 对 redownload 候选行的 HEAD 探测得 2xx → availability=ok，
+	// 行保持 redownload_required（矩阵乐观标记），可用性面不依赖真网形状。
+	if cdn == nil {
+		return fmt.Errorf("场景⑤ 需要假 CDN 进程（-cdn 或自动拉起）作探测端点")
+	}
+	const modFileID = int64(1000001) // pgfixture writeProjectMod i=1 的 file-id
+	const jarName = "fixture-mod-0001-1.2.2.jar"
+	jarBytes, err := os.ReadFile(filepath.Join(gameDir, "mods", jarName))
+	if err != nil {
+		return fmt.Errorf("场景⑤ 读 jar 载体: %w", err)
+	}
+	if err := cdn.SetFile(cdnproc.FilePath(modFileID, jarName), jarBytes); err != nil {
+		return fmt.Errorf("场景⑤ 登记探测端点: %w", err)
+	}
+	// 捕获面断言：v0 摘要已在 CAS（c1 收口摄取）；v2 漂移态零对象（扫描期/
+	// 未进提交的观测不落 CAS，ADR-0012 §2「扫描期不落对象」）。
+	for digest, want := range map[string]bool{d1: true, d2: false} {
+		ok, herr := stack.CAS.Has(ctx, digest)
+		if herr != nil {
+			return herr
+		}
+		if ok != want {
+			return fmt.Errorf("场景⑤ CAS 实存 %s = %v，期望 %v", digest[:12], ok, want)
+		}
+	}
+	draft5, err := app.PrepareRestore(ctx, view.PrepareRestoreInput{RelationID: rel.RelationID, CommitID: c1})
+	if err != nil {
+		return fmt.Errorf("场景⑤ PrepareRestore: %w", err)
+	}
+	metaRow := rstFindItem(draft5, "mod:curseforge:900001")
+	if metaRow == nil || metaRow.ChangeKind != "modify" {
+		return fmt.Errorf("场景⑤ 缺 metafile 漂移行: %+v", draft5.Items)
+	}
+	if metaRow.Marker != model.MarkerRedownloadRequired {
+		return fmt.Errorf("场景⑤ metafile 行标记 = (%s, %q)（判定矩阵零修订，jar 载体重取语义）: %+v",
+			metaRow.Marker, metaRow.MarkerReason, metaRow)
+	}
+	if metaRow.Availability != model.RestoreAvailabilityOK || metaRow.Redownload == nil {
+		return fmt.Errorf("场景⑤ 探测面: availability=%q redownload=%+v，期望 ok+重取信息",
+			metaRow.Availability, metaRow.Redownload)
+	}
+	if !metaRow.NewerAvailable {
+		return fmt.Errorf("场景⑤ newer_available 应为 true（本地 file-id %s 比目标新）", fileIDV2)
+	}
+	if !draft5.ExactFeasible {
+		return fmt.Errorf("场景⑤ 项目侧 CAS 命中后 exact 应可行")
+	}
+	// CAS 增量断言：每提交只有变更过的 metafile 产新对象（跨提交内容寻址去
+	// 重）——c1/c2/c3 各自 baseline_content 引用集相同（8 个 metafile），全部
+	// 作为一个去重集存活；场景⑤ restore 收口摄取回 v0 引用零新对象。
+	const metaCount = 8 // -mods 6 + -plain-mods 2
+	for _, cid := range []string{c1, c2, c3} {
+		n, err := rstBaselineContentRefs(stack.DB, cid)
+		if err != nil {
+			return fmt.Errorf("场景⑤ baseline_content 引用: %w", err)
+		}
+		if n != metaCount {
+			return fmt.Errorf("场景⑤ 提交 %s baseline_content 引用 = %d，期望 %d", cid, n, metaCount)
+		}
+	}
+	resolved5, err := app.ResolveRestorePlan(ctx, view.ResolveRestorePlanInput{PlanID: draft5.PlanID, RequestedExactness: "exact"})
+	if err != nil {
+		return fmt.Errorf("场景⑤ resolve exact: %w", err)
+	}
+	cR4, err := rstConfirmAndRestore(ctx, app, rel, resolved5.PlanID, model.TaskOutcomeExact)
+	if err != nil {
+		return fmt.Errorf("场景⑤ restore: %w", err)
+	}
+	// 收口后逐字节复验 + 引用账目：v0 引用零新对象（内容寻址去重）。
+	if got, rerr := os.ReadFile(metaPath); rerr != nil || string(got) != string(metaV1) {
+		return fmt.Errorf("场景⑤ metafile 复验 = %q（err=%v），期望 v0 原字节", string(got), rerr)
+	}
+	if total, err := rstDistinctBaselineContentDigests(stack.DB, rel.RelationID); err != nil {
+		return err
+	} else if total != metaCount {
+		return fmt.Errorf("场景⑤ 全链 baseline_content 去重 digest = %d，期望 %d（restore 摄取零新对象）", total, metaCount)
+	}
+	if n, err := rstBaselineContentRefs(stack.DB, cR4); err != nil {
+		return err
+	} else if n != metaCount {
+		return fmt.Errorf("场景⑤ restore 提交 baseline_content 引用 = %d，期望 %d", n, metaCount)
+	}
+	if err := rstAssertClean(ctx, app, rel.RelationID); err != nil {
+		return fmt.Errorf("场景⑤: %w", err)
+	}
+	fmt.Printf("== 场景⑤ metafile 捕获回滚 == 通过（CAS 命中写回 + 跨提交去重 %d digest + 零网络零介入 committed cR4=%s）\n", metaCount, cR4)
+
 	// ---- 场景②：partial（红线④）----
 	// D3（纯外部漂移，不经 sync——restore 判定面直接观察）：运行端 pg-e 改写
 	//（v0 从未保全 → CAS miss → user_object_required）+ 手放 jar（deletion_warn
@@ -317,7 +441,7 @@ func runRestoreChain(ctx context.Context, app syncapp.Application, rel view.Rela
 	if err != nil {
 		return fmt.Errorf("场景② resolve allow_partial: %w", err)
 	}
-	cR4, err := rstConfirmAndRestore(ctx, app, rel, resolved2.PlanID, model.TaskOutcomePartial)
+	cR5, err := rstConfirmAndRestore(ctx, app, rel, resolved2.PlanID, model.TaskOutcomePartial)
 	if err != nil {
 		return fmt.Errorf("场景② restore: %w", err)
 	}
@@ -333,8 +457,8 @@ func runRestoreChain(ctx context.Context, app syncapp.Application, rel view.Rela
 	if _, err := os.Stat(filepath.Join(gameDir, "mods", "hand-placed-1.0.jar")); !os.IsNotExist(err) {
 		return fmt.Errorf("场景② 手放 jar 应照删（err=%v）", err)
 	}
-	fmt.Printf("== 场景② partial + dirty == 通过（kind=partial + relation dirty + deletion_warn 删除行执行，cR4=%s）\n", cR4)
-	fmt.Println("== -restore == 四场景全部通过（链末保持 dirty：场景② skip 残留的诚实投影）")
+	fmt.Printf("== 场景② partial + dirty == 通过（kind=partial + relation dirty + deletion_warn 删除行执行，cR5=%s）\n", cR5)
+	fmt.Println("== -restore == 五场景全部通过（链末保持 dirty：场景② skip 残留的诚实投影）")
 	return nil
 }
 
@@ -518,4 +642,25 @@ func rstAssertMarker(p view.RestorePlanView, resourceID string, marker model.Res
 		return fmt.Errorf("%s 判定 = %s，期望 %s", resourceID, it.Marker, marker)
 	}
 	return nil
+}
+
+// rstBaselineContentRefs 单提交的 baseline_content 引用数（去重 digest；
+// 场景⑤ CAS 增量断言的账目面）。
+func rstBaselineContentRefs(db *sql.DB, commitID string) (int, error) {
+	var n int
+	err := db.QueryRow(
+		"SELECT COUNT(DISTINCT digest) FROM object_refs WHERE owner_type='commit' AND owner_id=? AND purpose=?",
+		commitID, "baseline_content").Scan(&n)
+	return n, err
+}
+
+// rstDistinctBaselineContentDigests 关系全链 baseline_content 引用的去重
+// digest 数（跨提交内容寻址去重断言：restore 收口摄取回 v0 引用零新对象）。
+func rstDistinctBaselineContentDigests(db *sql.DB, relationID string) (int, error) {
+	var n int
+	err := db.QueryRow(`
+SELECT COUNT(DISTINCT rf.digest) FROM object_refs rf
+JOIN sync_commits c ON c.id = rf.owner_id AND rf.owner_type='commit'
+WHERE c.relation_id=? AND rf.purpose=?`, relationID, "baseline_content").Scan(&n)
+	return n, err
 }

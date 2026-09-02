@@ -219,7 +219,12 @@ func deriveApplyFilePlans(plan model.SyncPlan, snapP, snapR model.ObservedSnapsh
 			continue
 		}
 		// after digest：计划源侧前置条件期望值优先；mod 无内容指纹回退声明 hash。
-		if pre, ok := preBySide[string(srcSide)]; ok && pre.Expected != nil {
+		// ADR-0012 §2 捕获后项目侧 metafile 表示自带实测 Content——但 sync 写往
+		// 运行端的载体是 jar（声明 hash 所指对象），metafile 自身字节的摘要绝不
+		// 可作写盘内容源（否则会把 .pw.toml 字节当 jar 落盘）：项目侧源前置条件
+		// 对 mod 行跳过（捕获前该值恒空，行为与捕获前逐点一致）。
+		if pre, ok := preBySide[string(srcSide)]; ok && pre.Expected != nil &&
+			!(normalize.KindOfResourceID(op.ResourceID) == model.ResourceMod && srcSide == model.SideProject) {
 			fp.afterDigest = pre.Expected.Digest
 		}
 		if fp.afterDigest == "" && normalize.KindOfResourceID(op.ResourceID) == model.ResourceMod {

@@ -257,6 +257,37 @@ WHERE b.relation_id IN `+inList(len(relationIDs)), anySlice(relationIDs)...)
 	return scanStrings(rows)
 }
 
+// BaselineContentDigestHits 存活基线的表示 JSON 内 content.digest 命中
+// objects 表的部分（ADR-0012 §3/§8.6）：baseline_resources 的
+// project/runtime_representation_json 携带表示 Content 指针（#88 起项目侧
+// mod 清单的实测摘要），JSON1 提取后与账目对账——gc.Audit 可达闭包的
+// baseline Content 引用形态（对账输入侧扩展；对象保护本体走提交 object_refs）。
+func (r *GCRepository) BaselineContentDigestHits(ctx context.Context, relationIDs []string) ([]string, error) {
+	if len(relationIDs) == 0 {
+		return nil, nil
+	}
+	args := append(anySlice(relationIDs), anySlice(relationIDs)...)
+	rows, err := r.db.QueryContext(ctx, `
+SELECT DISTINCT d.digest FROM (
+	SELECT json_extract(br.project_representation_json, '$.content.digest') AS digest
+	FROM baseline_resources br
+	JOIN sync_baselines b ON b.id = br.baseline_id
+	WHERE br.project_representation_json IS NOT NULL AND b.relation_id IN `+inList(len(relationIDs))+`
+	UNION
+	SELECT json_extract(br.runtime_representation_json, '$.content.digest') AS digest
+	FROM baseline_resources br
+	JOIN sync_baselines b ON b.id = br.baseline_id
+	WHERE br.runtime_representation_json IS NOT NULL AND b.relation_id IN `+inList(len(relationIDs))+`
+) d
+JOIN objects o ON o.algorithm = 'sha256' AND o.digest = d.digest
+WHERE d.digest IS NOT NULL`, args...)
+	if err != nil {
+		return nil, fmt.Errorf("sqlite: 查基线内容 digest 命中: %w", err)
+	}
+	defer rows.Close()
+	return scanStrings(rows)
+}
+
 // PlanBaseDigestHits 活跃计划 base 基线的资源对象（ADR-0007 §4 计划引用通道
 // 的对象面；活跃口径同 ProtectedBaselineIDs 的单活跃推导）。
 func (r *GCRepository) PlanBaseDigestHits(ctx context.Context, relationIDs []string) ([]string, error) {

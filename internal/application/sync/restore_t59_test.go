@@ -379,11 +379,13 @@ func TestRestorePrepareJudgeStageResolveFlow(t *testing.T) {
 
 	// jei：rec=redownload 出身 + CF 重取数据实存，但 murmur2 不可验 →
 	// user_object_required + hash_format_unsupported（不验不装）。写回侧为
-	// project metafile 且无实测内容指纹、声明非 sha256 → 无验收口径，
-	// expected_digest 留空（不可补全行，StageUserObject 按 not_required 拒绝）。
+	// project metafile：#88 起捕获其自身实测 sha256 → expected_digest = v0
+	// metafile 摘要（用户补全通道有了真验收口径；jar 载体的 murmur2 不可验
+	// 语义不变）。
 	jei := r59Item(t, draft, "mod:curseforge:228525")
 	r59AssertMarker(t, jei, model.MarkerUserObjectRequired, model.MarkerReasonHashFormatUnsupported)
-	if jei.ExpectedDigest != "" || jei.ChangeKind != "modify" {
+	jeiV0Meta := r59CFMeta("JEI", "jei-19.5.jar", 228525, 5566778, "murmur2", "1122334455")
+	if jei.ExpectedDigest != r59sha256(jeiV0Meta) || jei.ChangeKind != "modify" {
 		t.Fatalf("jei 行形状: %+v", jei)
 	}
 
@@ -516,8 +518,9 @@ func TestRestorePrepareJudgeStageResolveFlow(t *testing.T) {
 		t.Fatalf("skip(staged 行) 应拒绝: %v", err)
 	}
 
-	// ---- resolve allow_partial + skip(unrecoverable + 不可补全行) → resolved 固化 ----
-	// jei 行无验收口径（不可补全），与 unrecoverable 同属合法 skip。
+	// ---- resolve allow_partial + skip(unrecoverable + 未补全行) → resolved 固化 ----
+	// jei 行未补全（skip 对未 staged 的 user_object 行合法），与 unrecoverable
+	// 同属合法 skip。
 	resolved, err := app.ResolveRestorePlan(ctx, view.ResolveRestorePlanInput{
 		PlanID: draft.PlanID, RequestedExactness: "allow_partial",
 		SkipResourceIDs: []string{"mod:jar:runtimeonly-1.0.jar", "mod:curseforge:228525"},
