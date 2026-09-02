@@ -262,7 +262,7 @@ func changesDTO(v view.ChangesPage) ChangesPageDTO {
 			ConvergedCount: v.Summary.ConvergedCount, AdoptEqualCount: v.Summary.AdoptEqualCount,
 			InitChoiceCount: v.Summary.InitChoiceCount, CreateCount: v.Summary.CreateCount,
 			ModifyCount: v.Summary.ModifyCount, DeleteCount: v.Summary.DeleteCount,
-			ConflictCount: v.Summary.ConflictCount,
+			ConflictCount: v.Summary.ConflictCount, MergedCleanCount: v.Summary.MergedCleanCount,
 		},
 		NextCursor: v.NextCursor,
 	}
@@ -316,6 +316,7 @@ func planDTO(v view.SyncPlanView) SyncPlanDTO {
 			ResourceTotal: v.Summary.ResourceTotal, AdoptEqualCount: v.Summary.AdoptEqualCount,
 			CreateCount: v.Summary.CreateCount, ModifyCount: v.Summary.ModifyCount,
 			DeleteCount: v.Summary.DeleteCount, ConflictCount: v.Summary.ConflictCount,
+			MergedCleanCount: v.Summary.MergedCleanCount,
 		},
 	}
 }

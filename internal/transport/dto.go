@@ -281,6 +281,9 @@ type PlanSummaryDTO struct {
 	ModifyCount     int `json:"modify_count"`
 	DeleteCount     int `json:"delete_count"`
 	ConflictCount   int `json:"conflict_count"`
+	// MergedCleanCount 是干净合并行数（ADR-0009 §4，票 #87；契约 07 §3.3）：
+	// 不并入 modify 计数，DTO 只增不删。
+	MergedCleanCount int `json:"merged_clean_count"`
 }
 
 // SyncPlanDTO 是计划投影（Status 反映读取时计算的 stale/expired）。
@@ -411,15 +414,16 @@ type ChangeDTO struct {
 
 // ChangesSummaryDTO 是全量分组计数（不受筛选影响），供筛选条与页脚展示。
 type ChangesSummaryDTO struct {
-	Total           int `json:"total"`
-	NoopCount       int `json:"noop_count"`
-	ConvergedCount  int `json:"converged_count"`
-	AdoptEqualCount int `json:"adopt_equal_count"`
-	InitChoiceCount int `json:"init_choice_count"`
-	CreateCount     int `json:"create_count"`
-	ModifyCount     int `json:"modify_count"`
-	DeleteCount     int `json:"delete_count"`
-	ConflictCount   int `json:"conflict_count"`
+	Total            int `json:"total"`
+	NoopCount        int `json:"noop_count"`
+	ConvergedCount   int `json:"converged_count"`
+	AdoptEqualCount  int `json:"adopt_equal_count"`
+	InitChoiceCount  int `json:"init_choice_count"`
+	CreateCount      int `json:"create_count"`
+	ModifyCount      int `json:"modify_count"`
+	DeleteCount      int `json:"delete_count"`
+	ConflictCount    int `json:"conflict_count"`
+	MergedCleanCount int `json:"merged_clean_count"` // 干净合并行数（ADR-0009 §4，票 #87；契约 07 §3.3）
 }
 
 // ChangesPageDTO 是资源级 Diff 分页。
