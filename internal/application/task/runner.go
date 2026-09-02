@@ -4,7 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log"
+	"log/slog"
 	"sync"
 	"time"
 
@@ -55,7 +55,7 @@ func (r *Runner) Create(ctx context.Context, relationID, kind string, canCancel 
 	}
 	// 事件只是通知，不是事实源：发布失败不得阻止任务启动（否则留下无 worker 的僵尸任务）
 	if err := r.pub.PublishTask(ctx, t); err != nil {
-		log.Printf("task: 发布创建事件失败（任务 %s 仍继续）: %v", t.TaskID, err)
+		slog.Warn("task: 发布创建事件失败（任务仍继续）", "task", t.TaskID, "err", err)
 	}
 	return t, nil
 }
@@ -72,7 +72,7 @@ func (r *Runner) Update(ctx context.Context, t model.Task) (model.Task, error) {
 		return t, fmt.Errorf("task: 更新任务 %s: %w", t.TaskID, err)
 	}
 	if err := r.pub.PublishTask(ctx, t); err != nil {
-		log.Printf("task: 发布更新事件失败（任务 %s）: %v", t.TaskID, err)
+		slog.Warn("task: 发布更新事件失败", "task", t.TaskID, "err", err)
 	}
 	return t, nil
 }
@@ -85,7 +85,7 @@ func (r *Runner) MarkFailed(ctx context.Context, t model.Task, code, detail stri
 	t.Status = model.TaskStatusFailed
 	t.Problem = &model.Problem{Code: code, Args: args, Detail: detail}
 	if _, err := r.Update(ctx, t); err != nil {
-		log.Printf("task: 任务 %s 失败终态落库失败: %v", t.TaskID, err)
+		slog.Warn("task: 任务失败终态落库失败", "task", t.TaskID, "err", err)
 	}
 }
 
@@ -94,7 +94,7 @@ func (r *Runner) MarkCancelled(ctx context.Context, t model.Task) {
 	ctx = context.WithoutCancel(ctx)
 	t.Status = model.TaskStatusCancelled
 	if _, err := r.Update(ctx, t); err != nil {
-		log.Printf("task: 任务 %s 取消终态落库失败: %v", t.TaskID, err)
+		slog.Warn("task: 任务取消终态落库失败", "task", t.TaskID, "err", err)
 	}
 }
 

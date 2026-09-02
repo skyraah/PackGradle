@@ -2,7 +2,7 @@ package sync
 
 import (
 	"context"
-	"log"
+	"log/slog"
 
 	"packgradle/internal/application/ports"
 	"packgradle/internal/application/view"
@@ -38,7 +38,7 @@ func (a *App) RecoverInterruptedTasks(ctx context.Context) error {
 		if t.Kind != model.TaskKindApply && t.Kind != model.TaskKindRestore {
 			interrupted := t
 			a.runner.MarkFailed(ctx, interrupted, CodeScanInterrupted, "进程重启时任务仍在进行，已标记为中断", t.RelationID)
-			log.Printf("recovery: 任务 %s（%s）标记为中断", t.TaskID, t.Kind)
+			slog.Info("recovery: 任务标记为中断", "task", t.TaskID, "kind", t.Kind)
 			continue
 		}
 		a.recoverApplyTask(ctx, t)
@@ -53,12 +53,12 @@ func (a *App) recoverApplyTask(ctx context.Context, active model.Task) {
 		// 运行头缺失（理论不可达：ConfirmPlan 同事务建任务与运行头）——按 P1
 		// 口径收口任务，不留僵尸。
 		a.runner.MarkFailed(ctx, active, CodeScanInterrupted, "进程重启时任务仍在进行，已标记为中断", active.RelationID)
-		log.Printf("recovery: 任务 %s 无运行头，按中断收口: %v", active.TaskID, err)
+		slog.Warn("recovery: 任务无运行头，按中断收口", "task", active.TaskID, "err", err)
 		return
 	}
 	rel, err := a.deps.Relations.Get(ctx, run.RelationID)
 	if err != nil {
-		log.Printf("recovery: 运行 %s 的关系 %s 不可读，跳过: %v", run.TaskID, run.RelationID, err)
+		slog.Warn("recovery: 运行的关系不可读，跳过", "run", run.TaskID, "relation", run.RelationID, "err", err)
 		return
 	}
 	// 同 Relation 单 Apply（ADR-0004 §6）：与引擎/扫描共用同一把关系锁。
@@ -74,7 +74,7 @@ func (a *App) recoverApplyTask(ctx context.Context, active model.Task) {
 	// （availability 推导 + ConfirmPlan 前置已在 T03/T04 挂钩，这里补落库事实），
 	// 再进入 probe 四路裁决。
 	if err := a.deps.Relations.UpdateHealth(ctx, rel.RelationID, model.HealthRecoveryRequired); err != nil {
-		log.Printf("recovery: 关系 %s 标记恢复态失败: %v", rel.RelationID, err)
+		slog.Warn("recovery: 关系标记恢复态失败", "relation", rel.RelationID, "err", err)
 	}
 	a.recoveryPipeline(ctx, active, run, rel)
 }
@@ -105,11 +105,11 @@ func (a *App) reconcileTerminalRun(ctx context.Context, active model.Task, run m
 		active.CommitID = run.CommitID
 		active.Outcome = outcome
 		if _, err := a.runner.Update(ctx, active); err != nil {
-			log.Printf("recovery: 任务 %s 成功终态重建失败: %v", active.TaskID, err)
+			slog.Warn("recovery: 任务成功终态重建失败", "task", active.TaskID, "err", err)
 			return
 		}
 		_ = a.pub.PublishRelationInvalidated(ctx, run.RelationID)
-		log.Printf("recovery: 运行 %s 已 committed，任务成功投影重建完成", run.TaskID)
+		slog.Info("recovery: 运行已 committed，任务成功投影重建完成", "run", run.TaskID)
 		return
 	}
 	// failed 终态（ADR-0008 §7，票 #63）：任务 failed 幂等补齐；网络面终局不设
@@ -124,22 +124,22 @@ func (a *App) reconcileTerminalRun(ctx context.Context, active model.Task, run m
 		active.Completed = run.OperationCount
 		active.Total = run.OperationCount
 		if _, err := a.runner.Update(ctx, active); err != nil {
-			log.Printf("recovery: 任务 %s failed 终态补齐失败: %v", active.TaskID, err)
+			slog.Warn("recovery: 任务 failed 终态补齐失败", "task", active.TaskID, "err", err)
 			return
 		}
-		log.Printf("recovery: 运行 %s 已 failed，任务终态补齐完成", run.TaskID)
+		slog.Info("recovery: 运行已 failed，任务终态补齐完成", "run", run.TaskID)
 		return
 	}
 	// recovery_required 终态：恢复门与任务终态幂等补齐；不做任何裁决与文件动作。
 	if err := a.deps.Relations.UpdateHealth(ctx, run.RelationID, model.HealthRecoveryRequired); err != nil {
-		log.Printf("recovery: 关系 %s 标记恢复态失败: %v", run.RelationID, err)
+		slog.Warn("recovery: 关系标记恢复态失败", "relation", run.RelationID, "err", err)
 	}
 	if active.Status == model.TaskStatusQueued || active.Status == model.TaskStatusRunning {
 		active.Status = model.TaskStatusRecoveryRequired
 		active.MessageKey = taskProgressKey(active.Kind, "recovery_required")
 		active.Problem = &model.Problem{Code: CodeRecoveryInProgress, Detail: "进程中断时运行已处于恢复态"}
 		if _, err := a.runner.Update(ctx, active); err != nil {
-			log.Printf("recovery: 任务 %s 恢复终态落库失败: %v", active.TaskID, err)
+			slog.Warn("recovery: 任务恢复终态落库失败", "task", active.TaskID, "err", err)
 		}
 	}
 }
@@ -192,7 +192,7 @@ func (a *App) AcknowledgeRecovery(ctx context.Context, taskID string) (view.Work
 	if !alreadyAckg {
 		// 事件只在 SQLite 事务提交后发布（ADR-0004 §6）；发布失败不影响已提交事实
 		_ = a.pub.PublishRelationInvalidated(ctx, relationID)
-		log.Printf("recovery: 运行 %s 恢复已人工确认，关系 %s 复位 healthy（头基线不动，引导重扫）", taskID, relationID)
+		slog.Info("recovery: 恢复已人工确认，关系复位 healthy（头基线不动，引导重扫）", "run", taskID, "relation", relationID)
 		// 恢复处置收口=安全窗口复查事件（票 #64，ADR-0007 §3）：唤醒排队中的
 		// GC 任务自动续排。
 		a.kickGC()

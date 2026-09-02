@@ -4,7 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -213,7 +213,7 @@ func (a *App) runScan(ctx context.Context, t model.Task, rel model.Relation, pro
 	timing.TotalMs = time.Since(scanStart).Milliseconds()
 	a.recordScanTiming(timing)
 	if _, err := a.runner.Update(commitCtx, t); err != nil {
-		log.Printf("scan: 任务 %s 成功终态落库失败: %v", t.TaskID, err)
+		slog.Warn("scan: 任务成功终态落库失败", "task", t.TaskID, "err", err)
 		return
 	}
 	_ = a.pub.PublishRelationInvalidated(commitCtx, rel.RelationID)

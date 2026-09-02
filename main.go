@@ -4,12 +4,15 @@ import (
 	"embed"
 	"encoding/json"
 	"errors"
-	"log"
+	"log/slog"
+	"os"
+	"path/filepath"
 
 	"packgradle/internal/appconfig"
 	"packgradle/internal/bootstrap"
 	"packgradle/internal/errs"
 	"packgradle/internal/service"
+	"packgradle/internal/sessionlog"
 	"packgradle/internal/singleinstance"
 	"packgradle/internal/store"
 
@@ -42,25 +45,40 @@ func main() {
 		singleinstance.NotifyAlreadyRunning()
 	}
 
+	// 会话日志（ADR-0011 §1，票 #91）：先定位用户数据根并挂 slog JSON
+	// 会话出口（logs/<启动时间戳>/session.log + 启动时保留清理），之后的
+	// 启动失败全部进会话文件——Windows GUI 子系统 stderr 无处落地，运行期
+	// 日志不得再丢。定位根或建会话文件失败退回 stderr 默认出口，不阻断启动。
+	root, err := store.DefaultRoot()
+	if err != nil {
+		slog.Error("定位用户数据目录失败", "err", err)
+		os.Exit(1)
+	}
+	sess, serr := sessionlog.Open(filepath.Join(root, "logs"), sessionlog.Options{})
+	if serr != nil {
+		slog.Error("会话日志初始化失败（退回 stderr 出口）", "err", serr)
+	} else {
+		slog.SetDefault(sess.Logger)
+		defer sess.Close()
+	}
+
 	config, err := appconfig.NewConfigManager()
 	if err != nil {
-		log.Fatalf("初始化配置失败: %v", err)
+		slog.Error("初始化配置失败", "err", err)
+		os.Exit(1)
 	}
 	// 旧版全局 [[links]]/[[dir_links]] 一次性迁移到项目级 packgradle.toml
 	if err := config.MigrateLegacyProjectConfigs(); err != nil {
-		log.Printf("迁移旧版项目关联配置失败: %v", err)
+		slog.Warn("迁移旧版项目关联配置失败", "err", err)
 	}
 
 	// 新架构（P1 只读核心）装配：SQLite 迁移失败必须阻止启动写操作。
 	// 保留设置端口接同一 ConfigManager（config.toml [retention]，契约 06 §3.6），
 	// SettingsService 随栈装配（票 #57）。
-	newStackRoot, err := store.DefaultRoot()
+	newStack, err := bootstrap.BuildWithRetention(root, config)
 	if err != nil {
-		log.Fatalf("定位用户数据目录失败: %v", err)
-	}
-	newStack, err := bootstrap.BuildWithRetention(newStackRoot, config)
-	if err != nil {
-		log.Fatalf("新架构初始化失败: %v", err)
+		slog.Error("新架构初始化失败", "err", err)
+		os.Exit(1)
 	}
 	defer newStack.Close()
 	// 启动触发通道①（票 #64，ADR-0007 §3）：启动后异步建 GC 任务
@@ -104,6 +122,7 @@ func main() {
 	})
 
 	if err := app.Run(); err != nil {
-		log.Fatal(err)
+		slog.Error("wails 应用运行失败", "err", err)
+		os.Exit(1)
 	}
 }
