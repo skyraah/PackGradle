@@ -257,6 +257,7 @@ func New(deps AppDeps) (*App, error) {
 	// 清理面未装配时钩子内部零操作，装配调用保持无条件（runner 装配一次）。
 	app.runner.SetTerminalHook(app.lazyCleanupAfterTask)
 	return app, nil
+}
 
 // runner 暴露给包内用例。
 func (a *App) taskRunner() *task.Runner { return a.runner }
