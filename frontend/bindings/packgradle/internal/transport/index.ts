@@ -62,6 +62,7 @@ export type {
     RuntimeCandidateDTO,
     SnapshotSummaryDTO,
     StageUserObjectDTO,
+    StorageStatsDTO,
     SyncPlanDTO,
     TaskDTO,
     TaskPageDTO,

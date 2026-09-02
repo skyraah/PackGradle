@@ -739,12 +739,8 @@ func defaultDownloadRecordPath() string {
 		fmt.Sprintf("p3-download-%s-%s.json", time.Now().Format("2006-01-02"), host))
 }
 
-// newMachineInfo 机器规格四元组（main.go machineInfo 复用）。
+// newMachineInfo 机器规格四元组（main.go machineInfo 复用；R2 脱敏不采集机器名）。
 func newMachineInfo() machineInfo {
-	host := "unknown"
-	if h, err := os.Hostname(); err == nil && h != "" {
-		host = h
-	}
-	return machineInfo{Host: host, OS: runtime.GOOS, Arch: runtime.GOARCH,
+	return machineInfo{OS: runtime.GOOS, Arch: runtime.GOARCH,
 		GoVersion: runtime.Version(), CPUs: runtime.NumCPU()}
 }

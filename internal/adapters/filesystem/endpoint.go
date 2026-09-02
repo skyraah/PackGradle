@@ -94,7 +94,9 @@ func resolveWithin(realRoot, rel string) (string, error) {
 		}
 	}
 	if !withinRoot(realRoot, resolved) {
-		return "", fmt.Errorf("%w: %q 解析到 %s", ErrPathEscape, rel, resolved)
+		// R1（ADR-0011 §7）：解析目标是端点根之外的绝对路径，绝不进入错误串
+		//（端点根外的绝对路径不进诊断面）；root-relative 的 rel 已足够定位证据。
+		return "", fmt.Errorf("%w: %q 解析到端点根之外", ErrPathEscape, rel)
 	}
 	return resolved, nil
 }

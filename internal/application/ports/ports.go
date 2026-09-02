@@ -9,6 +9,7 @@ import (
 	"errors"
 	"time"
 
+	"packgradle/internal/application/view"
 	"packgradle/internal/core/model"
 )
 
@@ -616,3 +617,11 @@ func (e *InstancesDirError) Error() string {
 }
 
 func (e *InstancesDirError) Unwrap() error { return e.Err }
+
+// StorageStatsSource 是存储占用概览的只读采集端口（ADR-0011 §8 勘误兑现，
+// 票 #90）：CAS 账面计数、task_events 行数、DB 文件体积与数据根所在卷剩余
+// 空间，一次调用惰性采集（无后台定时器）。staging 侧指标待 #69 决议后补。
+type StorageStatsSource interface {
+	// StorageStats 采集当前存储占用概览；采集口径见 view.StorageStatsView 字段注。
+	StorageStats(ctx context.Context) (view.StorageStatsView, error)
+}
