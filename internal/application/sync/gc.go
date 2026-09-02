@@ -499,7 +499,7 @@ func (a *App) sweepOrphanSnapshots(ctx context.Context) error {
 	if len(orphans) == 0 {
 		return nil
 	}
-	log.Printf("gc: 孤儿快照清扫 %d 份（全部快照 %d）", len(orphans), len(facts.All))
+	slog.Info("gc: 孤儿快照清扫", "count", len(orphans), "total", len(facts.All))
 	return a.deps.GC.DeleteSnapshots(ctx, orphans)
 }
 
