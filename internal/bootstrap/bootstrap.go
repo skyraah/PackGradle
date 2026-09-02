@@ -206,10 +206,14 @@ func build(root string, retention ports.RetentionSettingsStore, dl download.Opti
 		return nil, fmt.Errorf("bootstrap: 装配运行实例端点用例: %w", err)
 	}
 	// 设置域用例（契约 06 §2/§3.6；票 #57）：保留设置端口为 nil（headless）时跳过，
-	// SettingsService 保持未装配。
+	// SettingsService 保持未装配。存储占用概览采集端口（ADR-0011 §8，票 #90）
+	// 走同一 DB 与数据根布局（GetStorageStats，SettingsService 第 5 方法）。
 	var settingsSvc *transport.SettingsService
 	if retention != nil {
-		settingsApp, err := settingsapp.New(settingsapp.Deps{Retention: retention})
+		settingsApp, err := settingsapp.New(settingsapp.Deps{
+			Retention: retention,
+			Storage:   sqlite.NewStorageStatsRepository(db, layout),
+		})
 		if err != nil {
 			db.Close()
 			return nil, fmt.Errorf("bootstrap: 装配设置用例: %w", err)

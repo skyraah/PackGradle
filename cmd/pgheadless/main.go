@@ -289,7 +289,7 @@ func main() {
 			InstanceDir: instanceAbs,
 			DataRoot:    root,
 			Machine: machineInfo{
-				Host: hostName(), OS: runtime.GOOS, Arch: runtime.GOARCH,
+				OS: runtime.GOOS, Arch: runtime.GOARCH,
 				GoVersion: runtime.Version(), CPUs: runtime.NumCPU(),
 			},
 			ScanPhasesMS: scanPhasesMS{
@@ -393,8 +393,9 @@ func deltaRatio(after, before view.HashCacheStatsView) float64 {
 // ---- metrics 记录形态（p2-perf-run/1；pgfixture -eval 读取 ScanTotalMS/
 // HashCache 与 apply 段。apply 段形态定义在 apply.go，-apply 链路产出）----
 
+// machineInfo 是机器规格（R2 脱敏，ADR-0011 §7：不再采集 os.Hostname——
+// 性能记录不暴露设备身份；OS/Arch/GoVersion/CPUs 属通用环境信息保留）。
 type machineInfo struct {
-	Host      string `json:"host"`
 	OS        string `json:"os"`
 	Arch      string `json:"arch"`
 	GoVersion string `json:"go_version"`
@@ -483,14 +484,6 @@ func mustAbs(p string) string {
 		log.Fatalf("解析绝对路径 %s: %v", p, err)
 	}
 	return a
-}
-
-func hostName() string {
-	h, err := os.Hostname()
-	if err != nil {
-		return "unknown"
-	}
-	return h
 }
 
 // waitScan 轮询直到无活动任务（事件不是事实源，以查询 API 为准）。

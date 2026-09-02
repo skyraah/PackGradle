@@ -103,14 +103,17 @@ func (a *App) DiscoverProjects(ctx context.Context, parentDir string) ([]view.Pr
 func (a *App) RegisterProject(ctx context.Context, input view.RegisterEndpointInput) (view.EndpointView, error) {
 	root, err := a.deps.Paths.NormalizeEndpointPath(input.RootPath)
 	if err != nil {
-		return view.EndpointView{}, errs.NewDetail(endpoint.CodeInvalidPath, err.Error(), input.RootPath)
+		// R1（ADR-0011 §7）：规范化错误串内嵌绝对路径，detail 别名化
+		return view.EndpointView{}, errs.NewDetail(endpoint.CodeInvalidPath,
+			model.AliasDetail(input.RootPath, model.AliasProject, err.Error()), input.RootPath)
 	}
 	if _, err := os.Stat(filepath.Join(root, "pack.toml")); err != nil {
 		return view.EndpointView{}, errs.New(endpoint.CodeInvalidPath, root)
 	}
 	fp, err := a.deps.Fingerprinter.Fingerprint(root)
 	if err != nil {
-		return view.EndpointView{}, errs.NewDetail(endpoint.CodeInvalidPath, "计算绑定指纹失败: "+err.Error(), root)
+		return view.EndpointView{}, errs.NewDetail(endpoint.CodeInvalidPath,
+			"计算绑定指纹失败: "+model.AliasDetail(root, model.AliasProject, err.Error()), root)
 	}
 	if existing, found, err := a.deps.Endpoints.FindProjectByRoot(ctx, fp); err != nil {
 		return view.EndpointView{}, err

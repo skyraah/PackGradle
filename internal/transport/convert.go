@@ -398,6 +398,19 @@ func retentionSettingsDTO(v view.RetentionSettingsView) RetentionSettingsDTO {
 	}
 }
 
+// storageStatsDTO 投影存储占用概览（ADR-0011 §8，票 #90；只读数据面直投影）。
+func storageStatsDTO(v view.StorageStatsView) StorageStatsDTO {
+	return StorageStatsDTO{
+		SchemaVersion:   v.SchemaVersion,
+		CasTotalBytes:   v.CasTotalBytes,
+		CasObjectCount:  v.CasObjectCount,
+		CasTmpLeftovers: v.CasTmpLeftovers,
+		TaskEventsCount: v.TaskEventsCount,
+		DBSizeBytes:     v.DBSizeBytes,
+		FreeDiskBytes:   v.FreeDiskBytes,
+	}
+}
+
 // ---- 回滚计划面投影转换（契约 06 §3；票 #59）----
 
 func restoreBlockedItemDTO(v view.RestoreBlockedItemView) RestoreBlockedItemDTO {

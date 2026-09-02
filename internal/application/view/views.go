@@ -542,3 +542,16 @@ type RestorePlanView struct {
 	ExpiresAt                string                          `json:"expires_at"`
 	CreatedAt                string                          `json:"created_at"`
 }
+
+// StorageStatsView 是存储占用概览（ADR-0011 §8 勘误兑现，票 #90）：设置页
+// 只读数据面；cas_total_bytes + free_disk_bytes 为容量红线双指标承载。
+// staging 侧指标不占位（ADR-0011 §5 雾区，待 #69 决议后补）；阈值与告警 UI 后置。
+type StorageStatsView struct {
+	SchemaVersion   int   `json:"schema_version"`
+	CasTotalBytes   int64 `json:"cas_total_bytes"`   // objects 表 ready 对象字节总量（含未引用，GC 账面口径）
+	CasObjectCount  int64 `json:"cas_object_count"`  // ready 对象数
+	CasTmpLeftovers int64 `json:"cas_tmp_leftovers"` // objectsRoot 根下 .tmp-* 写中断残留文件数
+	TaskEventsCount int64 `json:"task_events_count"` // task_events 行数
+	DBSizeBytes     int64 `json:"db_size_bytes"`     // packgradle.db 文件字节数（含 -wal）
+	FreeDiskBytes   int64 `json:"free_disk_bytes"`   // 用户数据根所在卷剩余字节数
+}

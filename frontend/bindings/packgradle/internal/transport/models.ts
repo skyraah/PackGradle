@@ -743,6 +743,45 @@ export interface StageUserObjectDTO {
 }
 
 /**
+ * StorageStatsDTO 是存储占用概览投影（ADR-0011 §8 勘误兑现，票 #90；只读
+ * 数据面）。cas_total_bytes + free_disk_bytes 为容量红线双指标承载；staging
+ * 侧指标不占位（ADR-0011 §5 雾区，待 #69 决议后补）；阈值与告警 UI 后置。
+ */
+export interface StorageStatsDTO {
+    "schema_version": number;
+
+    /**
+     * CAS ready 对象字节总量
+     */
+    "cas_total_bytes": number;
+
+    /**
+     * CAS ready 对象数
+     */
+    "cas_object_count": number;
+
+    /**
+     * objectsRoot 根下 .tmp-* 残留文件数
+     */
+    "cas_tmp_leftovers": number;
+
+    /**
+     * task_events 行数
+     */
+    "task_events_count": number;
+
+    /**
+     * packgradle.db（含 -wal）字节数
+     */
+    "db_size_bytes": number;
+
+    /**
+     * 用户数据根所在卷剩余字节数
+     */
+    "free_disk_bytes": number;
+}
+
+/**
  * SyncPlanDTO 是计划投影（Status 反映读取时计算的 stale/expired）。
  */
 export interface SyncPlanDTO {

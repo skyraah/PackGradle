@@ -22,8 +22,8 @@ type SyncApplication interface {
 // SettingsService 是设置/开关域用例的 Wails 出口（契约 06 §2/§3.6；票 #57）。
 // 与 SyncService 分立注册：保留设置（config.toml [retention] 承载）与工作区
 // 授权开关不与同步执行混装（契约 06 §2 服务归属 Q1/Q3）。票 #65 起增载
-// RequestGC（设置页「立即回收空间」，消费票 #64 GC 任务面）——契约 06 §2
-// 注明的「3 方法」增为 4（修订注记见契约 06 §13）。
+// RequestGC（设置页「立即回收空间」，消费票 #64 GC 任务面）；票 #90 起增载
+// GetStorageStats（存储占用概览，ADR-0011 §8 勘误兑现）——方法数 4→5。
 type SettingsService struct {
 	settings settingsapp.Application
 	sync     SyncApplication
@@ -80,6 +80,19 @@ func (s *SettingsService) RequestGC() (TaskDTO, error) {
 		return TaskDTO{}, err
 	}
 	return taskDTO(t), nil
+}
+
+// GetStorageStats 返回存储占用概览（ADR-0011 §8 勘误兑现，票 #90；契约 06 §2
+// SettingsService 第 5 方法）：cas_total_bytes / cas_object_count /
+// cas_tmp_leftovers / task_events_count / db_size_bytes / free_disk_bytes 六键。
+// 容量红线双指标 = cas_total_bytes + free_disk_bytes；staging 侧指标待 #69
+// 雾区决议后补；仅数据面，无阈值告警 UI。
+func (s *SettingsService) GetStorageStats() (StorageStatsDTO, error) {
+	v, err := s.settings.GetStorageStats(context.Background())
+	if err != nil {
+		return StorageStatsDTO{}, err
+	}
+	return storageStatsDTO(v), nil
 }
 
 // settingsUpdateInput 把 DTO 还原为应用层写输入。

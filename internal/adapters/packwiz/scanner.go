@@ -51,25 +51,26 @@ func (s *Scanner) Scan(ctx context.Context, root string, opts ports.ScanOptions)
 
 	rslv, err := filesystem.NewResolver(root)
 	if err != nil {
-		return report, fmt.Errorf("packwiz: 端点根不可达: %w", err)
+		// R1（ADR-0011 §7）：端点根不可达错误串含用户输入的绝对路径，别名化后再透出
+		return report, model.AliasError(root, model.AliasProject, fmt.Errorf("packwiz: 端点根不可达: %w", err))
 	}
 	packPath, err := rslv.Resolve("pack.toml")
 	if err != nil {
-		return report, fmt.Errorf("packwiz: pack.toml 解析失败: %w", err)
+		return report, model.AliasError(root, model.AliasProject, fmt.Errorf("packwiz: pack.toml 解析失败: %w", err))
 	}
 	if _, err := os.Stat(packPath); err != nil {
 		return report, ErrNotPackwizProject
 	}
 	idxPath, err := rslv.Resolve("index.toml")
 	if err != nil {
-		return report, fmt.Errorf("packwiz: index.toml 解析失败: %w", err)
+		return report, model.AliasError(root, model.AliasProject, fmt.Errorf("packwiz: index.toml 解析失败: %w", err))
 	}
 	idx, err := parseIndex(idxPath)
 	if err != nil {
 		if errors.Is(err, fs.ErrNotExist) {
 			return report, ErrIndexMissing
 		}
-		return report, fmt.Errorf("packwiz: index.toml 解析失败: %w", err)
+		return report, model.AliasError(root, model.AliasProject, fmt.Errorf("packwiz: index.toml 解析失败: %w", err))
 	}
 
 	obs := make([]model.ResourceObservation, 0, len(idx.Files))
@@ -107,7 +108,8 @@ func (s *Scanner) Scan(ctx context.Context, root string, opts ports.ScanOptions)
 		}
 		meta, metaErr := parseModMeta(absMeta)
 		if metaErr != nil {
-			// 容错哲学：条目保留（低置信度路径身份），错误落诊断
+			// 容错哲学：条目保留（低置信度路径身份），错误落诊断。
+			// R1（ADR-0011 §7）：metaErr 内嵌端点内绝对路径，新写 detail 即别名
 			obs = append(obs, model.ResourceObservation{
 				ResourceID: model.ResourceID("mod:path:" + relLower),
 				Kind:       model.ResourceMod,
@@ -121,7 +123,7 @@ func (s *Scanner) Scan(ctx context.Context, root string, opts ports.ScanOptions)
 			report.Diagnostics = append(report.Diagnostics, model.Diagnostic{
 				Severity: "warning", Code: "diag.scan.modmeta_unreadable",
 				Args: []string{entry.File}, RelativePath: entry.File,
-				Detail: metaErr.Error(),
+				Detail: model.AliasDetail(rslv.Root(), model.AliasProject, metaErr.Error()),
 			})
 			continue
 		}
