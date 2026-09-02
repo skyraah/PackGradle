@@ -10,7 +10,7 @@
 internal/
   core/            # 纯 Go 标准库：model / ids / normalize / diff / plan
   application/     # 用例编排：ports / task / policy / view / sync
-  adapters/        # ports 实现：filesystem / packwiz / prism（后续 watcher / junction）
+  adapters/        # ports 实现：filesystem / packwiz / prism（后续 watcher）
   store/           # 本地状态：paths / sqlite / objectstore
   transport/       # Wails 出口：DTO / SyncService / 事件桥
 ```
@@ -31,7 +31,7 @@ core -> Go standard library only
 | --- | --- | --- |
 | 三个 Wails 服务 | `internal/service`（已加 legacy 包注释） | `internal/application/sync` + `internal/transport` |
 | 项目/实例关联模型 | `appconfig/projectconfig.go`（packgradle.toml dir_links） | Relation + MappingPolicy（SQLite） |
-| Junction/硬链接同步语义 | `internal/service/links.go`、`internal/junction` | Phase 4 可选物化 capability（copy 是 MVP 唯一默认） |
+| Junction/硬链接同步语义 | `internal/service/links.go`、`internal/junction` | 不迁移：已取消（2026-08-31 用户决议，非推迟；copy 为唯一物化方式）——决议见 [P3 决策图 #49](https://github.com/skyraah/PackGradle/issues/49) Out of scope |
 | mods 目录监听 | `internal/service/mods_watch.go` | Phase 4 watcher（仅发 relation_invalidated） |
 | CF 更新检查/缓存 | `internal/curseforge` + service | 后续阶段按需重新接入 |
 
