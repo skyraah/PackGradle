@@ -233,7 +233,6 @@ Phase 1 不允许写入 Project/Runtime 文件，不提供 Apply、自动合并�
 
 - TOML、文本 diff3、Packwiz-aware merge adapter；
 - watcher 扩展和增量扫描协议；
-- hardlink/Junction capability、共享物化解除和回退；
 - 第二个 Runtime adapter，用于验证 core/application port 没有被 Prism 特性污染。
 
 ## 6. 任务依赖和建议并行方式
