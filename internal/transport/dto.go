@@ -90,6 +90,10 @@ type WorkspaceStateDTO struct {
 	RelationHealth   string `json:"relation_health"`
 	ActiveTaskID     string `json:"active_task_id,omitempty"`
 	RelationRevision int    `json:"relation_revision"`
+	// PendingPlanID 是最新一张待人工计划（契约 07 §3.2，票 #86；只增不删）：
+	// status ∈ {draft, resolved} 且非 stale/expired/applied 的最新计划，无则空。
+	// 系统通知去重依据与前端「有待确认计划」角标数据源。
+	PendingPlanID string `json:"pending_plan_id,omitempty"`
 }
 
 // SnapshotSummaryDTO 是快照摘要。
@@ -436,6 +440,16 @@ type ChangesPageDTO struct {
 // （kind=apply，status=queued，PlanID 字段回填）；幂等重入返回既有任务。
 type ConfirmPlanDTO struct {
 	PlanID string `json:"plan_id"`
+}
+
+// QuickUpdateResultDTO 是一次快速更新链的收口结果（契约 07 §3.1，票 #86：Q1
+// 同步三态）。阻塞到链收口再返回，对 wire 是一次 Promise。
+type QuickUpdateResultDTO struct {
+	SchemaVersion int    `json:"schema_version"`
+	RelationID    string `json:"relation_id"`
+	Outcome       string `json:"outcome"` // no_diff|apply_started|awaiting_confirmation
+	PlanID        string `json:"plan_id,omitempty"`       // apply_started/awaiting_confirmation 回填
+	ApplyTaskID   string `json:"apply_task_id,omitempty"` // 仅 apply_started 回填
 }
 
 // ---- Apply 运行与历史读 DTO（契约 05 §3 定稿，票 #39；schema_version/slice 归一沿契约 03 §0 硬约束）----

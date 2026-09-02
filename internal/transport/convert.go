@@ -130,6 +130,7 @@ func workspaceDTO(v view.WorkspaceView) WorkspaceDTO {
 			ScanState: v.State.ScanState, BaselineState: v.State.BaselineState,
 			DiffState: v.State.DiffState, RelationHealth: v.State.RelationHealth,
 			ActiveTaskID: v.State.ActiveTaskID, RelationRevision: v.State.RelationRevision,
+			PendingPlanID: v.State.PendingPlanID,
 		},
 		Features:     featuresDTO(v.Features),
 		Availability: availabilityDTO(v.Availability),
@@ -194,6 +195,17 @@ func taskDTO(v view.TaskView) TaskDTO {
 		out.Problem = &ProblemDTO{Code: v.Problem.Code, Args: strs(v.Problem.Args), Detail: v.Problem.Detail}
 	}
 	return out
+}
+
+// quickUpdateResultDTO 投影统一快速更新收口结果（契约 07 §3.1，票 #86）。
+func quickUpdateResultDTO(v view.QuickUpdateResultView) QuickUpdateResultDTO {
+	return QuickUpdateResultDTO{
+		SchemaVersion: model.CurrentSchemaVersion,
+		RelationID:    v.RelationID,
+		Outcome:       v.Outcome,
+		PlanID:        v.PlanID,
+		ApplyTaskID:   v.ApplyTaskID,
+	}
 }
 
 func representationDTO(r *model.Representation) *RepresentationDTO {

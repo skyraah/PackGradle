@@ -466,6 +466,30 @@ export interface ProjectCandidateDTO {
 }
 
 /**
+ * QuickUpdateResultDTO 是一次快速更新链的收口结果（契约 07 §3.1，票 #86：Q1
+ * 同步三态）。阻塞到链收口再返回，对 wire 是一次 Promise。
+ */
+export interface QuickUpdateResultDTO {
+    "schema_version": number;
+    "relation_id": string;
+
+    /**
+     * no_diff|apply_started|awaiting_confirmation
+     */
+    "outcome": string;
+
+    /**
+     * apply_started/awaiting_confirmation 回填
+     */
+    "plan_id"?: string;
+
+    /**
+     * 仅 apply_started 回填
+     */
+    "apply_task_id"?: string;
+}
+
+/**
  * RebindPreparationDTO 是 PrepareRebind 结果（契约 03 §2.4）。new_endpoint 与
  * old_endpoint 共享同一端点 ID：ApplyRebind 原位更新该端点行的绑定。
  */
@@ -935,4 +959,11 @@ export interface WorkspaceStateDTO {
     "relation_health": string;
     "active_task_id"?: string;
     "relation_revision": number;
+
+    /**
+     * PendingPlanID 是最新一张待人工计划（契约 07 §3.2，票 #86；只增不删）：
+     * status ∈ {draft, resolved} 且非 stale/expired/applied 的最新计划，无则空。
+     * 系统通知去重依据与前端「有待确认计划」角标数据源。
+     */
+    "pending_plan_id"?: string;
 }

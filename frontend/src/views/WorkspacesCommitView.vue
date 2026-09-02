@@ -14,12 +14,10 @@ import { useI18n } from 'vue-i18n'
 import { useRoute, useRouter } from 'vue-router'
 import { SyncService } from '../api'
 import type { CommitDTO, CommitSummaryDTO } from '../api'
-import { bootstrapped, workspaces } from '../stores/syncCache'
+import { bootstrapped, triggerRequery, workspaces } from '../stores/syncCache'
 import { showSnackbar } from '../stores/ui'
 import { errText } from '../utils/errors'
 import { availabilityReasonText, canPrepareRestore } from '../utils/plans'
-import { runQuickUpdate } from '../utils/quickUpdate'
-import type { QuickUpdatePhase } from '../utils/quickUpdate'
 import {
     completenessTone,
     formatTime,
@@ -90,29 +88,29 @@ const cols = ['history.commit.colResource', 'history.commit.colProject', 'histor
 // 同一套键；缺键渲染键名本身便于发现遗漏）。——
 const skipped = computed(() => commit.value?.skipped ?? [])
 
-// 重试跳过项分两路（#62 遗留项收口）：
-// - 授权模式开：升级走快速更新同一编排（utils/quickUpdate，唯一口径 Q7）——
-//   requirements 空时免确认直达 apply（committed → 任务中心/变化页），否则转
-//   待确认计划页（manual）；本页零特判，编排细节与免确认判定全在编排内。
+// 重试跳过项分两路（#62 遗留项收口；#86 单调用化）：
+// - 授权模式开：升级走快速更新同一后端用例（SyncService.QuickUpdate，契约 07
+//   §3.1 唯一口径）——链在后端阻塞收口，前端按三态承接：no_diff → 「已是最新」；
+//   apply_started → 任务中心/变化页；awaiting_confirmation → 待确认计划页。
 // - 未授权：保持「重新开始」最小语义（重新触发扫描，用户走既有 prepare_sync
 //   流，新计划天然只剩未更新项；不新造部分重试机制）。成功后回工作区列表并提示。
 const retrying = ref(false)
-const retryPhase = ref<QuickUpdatePhase | ''>('')
 async function retrySkipped(): Promise<void> {
     if (retrying.value) return
     retrying.value = true
     try {
         const ws = wsRow.value
         if (ws?.authorized_apply === true) {
-            const outcome = await runQuickUpdate(ws, phase => {
-                retryPhase.value = phase
-            })
-            if (outcome.kind === 'committed') {
+            const res = await SyncService.QuickUpdate(relationID.value)
+            triggerRequery()
+            if (res.outcome === 'no_diff') {
+                showSnackbar(t('workspaces.quickUpdate.upToDate'), 'success')
+            } else if (res.outcome === 'apply_started') {
                 showSnackbar(t('workspaces.quickUpdate.directToast'), 'success')
                 void router.push('/workspaces/' + relationID.value + '/changes')
             } else {
                 showSnackbar(t('workspaces.quickUpdate.manualToast'), 'warning')
-                void router.push('/workspaces/' + relationID.value + '/plans/' + outcome.planID)
+                void router.push('/workspaces/' + relationID.value + '/plans/' + res.plan_id)
             }
             return
         }
@@ -123,7 +121,6 @@ async function retrySkipped(): Promise<void> {
         showSnackbar(errText(e), 'error')
     } finally {
         retrying.value = false
-        retryPhase.value = ''
     }
 }
 
@@ -333,7 +330,7 @@ watch([relationID, commitID], () => void loadHead(), { immediate: true })
                 </Card>
 
                 <!-- 跳过清单（票 #63 剔除语义）：本场剔出的取数失败行 + 重试入口。
-                     授权模式开走快速更新编排（进行中显编排阶段），否则重扫最小语义 -->
+                     授权模式开走快速更新单调用（#86，进行中统一 busy），否则重扫最小语义 -->
                 <Card v-if="skipped.length > 0">
                     <CardContent class="py-2">
                         <div class="flex items-center justify-between gap-2 px-2 py-2">
@@ -342,7 +339,7 @@ watch([relationID, commitID], () => void loadHead(), { immediate: true })
                                 <span class="text-muted-foreground text-xs">{{ t('history.commit.skippedHint') }}</span>
                             </div>
                             <Button size="sm" variant="outline" :disabled="retrying" @click="retrySkipped">
-                                {{ retrying && retryPhase ? t('workspaces.quickUpdate.phase.' + retryPhase) : t('history.commit.retrySkipped') }}
+                                {{ retrying ? t('workspaces.quickUpdate.busy') : t('history.commit.retrySkipped') }}
                             </Button>
                         </div>
                         <Table>

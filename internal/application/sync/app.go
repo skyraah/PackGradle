@@ -74,6 +74,11 @@ type Application interface {
 	// 任务与 apply_runs(prepared) 运行，引擎协程接管执行；幂等口径对齐
 	// ConfirmPlan，failed 终局可重入，committed 后 err.plan.apply_not_reentrant。
 	ConfirmRestorePlan(ctx context.Context, input view.ConfirmRestorePlanInput) (view.TaskView, error)
+	// QuickUpdate 统一快速更新（契约 07 §3.1；票 #86）：扫描 → 无差异短路
+	// no_diff（不建计划）→ PrepareSync（exact，双端快照内部取最新）→ ResolvePlan
+	// （空决议，默认推荐生效）→ 停靠判定 → ConfirmPlan 或停待确认。阻塞到链收口
+	// 再返回（对 wire 是一次 Promise）；同 relation 链进行中并发调用 join 同一结果。
+	QuickUpdate(ctx context.Context, input view.QuickUpdateInput) (view.QuickUpdateResultView, error)
 }
 
 var _ Application = (*App)(nil)
@@ -166,6 +171,12 @@ type App struct {
 	// cleanupMu 串行化惰性清理通道（ADR-0011 §2/§3，票 #89：启动时 + 任务
 	// 终态后两通道可能并发触发；各删除步骤幂等，互斥只为日志与测试确定性）。
 	cleanupMu sync.Mutex
+
+	// quInflight 是 QuickUpdate 的同 relation 单飞 join（契约 07 §3.1.5，票 #86）：
+	// 同 relation 链进行中时并发调用等待并返回同一结果（双击/双窗口安全）。
+	// relationID → 进行中调用；由 quMu 保护，收口时关闭 done 释放等待者。
+	quMu       sync.Mutex
+	quInflight map[string]*quickUpdateCall
 }
 
 // LastScanTiming 返回最近一次完成的扫描分相耗时（进程生命周期内最后一次；
@@ -236,16 +247,16 @@ func New(deps AppDeps) (*App, error) {
 	}
 	pub := task.NewPublisher(deps.Events, deps.Publisher, deps.IDs, deps.Now)
 	app := &App{
-		deps:   deps,
-		pub:    pub,
-		runner: task.NewRunner(deps.Tasks, pub, deps.IDs, deps.Now),
-		gcKick: make(chan struct{}, 1),
+		deps:       deps,
+		pub:        pub,
+		runner:     task.NewRunner(deps.Tasks, pub, deps.IDs, deps.Now),
+		gcKick:     make(chan struct{}, 1),
+		quInflight: make(map[string]*quickUpdateCall),
 	}
 	// 任务终态钩子 = 惰性清理通道的任务终态触发（ADR-0011 §2/§3，票 #89）；
 	// 清理面未装配时钩子内部零操作，装配调用保持无条件（runner 装配一次）。
 	app.runner.SetTerminalHook(app.lazyCleanupAfterTask)
 	return app, nil
-}
 
 // runner 暴露给包内用例。
 func (a *App) taskRunner() *task.Runner { return a.runner }

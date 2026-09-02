@@ -264,6 +264,17 @@ func (s *SyncService) ConfirmPlan(input ConfirmPlanDTO) (TaskDTO, error) {
 	return taskDTO(v), nil
 }
 
+// QuickUpdate 统一快速更新（契约 07 §2/§3.1，票 #86）：阻塞到链收口再返回
+//（对 wire 是一次 Promise），同步三态 no_diff|apply_started|awaiting_confirmation；
+// 链内失败 AppError 透传零新码。
+func (s *SyncService) QuickUpdate(relationID string) (QuickUpdateResultDTO, error) {
+	v, err := s.app.QuickUpdate(context.Background(), view.QuickUpdateInput{RelationID: relationID})
+	if err != nil {
+		return QuickUpdateResultDTO{}, err
+	}
+	return quickUpdateResultDTO(v), nil
+}
+
 // GetApplyRun 返回该工作区当前/最近一次 Apply 运行头投影（契约 05 §3.2；票 #39）。
 // 关系无任何运行记录 → err.apply.no_run。
 func (s *SyncService) GetApplyRun(relationID string) (ApplyRunDTO, error) {
