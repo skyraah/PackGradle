@@ -1140,7 +1140,7 @@ new domain + ports -> headless integration harness -> new Wails transport -> new
 4. MappingPolicy 模板的具体默认集合，以及服务端/客户端专属配置如何避免错误双向同步。
 5. 文本 diff3、TOML 语义 merge 和 Packwiz-aware merge 分别采用的库与冲突表示格式。
 6. Prism 之后第二个 Runtime adapter 的优先级，用于验证 port 没有被 Prism 特性反向污染。
-7. 诊断日志和 Task 事件的保留期限、最大体积与脱敏规则。
+7. 诊断日志和 Task 事件的保留期限、最大体积与脱敏规则。（横切保留与脱敏已决：ADR-0011；staging 保留未决，待 #69 回报）
 
 ## 16. 设计验收标准
 

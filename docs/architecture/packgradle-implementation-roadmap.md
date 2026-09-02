@@ -94,7 +94,7 @@ Phase 1 不允许写入 Project/Runtime 文件，不提供 Apply、自动合并�
 4. MappingPolicy 默认模板和服务端/客户端专属配置的边界；
 5. 后续 TOML/text diff3/Packwiz-aware merge 使用的库与冲突表示；
 6. 第二个 Runtime adapter 的验证对象和优先级；
-7. 本地日志、Task 事件、staging 和诊断包的保留期限、容量和脱敏规则。
+7. 本地日志、Task 事件、staging 和诊断包的保留期限、容量和脱敏规则。（横切保留与脱敏已决：ADR-0011；staging 保留未决，待 #69 回报）
 
 在这些决策完成前，可以搭建接口和 fixture，但不应把临时选择写入稳定数据格式或 UI 契约。
 
