@@ -5,7 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"log"
+	"log/slog"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -77,7 +77,7 @@ func (a *App) runApply(ctx context.Context, queued model.Task) {
 	// 收口——run 不得滞留活跃态（ADR-0004 §4：未完成 journal 阻止新 Apply）。
 	t, err := a.deps.Tasks.Get(ctx, queued.TaskID)
 	if err != nil {
-		log.Printf("apply: 读取任务 %s 失败，放弃接管: %v", queued.TaskID, err)
+		slog.Warn("apply: 读取任务失败，放弃接管", "task", queued.TaskID, "err", err)
 		return
 	}
 	if t.Status != model.TaskStatusQueued {
@@ -88,7 +88,7 @@ func (a *App) runApply(ctx context.Context, queued model.Task) {
 	}
 	run, err := a.deps.ApplyRuns.Get(ctx, t.TaskID)
 	if err != nil {
-		log.Printf("apply: 读取任务 %s 的运行头失败: %v", t.TaskID, err)
+		slog.Warn("apply: 读取任务的运行头失败", "task", t.TaskID, "err", err)
 		return
 	}
 	if run.State != model.ApplyRunPrepared {
@@ -382,9 +382,9 @@ func (a *App) runApply(ctx context.Context, queued model.Task) {
 	// staging 仅在提交事务成功后清理（ADR-0004 §5）：按本运行 ownership 隔离
 	// 子树删除，幂等可重试；失败保留证据（staging_cleared 保持 false）。
 	if err := syncstage.CleanupRun(a.deps.StagingRoot, t.TaskID); err != nil {
-		log.Printf("apply: 清理暂存失败（staging_cleared 保持未清理，可重试）: %v", err)
+		slog.Warn("apply: 清理暂存失败（staging_cleared 保持未清理，可重试）", "err", err)
 	} else if err := a.deps.ApplyRuns.MarkStagingCleared(commitCtx, t.TaskID, a.nowStr()); err != nil {
-		log.Printf("apply: 记录 staging_cleared 失败: %v", err)
+		slog.Warn("apply: 记录 staging_cleared 失败", "err", err)
 	}
 
 	t.Status = model.TaskStatusSucceeded
@@ -394,7 +394,7 @@ func (a *App) runApply(ctx context.Context, queued model.Task) {
 	t.CommitID = commitID
 	t.Outcome = completeness
 	if _, err := a.runner.Update(commitCtx, t); err != nil {
-		log.Printf("apply: 任务 %s 成功终态落库失败: %v", t.TaskID, err)
+		slog.Warn("apply: 任务成功终态落库失败", "task", t.TaskID, "err", err)
 		return
 	}
 	_ = a.pub.PublishRelationInvalidated(commitCtx, rel.RelationID)
@@ -887,10 +887,10 @@ func (a *App) failStartedOperation(ctx context.Context, taskID string, s *staged
 	detail := marshalJSONRaw(map[string]string{"code": code, "detail": cause.Error()})
 	if err := a.deps.Journal.AdvanceStatus(ctx, taskID, s.fp.op.ID,
 		model.OperationStatusFailed, a.nowStr(), detail); err != nil {
-		log.Printf("apply: 操作 %s 失败收口落库失败: %v", s.fp.op.ID, err)
+		slog.Warn("apply: 操作失败收口落库失败", "op", s.fp.op.ID, "err", err)
 	}
 	if err := a.deps.Journal.MarkResult(ctx, taskID, s.fp.op.ID, detail); err != nil {
-		log.Printf("apply: 操作 %s 结果落库失败: %v", s.fp.op.ID, err)
+		slog.Warn("apply: 操作结果落库失败", "op", s.fp.op.ID, "err", err)
 	}
 	return &applyOpError{resultCode: code, cause: cause}
 }
@@ -940,20 +940,20 @@ func (a *App) rescanEndpoints(ctx context.Context, rel model.Relation, proj mode
 func (a *App) recoverApply(ctx context.Context, t model.Task, run model.ApplyRun, fromState, code string, cause error) {
 	if !applyRunTerminal(fromState) {
 		if err := a.deps.ApplyRuns.AdvanceState(ctx, run.TaskID, model.ApplyRunRecoveryRequired, a.nowStr()); err != nil {
-			log.Printf("apply: 运行 %s 推进 recovery_required 失败（已是终态或库不可写）: %v", run.TaskID, err)
+			slog.Warn("apply: 运行推进 recovery_required 失败（已是终态或库不可写）", "run", run.TaskID, "err", err)
 		}
 	}
 	if err := a.deps.Relations.UpdateHealth(ctx, run.RelationID, model.HealthRecoveryRequired); err != nil {
-		log.Printf("apply: 关系 %s 标记恢复态失败: %v", run.RelationID, err)
+		slog.Warn("apply: 关系标记恢复态失败", "relation", run.RelationID, "err", err)
 	}
 	t.Status = model.TaskStatusRecoveryRequired
 	t.MessageKey = "msg.task.apply.recovery_required"
 	t.Problem = &model.Problem{Code: CodeRecoveryInProgress, Detail: cause.Error()}
 	if _, err := a.runner.Update(ctx, t); err != nil {
-		log.Printf("apply: 任务 %s 恢复终态落库失败: %v", t.TaskID, err)
+		slog.Warn("apply: 任务恢复终态落库失败", "task", t.TaskID, "err", err)
 		return
 	}
-	log.Printf("apply: 运行 %s 进入 recovery_required（code=%s）: %v", run.TaskID, code, cause)
+	slog.Warn("apply: 运行进入 recovery_required", "run", run.TaskID, "code", code, "cause", cause)
 }
 
 // abandonCancelledRun 收口 queued 窗口被取消的任务：run 不得滞留 prepared 活跃态
@@ -961,11 +961,11 @@ func (a *App) recoverApply(ctx context.Context, t model.Task, run model.ApplyRun
 // 可无痕回滚的操作）。任务已终态（cancelled），不再改写。
 func (a *App) abandonCancelledRun(ctx context.Context, t model.Task) {
 	if err := a.deps.ApplyRuns.AdvanceState(ctx, t.TaskID, model.ApplyRunRecoveryRequired, a.nowStr()); err != nil {
-		log.Printf("apply: 取消任务 %s 的运行收口失败: %v", t.TaskID, err)
+		slog.Warn("apply: 取消任务的运行收口失败", "task", t.TaskID, "err", err)
 		return
 	}
 	if err := a.deps.Relations.UpdateHealth(ctx, t.RelationID, model.HealthRecoveryRequired); err != nil {
-		log.Printf("apply: 关系 %s 标记恢复态失败: %v", t.RelationID, err)
+		slog.Warn("apply: 关系标记恢复态失败", "relation", t.RelationID, "err", err)
 	}
 }
 
@@ -974,7 +974,7 @@ func (a *App) abandonCancelledRun(ctx context.Context, t model.Task) {
 func (a *App) consumePlanConfirmation(ctx context.Context, repos ports.Repos, planID string) {
 	toks, err := repos.PlanConfirmations.ListByPlan(ctx, planID)
 	if err != nil {
-		log.Printf("apply: 读取计划 %s 确认令牌失败: %v", planID, err)
+		slog.Warn("apply: 读取计划确认令牌失败", "plan", planID, "err", err)
 		return
 	}
 	for _, tok := range toks {
@@ -982,7 +982,7 @@ func (a *App) consumePlanConfirmation(ctx context.Context, repos ports.Repos, pl
 			continue
 		}
 		if err := repos.PlanConfirmations.MarkConsumed(ctx, planID, tok.ConfirmationToken); err != nil {
-			log.Printf("apply: 消费确认令牌失败（不阻断提交）: %v", err)
+			slog.Warn("apply: 消费确认令牌失败（不阻断提交）", "err", err)
 		}
 		return
 	}

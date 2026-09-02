@@ -2,7 +2,7 @@ package download
 
 import (
 	"fmt"
-	"log"
+	"log/slog"
 )
 
 // cfFileBase 是 CurseForge CDN 免钥匙直链的固定前缀。研究笔记实测（2026-09-01）：
@@ -15,7 +15,12 @@ const cfFileBase = "https://mediafilez.forgecdn.net/files"
 const fileIDLegacyLimit = 10_000_000
 
 // URLLog 是直链构造的日志出口（fileID ≥ 10^7 越界告警）；测试可替换捕获。
-var URLLog = log.Printf
+// slog 迁移（ADR-0011 §1，票 #91）：printf 形态的告警经 slog.Warn 走结构化
+// 出口（GUI 进程进会话日志；headless 退 stderr 默认出口），签名保持
+// printf 形态以维持既有测试注入缝。
+var URLLog = func(format string, args ...any) {
+	slog.Warn(fmt.Sprintf(format, args...))
+}
 
 // DirectURL 构造 CurseForge 免钥匙下载直链（ADR-0008 §2）：
 //

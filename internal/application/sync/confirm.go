@@ -3,7 +3,7 @@ package sync
 import (
 	"context"
 	"encoding/json"
-	"log"
+	"log/slog"
 	"time"
 
 	"packgradle/internal/application/ports"
@@ -181,7 +181,7 @@ func (a *App) ConfirmPlan(ctx context.Context, input view.ConfirmPlanInput) (vie
 	if created.TaskID != "" {
 		// 事件发布恒在事务提交之后（ADR-0004 §6）；发布失败不影响已提交事实
 		if err := a.pub.PublishTask(ctx, created); err != nil {
-			log.Printf("confirm: 发布 task_updated 失败（任务 %s 已创建）: %v", created.TaskID, err)
+			slog.Warn("confirm: 发布 task_updated 失败（任务已创建）", "task", created.TaskID, "err", err)
 		}
 		// Apply 引擎接管（票 #37）：任务已 queued 落库，引擎协程负责推到终态；
 		// ctx 经 WithoutCancel 派生，不随本次调用请求结束而中断。

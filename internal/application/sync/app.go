@@ -6,7 +6,7 @@ package sync
 import (
 	"context"
 	"fmt"
-	"log"
+	"log/slog"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -249,7 +249,7 @@ func (a *App) retentionSettings() model.RetentionSettings {
 	}
 	s, err := a.deps.Retention.Retention()
 	if err != nil {
-		log.Printf("gc: 读取保留设置失败（退默认值）: %v", err)
+		slog.Warn("gc: 读取保留设置失败（退默认值）", "err", err)
 		return model.DefaultRetention()
 	}
 	return s

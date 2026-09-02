@@ -23,7 +23,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"log"
+	"log/slog"
 	"os"
 	"strings"
 	"time"
@@ -84,7 +84,7 @@ func (a *App) maybeScheduleGCAfterCommit(ctx context.Context, relationID string)
 	}
 	usage, err := a.deps.GC.RelationUsageBytes(ctx, relationID)
 	if err != nil {
-		log.Printf("gc: 收口后占用检查失败（跳过本轮触发）: %v", err)
+		slog.Warn("gc: 收口后占用检查失败（跳过本轮触发）", "err", err)
 		return
 	}
 	if usage <= ret.RelationCapacityBytes {
@@ -95,7 +95,7 @@ func (a *App) maybeScheduleGCAfterCommit(ctx context.Context, relationID string)
 	}
 	go func() {
 		if _, err := a.RequestGC(ctxWithoutCancel(ctx)); err != nil {
-			log.Printf("gc: 容量超限触发建任务失败: %v", err)
+			slog.Warn("gc: 容量超限触发建任务失败", "err", err)
 		}
 	}()
 }
@@ -106,7 +106,7 @@ func (a *App) maybeScheduleGCAfterCommit(ctx context.Context, relationID string)
 func (a *App) StartGC() {
 	go func() {
 		if _, err := a.RequestGC(ctxWithoutCancel(context.Background())); err != nil {
-			log.Printf("gc: 启动触发失败: %v", err)
+			slog.Warn("gc: 启动触发失败", "err", err)
 		}
 	}()
 }
@@ -138,7 +138,7 @@ func (a *App) runGC(ctx context.Context, queued model.Task) {
 	// 收口，引擎不推进）。
 	t, err := a.deps.Tasks.Get(ctx, queued.TaskID)
 	if err != nil {
-		log.Printf("gc: 读取任务 %s 失败，放弃接管: %v", queued.TaskID, err)
+		slog.Warn("gc: 读取任务失败，放弃接管", "task", queued.TaskID, "err", err)
 		return
 	}
 	if t.Status != model.TaskStatusQueued {
@@ -153,7 +153,7 @@ func (a *App) runGC(ctx context.Context, queued model.Task) {
 		// 首个 Update 必然乐观锁冲突。
 		updated, err := a.runner.Update(ctx, t)
 		if err != nil {
-			log.Printf("gc: 任务 %s 排队文案落库失败: %v", t.TaskID, err)
+			slog.Warn("gc: 任务排队文案落库失败", "task", t.TaskID, "err", err)
 			return
 		}
 		t = updated
@@ -169,7 +169,7 @@ func (a *App) runGC(ctx context.Context, queued model.Task) {
 	t.MessageKey = msgGCPruning
 	t, err = a.runner.Update(ctx, t)
 	if err != nil {
-		log.Printf("gc: 任务 %s 推进失败: %v", t.TaskID, err)
+		slog.Warn("gc: 任务推进失败", "task", t.TaskID, "err", err)
 		return
 	}
 	retention := a.retentionSettings()
@@ -198,7 +198,7 @@ func (a *App) runGC(ctx context.Context, queued model.Task) {
 	t.MessageKey = msgGCCollecting
 	t, err = a.runner.Update(ctx, t)
 	if err != nil {
-		log.Printf("gc: 任务 %s 推进失败: %v", t.TaskID, err)
+		slog.Warn("gc: 任务推进失败", "task", t.TaskID, "err", err)
 		return
 	}
 	if err := a.collectObjects(ctx, relationIDs); err != nil {
@@ -211,7 +211,7 @@ func (a *App) runGC(ctx context.Context, queued model.Task) {
 	t.MessageKey = msgGCSweeping
 	t, err = a.runner.Update(ctx, t)
 	if err != nil {
-		log.Printf("gc: 任务 %s 推进失败: %v", t.TaskID, err)
+		slog.Warn("gc: 任务推进失败", "task", t.TaskID, "err", err)
 		return
 	}
 	if err := a.sweepOrphans(ctx, retention); err != nil {
@@ -223,7 +223,7 @@ func (a *App) runGC(ctx context.Context, queued model.Task) {
 	t.Phase = "done"
 	t.MessageKey = msgGCSucceeded
 	if _, err := a.runner.Update(ctx, t); err != nil {
-		log.Printf("gc: 任务 %s 成功终态落库失败: %v", t.TaskID, err)
+		slog.Warn("gc: 任务成功终态落库失败", "task", t.TaskID, "err", err)
 	}
 }
 
@@ -475,7 +475,7 @@ func (a *App) sweepOrphans(ctx context.Context, retention model.RetentionSetting
 func (a *App) gcWindowOpen(ctx context.Context) bool {
 	unresolved, err := a.deps.GC.HasUnresolvedRuns(ctx)
 	if err != nil {
-		log.Printf("gc: 查未收口运行失败（保守视为窗口未开）: %v", err)
+		slog.Warn("gc: 查未收口运行失败（保守视为窗口未开）", "err", err)
 		return false
 	}
 	if unresolved {
@@ -483,7 +483,7 @@ func (a *App) gcWindowOpen(ctx context.Context) bool {
 	}
 	rels, _, err := a.deps.Relations.List(ctx, ports.PageRequest{Limit: ports.MaxPageLimit})
 	if err != nil {
-		log.Printf("gc: 列关系失败（保守视为窗口未开）: %v", err)
+		slog.Warn("gc: 列关系失败（保守视为窗口未开）", "err", err)
 		return false
 	}
 	for _, rel := range rels {
