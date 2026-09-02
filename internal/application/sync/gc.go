@@ -17,6 +17,9 @@ package sync
 //     隔离行；Put 幂等复活由 CAS.Put 的 UPSERT 天然承担；GC 全程可重入。
 //   - 孤儿三向清扫（§6，GC 末位）：file-without-row 入回收站走时钟 / .tmp-* 直删 /
 //     row-without-file 删行对账（被引用行保留——Has() 已不可见，restore 走降级）。
+//   - 孤儿快照清扫（ADR-0011 §4，票 #89，同位清扫阶段）：不被存活提交
+//     （verified_*）/现存计划（input_*）引用、且非任一端最新一份的扫描快照
+//     随轮删除，resource_representations 随行级联删（sweepOrphanSnapshots）。
 
 import (
 	"context"
@@ -206,7 +209,8 @@ func (a *App) runGC(ctx context.Context, queued model.Task) {
 		return
 	}
 
-	// ---- 阶段 3：回收站老化 + 孤儿三向清扫（GC 末位，ADR-0007 §5 步骤 3/§6）----
+	// ---- 阶段 3：回收站老化 + 孤儿三向清扫 + 孤儿快照清扫（GC 末位，
+	// ADR-0007 §5 步骤 3/§6 + ADR-0011 §4）----
 	t.Phase = "sweeping"
 	t.MessageKey = msgGCSweeping
 	t, err = a.runner.Update(ctx, t)
@@ -216,6 +220,10 @@ func (a *App) runGC(ctx context.Context, queued model.Task) {
 	}
 	if err := a.sweepOrphans(ctx, retention); err != nil {
 		a.runner.MarkFailed(ctx, t, "", fmt.Sprintf("gc: 清扫失败: %v", err))
+		return
+	}
+	if err := a.sweepOrphanSnapshots(ctx); err != nil {
+		a.runner.MarkFailed(ctx, t, "", fmt.Sprintf("gc: 孤儿快照清扫失败: %v", err))
 		return
 	}
 
@@ -468,6 +476,31 @@ func (a *App) sweepOrphans(ctx context.Context, retention model.RetentionSetting
 		}
 	}
 	return a.deps.GC.PurgeQuarantinedRows(ctx, orphans)
+}
+
+// sweepOrphanSnapshots 执行孤儿快照清扫（ADR-0011 §4，票 #89）：判定归
+// core/gc.OrphanSnapshots 纯函数（引用图三通道——存活提交 verified_*、现存
+// 计划 input_*、任一端最新——皆无引用即孤儿），执行归 GCRepository.DeleteSnapshots
+// 单事务级联删。挂在既有 GC 清扫阶段（与 .tmp-* 写中断残渣同位的账面孤儿清扫）：
+// 提交被修剪后其验证快照自然转孤儿一并删；从未进提交的中间扫描快照除最新外
+// 同删。零新保留参数——判定无时间入参，快照窗口 = 提交保留窗口（KeepCommits/
+// KeepDays 经提交存亡传递），无独立快照策略。
+func (a *App) sweepOrphanSnapshots(ctx context.Context) error {
+	facts, err := a.deps.GC.SnapshotRefFacts(ctx)
+	if err != nil {
+		return err
+	}
+	orphans := gc.OrphanSnapshots(gc.SnapshotFacts{
+		All:            facts.All,
+		CommitVerified: facts.CommitVerified,
+		PlanInput:      facts.PlanInput,
+		Latest:         facts.Latest,
+	})
+	if len(orphans) == 0 {
+		return nil
+	}
+	log.Printf("gc: 孤儿快照清扫 %d 份（全部快照 %d）", len(orphans), len(facts.All))
+	return a.deps.GC.DeleteSnapshots(ctx, orphans)
 }
 
 // gcWindowOpen 判定安全窗口（ADR-0007 §3）：无活跃/未处置 run ∧ 无任何

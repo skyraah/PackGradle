@@ -379,6 +379,54 @@ type GCRepository interface {
 	// ∉ {'committed'}）——活跃 Apply/Restore run 与未处置 recovery_required
 	// 都算（ADR-0007 §3 安全窗口＝无活跃 run ∧ 无 recovery_required）。
 	HasUnresolvedRuns(ctx context.Context) (bool, error)
+
+	// ---- 孤儿快照清扫（ADR-0011 §4，票 #89；挂 GC 清扫阶段）----
+
+	// SnapshotRefFacts 采集孤儿快照判定的引用图事实（core/gc.OrphanSnapshots
+	// 的输入侧）：全部快照 id、存活提交验证快照（verified_*_snapshot_id）、
+	// 现存计划输入快照（input_*_snapshot_id）、各 relation 每端最新一份
+	//（captured_at DESC, id DESC 取 1，与 LatestByRelationSide 同序）。
+	SnapshotRefFacts(ctx context.Context) (SnapshotGCFacts, error)
+	// DeleteSnapshots 单事务物理删除快照行并随行级联删资源表示行
+	//（resource_representations PK 前缀即 snapshot_id，先子后父）。
+	DeleteSnapshots(ctx context.Context, snapshotIDs []string) error
+}
+
+// SnapshotGCFacts 是孤儿快照判定的引用图事实采集投影（GC 引擎清扫阶段采集，
+// core/gc.OrphanSnapshots 判定；与 core/gc.SnapshotFacts 同形异型——决策包
+// 不依赖 application 端口）。
+type SnapshotGCFacts struct {
+	All            []string // observed_snapshots 全部快照 id
+	CommitVerified []string // 存活提交验证快照（verified_project/runtime_snapshot_id 并集）
+	PlanInput      []string // 现存计划输入快照（input_project/runtime_snapshot_id 并集）
+	Latest         []string // 各 relation 每端最新一份
+}
+
+// CleanupRepository 是惰性清理通道的存储面（ADR-0011 §2/§3，票 #89）：
+// task_events 条数窗口截断 + 旧数据行物理删除（判定 = 过期 ∧ 无存活引用，
+// SQL 内联守卫）。可选依赖：nil 时清理通道整体禁用（未装配清理面的测试栈
+// 零波及）；触发时机（启动时 + 任务终态后）归 application 编排。
+type CleanupRepository interface {
+	// TruncateTaskEvents 保最近 keep 条（按 stream_sequence 留尾，ADR-0011 §2）。
+	// 现存不足 keep 条时空转；截断后序号从 MAX+1 续（Append 既有硬约束，
+	// 清全表则从 1 重来——前端重启以首个事件建基线，皆不误判漏包）。
+	// 返回删除行数。
+	TruncateTaskEvents(ctx context.Context, keep int) (int64, error)
+	// DeleteExpiredPlans 物理删除过期/修订过时（读取时投影 expired/stale）的
+	// 历史计划行：applied/confirmed 行随其运行与提交存亡（apply_runs.plan_id
+	// NOT NULL + 运行行永不删 → 结构上永久保留；sync_commits.plan_id 命中的
+	// 行同样保留）、存活子计划（resolved_from_plan_id）钉住的 draft 保留；
+	// 随行删 conflicts 与 plan_confirmations。返回删除行数。
+	DeleteExpiredPlans(ctx context.Context, now string) (int64, error)
+	// DeleteExpiredPreparations 删除过期（expires_at ≤ now）或已消费
+	//（consumed_at 非空）的预检行——创建预检（preparations）与重绑预检
+	//（rebind_preparations）同一判定（两表均无被引用外键）。返回删除行数。
+	DeleteExpiredPreparations(ctx context.Context, now string) (int64, error)
+	// PruneTerminalTasks 终态任务行保最近 keep 条（created_at DESC, id DESC
+	// 留尾，ADR-0011 §3）：被 apply_runs（PK 即 task_id，行永不删）或
+	// operation_journal（append-only）引用的行结构上不可删、守卫跳过。
+	// 返回删除行数。
+	PruneTerminalTasks(ctx context.Context, keep int) (int64, error)
 }
 
 // GCTrashEntry 是回收站目录条目（digest 从文件名复原，文件 mtime 即

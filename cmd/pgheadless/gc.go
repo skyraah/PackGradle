@@ -60,6 +60,10 @@ type gcChainStats struct {
 	AliveCommits          int    `json:"alive_commits"`
 	AuditViolations       int    `json:"audit_violations"`
 	OldestVerifiedObjects int    `json:"oldest_verified_objects"`
+	// 孤儿快照扩展（票 #89，ADR-0011 §4）：本轮断言被清扫的快照份数与
+	// 对账后的残留孤儿数（残留必须为 0）。
+	OrphanSnapshotsSwept int `json:"orphan_snapshots_swept"`
+	OrphanSnapshotsLeft  int `json:"orphan_snapshots_left"`
 }
 
 // runRevive 执行 -revive：解压回收站副本回 objects 并把隔离行置回 ready
@@ -161,6 +165,19 @@ func applyOneCommit(ctx context.Context, app syncapp.Application, rel view.Relat
 func runGCChain(ctx context.Context, stack *bootstrap.Stack, app syncapp.Application, rel view.RelationView, projectRoot string, stats *gcChainStats) error {
 	probes := os.Getenv("PGHEADLESS_GC_PROBES") == "1"
 
+	// ---- 孤儿快照扩展夹具（票 #89，ADR-0011 §4）----
+	// 两轮纯扫描（不建计划）：第一对的快照随第二轮扫描失去「任一端最新」
+	// 且从未进提交/计划 → GC 清扫判孤儿一并删；提交被修剪后其验证快照的
+	// 转孤儿断言在 GC 收口后进行（preCommits 记 pre-GC 账面）。
+	midSnapshots, err := seedScanOnlyRounds(ctx, app, rel)
+	if err != nil {
+		return fmt.Errorf("孤儿快照夹具: %w", err)
+	}
+	preVerified, err := commitVerifiedSnapshots(stack.DB)
+	if err != nil {
+		return fmt.Errorf("孤儿快照账面: %w", err)
+	}
+
 	// ---- 正例夹具（keep_commits=5 场景）----
 	var probeA, probeB string    // 恢复引用/staged 绑定保护的观察 digest
 	var planBaseDigests []string // 正例①活跃计划 base 基线引用的对象
@@ -261,6 +278,19 @@ func runGCChain(ctx context.Context, stack *bootstrap.Stack, app syncapp.Applica
 	if probes && len(planBaseDigests) > 0 {
 		fmt.Printf("== 断言⑤正例① == 活跃计划引用对象 %d 个全部存活\n", len(planBaseDigests))
 	}
+
+	// 孤儿快照扩展（票 #89，ADR-0011 §4）：被裁提交的验证快照自然转孤儿
+	// 一并删；从未进提交的中间扫描快照除最新外同删；resource_representations
+	// 随行级联删；引用图不变式对账扩展至快照账面（清扫后孤儿必须为零）。
+	swept, left, err := assertOrphanSnapshotSweep(ctx, stack, preVerified, midSnapshots)
+	if err != nil {
+		return err
+	}
+	if stats != nil {
+		stats.OrphanSnapshotsSwept = swept
+		stats.OrphanSnapshotsLeft = left
+	}
+	fmt.Printf("== 断言⑥快照账面 == 孤儿清扫 %d 份（对账残留 %d）\n", swept, left)
 
 	// 正例收尾：续跑后 ②③ 的观察 digest 应已被回收（解除保护后成候选）。
 	if stats != nil {
@@ -549,6 +579,135 @@ func verifyCommitRestorable(ctx context.Context, stack *bootstrap.Stack, relatio
 }
 
 // ---- SQL 采集小助手（验收链对账/夹具注入；只读为主，夹具写入显式注释）----
+
+// seedScanOnlyRounds 落「从未进提交的中间扫描快照」夹具（票 #89，ADR-0011
+// §4）：两轮纯扫描（不建计划）。第一对快照随第二轮失去「任一端最新」，且
+// 不被任何提交（verified_*）与计划（input_*）引用 → 孤儿；返回这对快照 id。
+func seedScanOnlyRounds(ctx context.Context, app syncapp.Application, rel view.RelationView) ([]string, error) {
+	var mid []string
+	for round := 1; round <= 2; round++ {
+		if _, err := app.StartScan(ctx, rel.RelationID); err != nil {
+			return nil, fmt.Errorf("第 %d 轮 StartScan: %w", round, err)
+		}
+		waitScan(ctx, app, rel.RelationID)
+		ws, err := app.GetWorkspace(ctx, rel.RelationID)
+		if err != nil {
+			return nil, fmt.Errorf("第 %d 轮 GetWorkspace: %w", round, err)
+		}
+		if round == 1 {
+			mid = []string{ws.LatestProjectSnapshot.SnapshotID, ws.LatestRuntimeSnapshot.SnapshotID}
+		}
+	}
+	fmt.Printf("== 孤儿快照夹具 == 中间扫描快照 %v（无引用，应随 GC 清扫删除）\n", mid)
+	return mid, nil
+}
+
+// commitVerifiedSnapshots 提交 → 验证快照对（pre-GC 账面；post-GC 用存活集
+// 求差得被裁集合）。
+func commitVerifiedSnapshots(db *sql.DB) (map[string][2]string, error) {
+	rows, err := db.Query(`SELECT id, verified_project_snapshot_id, verified_runtime_snapshot_id FROM sync_commits`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[string][2]string{}
+	for rows.Next() {
+		var id, vp, vr string
+		if err := rows.Scan(&id, &vp, &vr); err != nil {
+			return nil, err
+		}
+		out[id] = [2]string{vp, vr}
+	}
+	return out, rows.Err()
+}
+
+// assertOrphanSnapshotSweep 断言孤儿快照清扫生效（票 #89，ADR-0011 §4）：
+//   - 被裁提交（pre-GC 有、post-GC 无）的验证快照已随资源表示行一并删除
+//     ——「提交被修剪 → 其验证快照自然转孤儿一并删」；
+//   - 中间扫描快照（从未进提交/计划的夹具）已删除；
+//   - 引用图不变式对账扩展至快照账面：core/gc.OrphanSnapshots 对清扫后账面
+//     判孤儿，残留必须为零。
+//
+// 返回本轮断言确认被清扫的快照份数与对账残留数（残留非零即失败）。
+func assertOrphanSnapshotSweep(ctx context.Context, stack *bootstrap.Stack,
+	preVerified map[string][2]string, midSnapshots []string) (int, int, error) {
+
+	snapExists := func(id string) (bool, bool, error) {
+		var snap, res int
+		if err := stack.DB.QueryRowContext(ctx,
+			"SELECT COUNT(*) FROM observed_snapshots WHERE id=?", id).Scan(&snap); err != nil {
+			return false, false, err
+		}
+		if err := stack.DB.QueryRowContext(ctx,
+			"SELECT COUNT(*) FROM resource_representations WHERE snapshot_id=?", id).Scan(&res); err != nil {
+			return false, false, err
+		}
+		return snap > 0, res > 0, nil
+	}
+
+	swept := 0
+	// 被裁提交的验证快照：转孤儿一并删。
+	surviving := map[string]bool{}
+	rows, err := stack.DB.QueryContext(ctx, "SELECT id FROM sync_commits")
+	if err != nil {
+		return 0, 0, err
+	}
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			rows.Close()
+			return 0, 0, err
+		}
+		surviving[id] = true
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return 0, 0, err
+	}
+	for id, ver := range preVerified {
+		if surviving[id] {
+			continue
+		}
+		for _, snapID := range ver {
+			inSnap, inRes, err := snapExists(snapID)
+			if err != nil {
+				return 0, 0, err
+			}
+			if inSnap || inRes {
+				return 0, 0, fmt.Errorf("被裁提交 %s 的验证快照 %s 未清扫（snapshot_row=%v resource_row=%v）",
+					id, snapID, inSnap, inRes)
+			}
+			swept++
+		}
+	}
+	// 中间扫描快照：除最新外同删（夹具对即「除最新」者）。
+	for _, snapID := range midSnapshots {
+		inSnap, inRes, err := snapExists(snapID)
+		if err != nil {
+			return 0, 0, err
+		}
+		if inSnap || inRes {
+			return 0, 0, fmt.Errorf("中间扫描快照 %s 未清扫（snapshot_row=%v resource_row=%v）", snapID, inSnap, inRes)
+		}
+		swept++
+	}
+
+	// 快照账面对账：清扫后孤儿必须为零（引用图不变式的快照侧扩展）。
+	facts, err := stack.GCRepo.SnapshotRefFacts(ctx)
+	if err != nil {
+		return 0, 0, fmt.Errorf("快照账面采集: %w", err)
+	}
+	orphans := gc.OrphanSnapshots(gc.SnapshotFacts{
+		All:            facts.All,
+		CommitVerified: facts.CommitVerified,
+		PlanInput:      facts.PlanInput,
+		Latest:         facts.Latest,
+	})
+	if len(orphans) > 0 {
+		return 0, len(orphans), fmt.Errorf("快照账面对账残留孤儿 %d 份: %v", len(orphans), orphans)
+	}
+	return swept, 0, nil
+}
 
 // listAllCommits 跨页收集全部提交（created_at DESC）。
 func listAllCommits(ctx context.Context, app syncapp.Application, relationID string) (view.CommitPage, error) {
