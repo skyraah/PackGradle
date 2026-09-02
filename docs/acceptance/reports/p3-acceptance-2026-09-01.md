@@ -91,10 +91,14 @@
 > `HTTPS_PROXY` 环境变量是否导出——Go http 栈吃该变量，代理状态必须注记以
 > 排除环境干扰后再判因。
 
-- [ ] 冒烟已执行：真实 packwiz 包 → 快速更新或 restore 含真实 redownload 行 → 探测 HEAD 2xx → 直链 GET 200 → 声明 sha1 验收 → 装进实例 → committed
-- 日期：＿＿＿＿；fileID：＿＿＿＿；字节数：＿＿＿＿；耗时：＿＿＿＿
-- **代理状态**：127.0.0.1:7897 ＿＿（开/关）；`HTTPS_PROXY`=＿＿＿＿
-- 结果 / 判因（失败不判 A/B 口径失败，但必须判因记录；403 形状变化 → 触发 ADR-0008 C 方案回票）：＿＿＿＿
+- [ ] 冒烟已执行（**全链 E2E 段**：真实 packwiz 包 → 快速更新/restore → 装进实例 → committed）——随 L1 走查会话执行
+- [x] 冒烟已执行（**通道形状段**：CDN 对直链形状的持续认可——验收规格 Testing 决议定义的真网不确定面）——2026-09-02 本会话执行
+  - 三黄金向量 HEAD 全 200（Content-Type/Content-Length 正常）：`7270446` jei-1.20.1-forge-15.20.0.127.jar（1,409,495 B）、`8778011` jei-…15.56.0.205.jar（1,778,129 B）、`2252518` AIES_Aerospace161.zip（11,162,987 B）
+  - Range 首字节 GET = 206（续传通道认可）；引擎真网 Fetch 全链路通过（流式→.part→声明 sha1 校验→成品，`PACKGRADLE_REALNET_SMOKE=1 go test -run TestRealNetSmokeManual ./internal/download/`，实测 sha1 `6c7684a0…` 与采样基线一致，1.095s）
+  - 可复用工具：`internal/download/realnet_manual_test.go`（gated 测试，默认跳过，非自动化门槛）
+- 日期：2026-09-02；fileID：7270446（主）/8778011/2252518；字节数：1,409,495 B；耗时：1.095s（引擎 Fetch）
+- **代理状态**：127.0.0.1:7897 **关**（未监听）；`HTTPS_PROXY` 已导出但 curl/go 均按直连执行（`env -u HTTPS_PROXY`）；**注记**：remote_ip=198.18.0.89 落 fake-ip 保留段（198.18.0.0/15），提示 TUN 型代理层在场劫持路由——响应头为源站格式且三向量全 200/206，判因排除环境干扰后**通道认可成立**
+- 结果 / 判因：**通过**（403 形状变化未发生，ADR-0008 C 方案不触发）
 
 ## 7. A/B 口径结论
 
