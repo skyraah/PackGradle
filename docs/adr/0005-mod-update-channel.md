@@ -46,6 +46,8 @@ v1 范围＝CF 模式（`metadata:curseforge`）解析；URL 模式（含 Modrin
 
 下载的 after 字节与删除/覆盖的 before 字节均不留 CAS 副本（不提供 JAR 缓存）；数据库只登记 identity/hash/重取信息。mod 资源的恢复补偿与回滚统一走「远端重查 → 重新物化落盘」，失败降级用户提供/不可恢复。现状 before-preserve 若无条件存字节，须在票内核对并按此对齐。
 
+> **边界注记（ADR-0012）**：本条让渡对象是 CDN 可取回的二进制（JAR）——「远端重查」对 metafile 事实不可用（CDN 无 TOML）。mod 清单文件（metafile）的目标字节自 ADR-0012 起扫描期捕获入 CAS（实测体积 ≈ jar 层 0.008%）。
+
 ## 8. 推翻 P3 绘图决议「不实现网络下载」
 
 redownload 通道由「标记 `redownload_required` 后走用户提供补全或 partial」升级为「自建下载器优先、失败降级」。P3 图拓扑更新为：`research（CF key/CDN 构造验证/murmur2 选型/下载韧性）∥ 回滚语义 ADR ∥ CAS GC ADR → 契约 06 → 下载物化 → 验收`；CF 查询定位＝回滚可用性辅助（不做应用内独立更新检查）。
