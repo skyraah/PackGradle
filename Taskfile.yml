@@ -112,19 +112,23 @@ tasks:
       - rm -rf build/headless/data-restore
       - bin/pgheadless.exe -project build/headless/fixture-restore/project -instance build/headless/fixture-restore/instance -data build/headless/data-restore -restore
 
-  # 合并执行面验收链（验收规格 §3.2 场景 1/2/3；票 #93）：含手工样本夹具
-  # （pgfixture 双侧样本落位）→ pgheadless -merge 三场景断言链——①初次同步后
-  # 双改注入：merged_clean_count/write_merged 操作面断言 + take_merged 误用
-  # resolution_invalid + resolve take_merged → confirm → committed → 双端落盘
-  # 字节=确定性重算产物（merge.Texts 同算法复算）、未冲突区域字节级不变
-  # （红线③）、产物与 mod metafile 入 CAS（红线②）；②先回初次提交再回合并
-  # 提交：merged 行 restorable_from_cas → committed（链内零 CDN 配置，committed
-  # 即零网络零用户介入证据）；③授权开态 QuickUpdate 免确认直达 committed +
-  # 含冲突差异永不自动停 awaiting_confirmation（红线①）。-metrics 记 merge
-  # 分相（diff3/校验/写盘，只记录不设门槛）并归档 p4-merge 记录。任一断言
-  # 失败非零退出。
+  # 合并执行面验收链（验收规格 §3.2 四场景；票 #93 场景①②③ + 票 #98 补齐
+  # 场景④链上断言）：含手工样本夹具（pgfixture 双侧样本落位）→ pgheadless
+  # -merge 四场景断言链——①初次同步后双改注入：merged_clean_count/write_merged
+  # 操作面断言 + take_merged 误用 resolution_invalid + resolve take_merged →
+  # confirm → committed → 双端落盘字节=确定性重算产物（merge.Texts 同算法复算）、
+  # 未冲突区域字节级不变（红线③）、产物与 mod metafile 入 CAS（红线②）；
+  # ②先回初次提交再回合并提交：merged 行 restorable_from_cas → committed
+  #（链内零 CDN 配置，committed 即零网络零用户介入证据）；③授权开态
+  # QuickUpdate 免确认直达 committed + 含冲突差异永不自动停
+  # awaiting_confirmation（红线①）；④预览与错误码（票 #94 GetMergedPreview）：
+  # a) resolved 计划 merged 行预览「所见即所写」（content=落盘字节、
+  # base_content=基线全文）b) 冲突行预览 → err.merge.not_mergeable
+  #（{0}=resource_id）c) SQL 手术置过期的已确认计划仍可预览（只读，content=
+  # 重算产物）。-metrics 记 merge 分相（diff3/校验/写盘，只记录不设门槛）并
+  # 归档 p4-merge 记录。任一断言失败非零退出。
   acceptance:merge:
-    summary: Runs the pgheadless -merge three-scenario chain (merged_clean full chain with byte/CAS assertions, zero-network rollback via restorable_from_cas, authorized-mode quick update with conflict red line) and archives merge-phase metrics (acceptance L0)
+    summary: Runs the pgheadless -merge four-scenario chain (merged_clean full chain with byte/CAS assertions, zero-network rollback via restorable_from_cas, authorized-mode quick update with conflict red line, merged-preview what-you-see-is-what-you-write + not_mergeable + expired-plan preview) and archives merge-phase metrics (acceptance L0)
     cmds:
       - go build -o bin/pgheadless.exe ./cmd/pgheadless
       - go build -o bin/pgfixture.exe ./cmd/pgfixture
@@ -212,14 +216,19 @@ tasks:
       - cp build/gc/metrics-t02.json docs/acceptance/records/p3-gc-$(date +%F)-$(hostname)-t02.json
       - cp build/gc/metrics-t03.json docs/acceptance/records/p3-gc-$(date +%F)-$(hostname)-t03.json
 
-  # L1 walkthrough 数据准备（验收规格 §10.9；票 #66，B 口径人工清单的供数面）：
-  # ①restore 历史（exact + partial 各一）与补全对话框数据（-restore 四场景链的
-  # 数据目录；场景③含 user_object_required 草稿与 staged 补全）；②授权模式开态
-  # （-set-authorized 1）；③>20 提交可触发 gc 的长历史；restore
-  # recovery_required 工作区复用 acceptance:recovery:restore 的真实强杀产物
-  #（build/recovery-restore/round-N/attempt-K）。
+  # L1 walkthrough 数据准备（验收规格 §10.9 → P4 §1.2；票 #66/#98，B 口径人工
+  # 清单的供数面）：①restore 历史（exact + partial 各一）与补全对话框数据
+  #（-restore 六场景链的数据目录；场景③含 user_object_required 草稿与 staged
+  # 补全）；②授权模式开态（-set-authorized 1）；③>20 提交可触发 gc 的长历史；
+  # ④restore recovery_required 工作区复用 acceptance:recovery:restore 的真实
+  # 强杀产物（build/recovery-restore/round-N/attempt-K）；⑤P4 双侧变更工作区
+  #（合并走查：初始化提交后 -dual-edit merge 注入互不重叠双改 + 授权开态——
+  # 计划页「将自动合并」徽标/预览抽屉/免确认快速更新的手工面）；⑥待确认计划
+  # 工作区（-dual-edit conflict 注入同段冲突 + 一次 -resolve 前的 draft 停靠
+  #——冲突卡块列表/角标/导航的手工面）；⑦paused/unavailable/通知降级为会话
+  # 内存态或 OS 设置面，不构造持久数据，走末尾指引说明。
   l1:data:
-    summary: Prepares the L1 walkthrough data set — restore history (exact+partial), user-object dialog data, authorized-mode-on state, >20-commit gc history (B 口径供数)
+    summary: Prepares the L1 walkthrough data set - restore history (exact+partial), user-object dialog data, authorized-mode-on state, >20-commit gc history, P4 dual-edit merge workspace, docked-conflict pending-plan workspace (B 口径供数)
     cmds:
       - go build -o bin/pgheadless.exe ./cmd/pgheadless
       - go build -o bin/pgfixture.exe ./cmd/pgfixture
@@ -229,11 +238,23 @@ tasks:
       - bin/pgheadless.exe -project build/l1/fixture/project -instance build/l1/fixture/instance -data build/l1/data -set-authorized 1
       - go run ./cmd/pgfixture -out build/l1/gc-fixture -mods 6 -text-files 12
       - bin/pgheadless.exe -project build/l1/gc-fixture/project -instance build/l1/gc-fixture/instance -data build/l1/gc-data -commits 25
+      - go run ./cmd/pgfixture -out build/l1/merge-fixture -mods 6 -text-files 12
+      - bin/pgheadless.exe -project build/l1/merge-fixture/project -instance build/l1/merge-fixture/instance -data build/l1/merge-data -apply
+      - go run ./cmd/pgfixture -dual-edit merge -out build/l1/merge-fixture
+      - bin/pgheadless.exe -project build/l1/merge-fixture/project -instance build/l1/merge-fixture/instance -data build/l1/merge-data -set-authorized 1
+      - go run ./cmd/pgfixture -out build/l1/pending-fixture -mods 6 -text-files 12
+      - bin/pgheadless.exe -project build/l1/pending-fixture/project -instance build/l1/pending-fixture/instance -data build/l1/pending-data -apply
+      - go run ./cmd/pgfixture -dual-edit conflict -out build/l1/pending-fixture
+      - bin/pgheadless.exe -project build/l1/pending-fixture/project -instance build/l1/pending-fixture/instance -data build/l1/pending-data
       - echo "== L1 数据清单 =="
       - echo "① restore 历史（exact/partial 各一）+ 补全对话框数据 → build/l1/fixture + build/l1/data"
       - echo "② 授权模式开态 → build/l1/data（authorized_apply=1）"
       - echo "③ >20 提交长历史 → build/l1/gc-fixture + build/l1/gc-data"
       - echo "④ restore recovery_required 工作区（真实强杀产物）→ build/recovery-restore/round-N/attempt-K（先跑 acceptance:recovery:restore）"
+      - echo "⑤ P4 双侧变更工作区（合并走查，授权开态）→ build/l1/merge-fixture + build/l1/merge-data：计划页 merged_clean「将自动合并」徽标 + take_merged 默认推荐 + 预览抽屉；授权开态快速更新免确认直达"
+      - echo "⑥ 待确认计划工作区 → build/l1/pending-fixture + build/l1/pending-data（draft 含冲突停靠）：工作区角标（pending_plan_id）→ 计划页冲突卡块列表（project/base/runtime 行片段+起始行号）+ manual 兜底入口"
+      - echo "⑦ paused/unavailable 态（会话内存态，不持久）：GUI 会话内使自动链连败 2 次 → paused 横幅，手动快速更新成功即复位 active（连败注入手段沿 acceptance:watcher 场景④：假 CDN 全场 5xx）；监听不可用（unavailable）由监听异常降级产生（横幅 + watch_failed 一次性提示）"
+      - echo "⑧ 通知降级环境（OS 设置面）：Win11 设置 → 系统 → 通知 → 关闭 PackGradle 通知 → 自动链停靠待确认只亮角标、不弹 toast、不报错不重试（Q5 强制项）；真弹路径 = 通知开启 + 窗口不在前台 + pending_plan_id 更新"
 
   # 下载失败注入链（验收规格 §5.1；票 #66）：假 CDN 进程（pgfixture -serve，
   # pgheadless 自动拉起）+ 五场景断言链（零真网）——①成功链（initialize/升版
@@ -297,6 +318,30 @@ tasks:
       - go build -o bin/pgwatcher.exe ./cmd/pgwatcher
       - rm -rf build/watcher
       - bin/pgwatcher.exe -work build/watcher
+
+  # 横切真重启清理链（验收规格 §5.2/§9.5；票 #98）：惰性清理挂「启动时 +
+  # 任务终态」两个时机，单测够不着真实启动路径，必须真跑。pgheadless -crosscut
+  # 三段——①超量造数（>20 会话日志目录含超 100MB——按 #91 的清理顺序语义用
+  # 不可压缩内容与已压缩 .gz 两种形态造数才能触发硬顶删；>10k task_events、
+  # >200 终态 tasks、过期 sync_plans/preparations）→ 新起 pgheadless
+  # -crosscut-restart 子进程走生产启动通道（会话日志双轴保留清理 + bootstrap
+  # 启动惰性清理，与 GUI main 同一条启动语义）→ 断言清理生效（窗口内/硬顶内/
+  # 过期行物理删/活跃行零触碰/从最旧删起）；②再次超量造数 → 驱动一次扫描
+  # 收口 → 断言终态后惰性清理异步触发（轮询账面收敛，不卡时长）；③脱敏断言：
+  # 坏 metafile 造含绝对路径的端点错误 → 新写 diag.scan.modmeta_unreadable
+  # 的 Detail 为 <project> 别名路径、无用户名（R1，历史行不追溯不断言）；
+  # -metrics 输出无 Host 键（R2，OS/Arch/GoVersion/CPUs 保留）。R3 凭据复核
+  # 记录归 p4 验收报告（L0 断言面 = TestR3CredentialNoLeakOnFailure）。记录
+  # 自动归 docs/acceptance/records/p4-crosscut-<date>-<host>.json（p4-crosscut/1，
+  # -record 空时自动命名，沿 -download/-watch 先例）。任一断言失败非零退出。
+  acceptance:crosscut:
+    summary: Runs the pgheadless -crosscut true-restart chain - oversized seeding (>20 session logs >100MB incompressible/.gz, >10k task_events, >200 terminal tasks, expired plans/preparations) through a real pgheadless restart startup channel, terminal-state lazy cleanup after a driven scan, and R1/R2 redaction assertions (acceptance L0)
+    cmds:
+      - go build -o bin/pgheadless.exe ./cmd/pgheadless
+      - go build -o bin/pgfixture.exe ./cmd/pgfixture
+      - rm -rf build/crosscut
+      - go run ./cmd/pgfixture -out build/crosscut/fixture -mods 6 -text-files 12
+      - bin/pgheadless.exe -project build/crosscut/fixture/project -instance build/crosscut/fixture/instance -data build/crosscut/data -crosscut -metrics build/crosscut/metrics-crosscut.json
 
   # B 口径前端构建门槛（验收规格 §1.1）：vue-tsc 类型检查 + Vite 生产构建
   #（package.json `build` = `vue-tsc && vite build --mode production`）。

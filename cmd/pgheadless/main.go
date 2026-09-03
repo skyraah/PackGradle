@@ -40,6 +40,7 @@ import (
 	"packgradle/internal/cdnproc"
 	"packgradle/internal/core/model"
 	"packgradle/internal/download"
+	"packgradle/internal/sessionlog"
 	"packgradle/internal/store"
 )
 
@@ -69,6 +70,8 @@ func main() {
 	watchTimeout := flag.Duration("watch-timeout", 10*time.Minute, "-watch 安全超时（超时强制收敛）")
 	watchExitSentinel := flag.String("watch-exit-sentinel", "", "-watch 退出哨兵文件路径（存在即收敛退出；空=只由超时收敛）")
 	watchControl := flag.String("watch-control", "", "-watch 手动快速更新命令目录（出现 quickupdate 命令文件即经 transport 服务执行后删除；空=无控制面）")
+	crosscutChain := flag.Bool("crosscut", false, "横切真重启清理链三段（票 #98 acceptance:crosscut，验收规格 §5.2）：①超量造数（>20 会话日志/100MB、>10k task_events、>200 终态 tasks、过期 plans/preparations）→ 新起 pgheadless 子进程走生产启动通道 → 断言清理生效 ②驱动任务收口断言终态后惰性清理 ③R1/R2 脱敏断言；-record 归档 p4-crosscut 记录（空=自动 docs/acceptance/records 命名）")
+	crosscutRestart := flag.String("crosscut-restart", "", "启动通道探测模式（票 #98 -crosscut 链的「真重启」子进程）：只走生产启动通道（会话日志保留清理 + bootstrap 启动惰性清理）后写计数报告 JSON 到指定路径并退出；不建关系不扫描")
 	pgfixtureBin := flag.String("pgfixture", filepath.Join("bin", "pgfixture.exe"), "pgfixture 可执行文件（-download 自动拉起假 CDN 进程用）")
 	dlWork := flag.String("download-work", filepath.Join("build", "download"), "-download 链工作目录（夹具）")
 	dlRecord := flag.String("record", "", "记录 JSON 输出路径（-download=p3-download 记录 / -watch=p4-watcher-run 时间线记录；\"-\"=不落盘）")
@@ -82,6 +85,12 @@ func main() {
 	// 票 #66：-set-authorized L1 数据准备面（BuildWithRetention 装配 Settings）。
 	if *setAuthorized >= 0 {
 		runSetAuthorized(*dataRoot, *projectRoot, *instanceDir, *setAuthorized == 1)
+		return
+	}
+	// 票 #98：-crosscut-restart 启动通道探测子进程（无需 -project/-instance，
+	// 只走生产启动通道后写报告退出）。
+	if *crosscutRestart != "" {
+		runCrosscutRestart(*dataRoot, *crosscutRestart)
 		return
 	}
 	if *projectRoot == "" || *instanceDir == "" {
@@ -111,6 +120,17 @@ func main() {
 		if err != nil {
 			log.Fatalf("定位用户数据目录失败: %v", err)
 		}
+	}
+	// 会话日志启动通道（ADR-0011 §1 形态票 #91；pgheadless 接线票 #98）：与
+	// GUI main 同一启动语义——logs/<启动时间戳>/session.log + 启动双轴保留
+	// 清理（保 20 会话 × 100MB 硬顶优先）。不做 slog.SetDefault：stderr 输出
+	// 形态不变（#91 验收约定，headless 断言依赖），会话文件只承载启动通道
+	// 语义与清理账面（-crosscut 真重启链 §5.2 的清理观测即建立在同一通道上）。
+	// 失败不阻断启动（退回无会话文件状态）。
+	if sess, serr := sessionlog.Open(filepath.Join(root, "logs"), sessionlog.Options{}); serr != nil {
+		log.Printf("会话日志初始化失败（不阻断启动）: %v", serr)
+	} else {
+		defer sess.Close()
 	}
 	// -keep-commits 在装配前写入（config.toml [retention]，票 #64）：装配读
 	// 同一文件，GC 引擎经 Retention 端口取到新值；装配后写只落另一实例内存。
@@ -244,7 +264,30 @@ func main() {
 				Machine: newMachineInfo(), Merge: stats,
 			})
 		}
-		fmt.Println("headless -merge 链路完成（三场景断言全过）")
+		fmt.Println("headless -merge 链路完成（四场景断言全过）")
+		return
+	}
+
+	// 票 #98：-crosscut 横切真重启清理链三段（验收规格 §5.2；链内自起新
+	// pgheadless 子进程走生产启动通道，records 归档沿 -download 自动命名）。
+	if *crosscutChain {
+		rel0 := ensureRelation(ctx, app, projectAbs, instanceAbs)
+		recordPath := *dlRecord
+		if recordPath == "" {
+			recordPath = defaultCrosscutRecordPath()
+		}
+		stats, err := runCrosscutChain(ctx, stack, app, rel0, projectAbs, root, recordPath, *metricsPath)
+		if err != nil {
+			log.Fatalf("-crosscut 链路失败: %v", err)
+		}
+		if *metricsPath != "" {
+			writeMetrics(*metricsPath, metricsRecord{
+				Schema: "p4-perf-run/1", CapturedAt: time.Now().UTC().Format(time.RFC3339),
+				ProjectRoot: projectAbs, InstanceDir: instanceAbs, DataRoot: root,
+				Machine: newMachineInfo(), Crosscut: stats,
+			})
+		}
+		fmt.Println("headless -crosscut 链路完成（三段断言全过）")
 		return
 	}
 
@@ -483,6 +526,7 @@ type metricsRecord struct {
 	Restore      *restoreChainStats `json:"restore,omitempty"` // 仅 -restore-cold 链路（票 #66）
 	GC           *gcChainStats      `json:"gc,omitempty"`      // 仅 -gc 链路（票 #66）
 	Merge        *mergeChainStats   `json:"merge,omitempty"`   // 仅 -merge 链路（票 #93：merge 分相只记录不设门槛）
+	Crosscut     *crosscutChainStats `json:"crosscut,omitempty"` // 仅 -crosscut 链路（票 #98：段耗时只记录不设门槛）
 
 	Watcher      *watcherMetrics    `json:"watcher,omitempty"` // 仅 -watch 常驻模式（票 #96）
 }

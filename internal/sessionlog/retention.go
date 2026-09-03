@@ -75,6 +75,17 @@ func sweep(logsDir string, policy Policy, keepDir string) error {
 	return errors.Join(errs...)
 }
 
+// Stats 汇总 logsDir 的会话日志账面（票 #98 验收链观测面）：会话目录数与
+// 总字节。口径与 sweep 的份数窗口/总量硬顶计量一致（仅匹配会话目录名的
+// 目录；目录整体递归字节）。
+func Stats(logsDir string) (count int, totalBytes int64, err error) {
+	sessions, err := listSessions(logsDir)
+	if err != nil {
+		return 0, 0, fmt.Errorf("sessionlog: 列会话目录: %w", err)
+	}
+	return len(sessions), totalSize(sessions), nil
+}
+
 // listSessions 列出 logsDir 下的会话目录（按名升序 = 时间升序）。
 func listSessions(logsDir string) ([]string, error) {
 	entries, err := os.ReadDir(logsDir)

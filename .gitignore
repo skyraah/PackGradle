@@ -36,3 +36,8 @@ build/gc/
 build/l1/
 build/merge/
 build/watcher/
+# P4 横切真重启链（acceptance:crosscut，票 #98）产物：夹具与数据目录不入 git
+build/crosscut/
+# 下载链/restore 强杀链运行产物（沿 build/recovery 惯例补齐，票 #98）
+build/download/
+build/recovery-restore/
