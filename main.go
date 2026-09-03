@@ -84,6 +84,9 @@ func main() {
 	// 启动触发通道①（票 #64，ADR-0007 §3）：启动后异步建 GC 任务
 	//（幂等单飞；安全窗口未开时任务停 pending 自动续排）。
 	newStack.StartGC()
+	// 监听引擎常驻（票 #92，ADR-0010 §4）：应用运行期对全部健康 relation
+	// 常驻监听（窗口开闭无关）；事件源不可用已在装配期降级回手动。
+	newStack.StartWatcher()
 
 	// 创建 Wails 应用。'Bind' 中注册的 Go 服务方法可供前端直接调用。
 	// 新旧并存：legacy 三服务保持既有行为（已冻结）；SyncService 为 P1 只读核心出口，

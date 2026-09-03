@@ -82,6 +82,9 @@ func (a *App) GetWorkspace(ctx context.Context, relationID string) (view.Workspa
 		ActiveTaskID:     activeTaskID,
 		RelationRevision: rel.Revision,
 		PendingPlanID:    pending,
+		// watch_status（契约 07 §3.2，票 #92）：监听引擎会话内存态，无监听
+		// 面（headless/引擎未装配）投影空串=未挂载。
+		WatchStatus: a.watchStatusFor(relationID),
 	}
 
 	// scan_state

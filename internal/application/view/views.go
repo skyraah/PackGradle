@@ -91,6 +91,10 @@ type WorkspaceStateView struct {
 	// {draft, resolved} 且读取时投影非 stale/expired/applied（planViewWithStatus
 	// 同判）的计划，按创建时间最新；无则空。系统通知去重依据与前端角标数据源。
 	PendingPlanID string `json:"pending_plan_id,omitempty"`
+	// WatchStatus 是监听引擎状态投影（契约 07 §3.2，票 #92）：active|
+	// unavailable|paused，空串=未挂载（非健康关系不常驻监听）；会话内存态，
+	// 零持久化零 schema。
+	WatchStatus string `json:"watch_status,omitempty"`
 }
 
 // SnapshotSummaryView 是快照摘要。

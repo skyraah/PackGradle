@@ -999,4 +999,10 @@ export interface WorkspaceStateDTO {
      * 系统通知去重依据与前端「有待确认计划」角标数据源。
      */
     "pending_plan_id"?: string;
+
+    /**
+     * WatchStatus 是监听状态投影（契约 07 §3.2，票 #92；只增不删）：
+     * active|unavailable|paused，空串=未挂载；会话内存态，零持久化零 schema。
+     */
+    "watch_status"?: string;
 }

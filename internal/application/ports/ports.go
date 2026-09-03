@@ -574,6 +574,43 @@ type EventPublisher interface {
 	Publish(ctx context.Context, env model.EventEnvelope) error
 }
 
+// ---- 目录监听（ADR-0010，票 #92）----
+
+// DirOp 是目录事件操作位集（fsnotify Op 的端口层翻译，application 不 import fsnotify）。
+type DirOp uint32
+
+const (
+	DirCreate DirOp = 1 << iota
+	DirWrite
+	DirRemove
+	DirRename
+	// DirChmod 是仅权限元数据变化（不构成内容变化，消费方忽略）。
+	DirChmod
+)
+
+// Has 返回操作位集是否包含指定操作。
+func (o DirOp) Has(op DirOp) bool { return o&op != 0 }
+
+// DirEvent 是一次文件系统事件（Path 为事件目标绝对路径）。
+type DirEvent struct {
+	Path string
+	Op   DirOp
+}
+
+// DirEventSource 是目录监听事件源端口：单实例多目录（ADR-0010 §4，规模=
+// relation 数 × 管辖目录数）。fsnotify adapter 实现（adapters 层，core 不
+// import fsnotify）；测试注入假实现驱动触发器状态机（缝②）。
+type DirEventSource interface {
+	// Add 注册监听路径（目录或文件）。同一实现内已注册的路径重复 Add 的
+	// 行为由实现方定义（调用方以 bookkeeping 避免重复注册）。
+	Add(path string) error
+	Remove(path string) error
+	// Events / Errors 是事件与错误通道（Close 后关闭）。
+	Events() <-chan DirEvent
+	Errors() <-chan error
+	Close() error
+}
+
 // ---- 端点发现 ----
 
 // ProjectCandidate 是项目源发现候选（adapter 层产出；登记状态由 application 判定）。
