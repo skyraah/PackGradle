@@ -361,6 +361,12 @@ export interface PlanSummaryDTO {
     "modify_count": number;
     "delete_count": number;
     "conflict_count": number;
+
+    /**
+     * MergedCleanCount 是干净合并行数（ADR-0009 §4，票 #87/#93；契约 07 §3.3）：
+     * 不并入 modify 计数，只增不删。
+     */
+    "merged_clean_count": number;
 }
 
 /**

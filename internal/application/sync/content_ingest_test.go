@@ -1,12 +1,15 @@
 package sync
 
-// content_ingest_test.go 覆盖提交收口期对象摄取通道（票 #88，ADR-0012 §2）：
+// content_ingest_test.go 覆盖提交收口期对象摄取通道（票 #88，ADR-0012 §2；
+// 覆盖面自票 #93 起泛化到项目侧全部带内容指纹的表示——规格偏差记录见
+// content_ingest.go 文件头）：
 //   - 摘要命中 → Put 入 CAS + 引用行（purpose=baseline_content）；
 //   - 跨提交内容寻址去重：对象已实存跳过 Put；
 //   - 读取摘要与快照不符（外部写者竞态）/文件缺失 → 表示退无 Content + 诊断
 //     + 不失败提交；
 //   - CAS.Put 失败 → Content 保留 + 诊断，不产引用行（引用完整性前提）；
-//   - 捕获面仅项目侧 mod 表示；runtime 侧与文件资源表示不摄取。
+//   - 覆盖面＝项目侧全部表示（mod metafile + 非 mod 文本）；runtime 侧表示
+//     不摄取（jar 字节不入库，ADR-0005 §7 红线不动）。
 // 另覆盖 deriveApplyFilePlans 的防误源修复：mod 写运行端行的 after digest 恒
 // 取声明 hash，项目侧 metafile 的实测 Content 绝不作写盘内容源。
 
@@ -174,12 +177,19 @@ func TestIngestBaselineProjectContent(t *testing.T) {
 	}
 }
 
-// TestIngestBaselineProjectContentReplicaShape 覆盖捕获面边界：runtime 侧表示、
-// 非 mod 资源表示一律不摄取（文件资源字节经 before 保全入 CAS，jar 字节不入库）。
+// TestIngestBaselineProjectContentReplicaShape 覆盖摄取覆盖面（票 #93 泛化后）：
+// 项目侧全部带内容指纹的表示（mod metafile 与非 mod 文本）同通道摄取；
+// runtime 侧表示一律不摄取（jar 字节不入库，ADR-0005 §7 红线不动）。
 func TestIngestBaselineProjectContentReplicaShape(t *testing.T) {
 	app, cas := newIngestStack(t)
 	ctx := context.Background()
 	projectRoot := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(projectRoot, "config"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(projectRoot, "config", "a.toml"), []byte("toml bytes"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 	baseline := &model.SyncBaseline{
 		SchemaVersion: model.CurrentSchemaVersion,
 		BaselineID:    "base_test",
@@ -188,7 +198,7 @@ func TestIngestBaselineProjectContentReplicaShape(t *testing.T) {
 			"mod:path:mods/a.pw.toml": {
 				State:         "present",
 				LogicalDigest: "sha256:l1",
-				// runtime 侧表示带 Content（jar 实测摘要）：捕获面之外，零摄取。
+				// runtime 侧表示带 Content（jar 实测摘要）：摄取面之外，零摄取。
 				RuntimeRepresentation: &model.Representation{
 					RelativePath: "mods/a-1.0.jar", Format: "jar",
 					Content: &model.ContentRef{Algorithm: "sha256", Digest: ingestSha256("jar bytes"), Size: 9},
@@ -197,6 +207,7 @@ func TestIngestBaselineProjectContentReplicaShape(t *testing.T) {
 			"file:config/a.toml": {
 				State:         "present",
 				LogicalDigest: "sha256:l2",
+				// 项目侧文本表示（票 #93 泛化面）：工作树字节在 → 摄取 + 引用行。
 				ProjectRepresentation: &model.Representation{
 					RelativePath: "config/a.toml", Format: "toml",
 					Content: &model.ContentRef{Algorithm: "sha256", Digest: ingestSha256("toml bytes"), Size: 10},
@@ -205,13 +216,18 @@ func TestIngestBaselineProjectContentReplicaShape(t *testing.T) {
 		},
 	}
 	refs, diags := app.ingestBaselineProjectContent(ctx, projectRoot, baseline)
-	if len(refs) != 0 || len(diags) != 0 {
-		t.Fatalf("捕获面之外零摄取: refs=%v diags=%v", refs, diags)
+	if len(diags) != 0 {
+		t.Fatalf("零降级: diags=%v", diags)
 	}
-	for _, d := range []string{ingestSha256("jar bytes"), ingestSha256("toml bytes")} {
-		if ok, err := cas.Has(ctx, d); err != nil || ok {
-			t.Fatalf("digest %s 不应入 CAS: ok=%v err=%v", d, ok, err)
-		}
+	if len(refs) != 1 || refs[0].Digest != ingestSha256("toml bytes") ||
+		refs[0].Purpose != objectRefPurposeBaselineContent {
+		t.Fatalf("引用行形状: %+v", refs)
+	}
+	if ok, err := cas.Has(ctx, ingestSha256("toml bytes")); err != nil || !ok {
+		t.Fatalf("文本表示应入 CAS: ok=%v err=%v", ok, err)
+	}
+	if ok, err := cas.Has(ctx, ingestSha256("jar bytes")); err != nil || ok {
+		t.Fatalf("runtime 侧 jar digest 不应入 CAS: ok=%v err=%v", ok, err)
 	}
 }
 

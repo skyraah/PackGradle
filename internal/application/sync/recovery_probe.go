@@ -203,7 +203,7 @@ func (a *App) probeOperation(run model.ApplyRun, stgRun *syncstage.Run, op model
 			return amb(fmt.Sprintf("计划操作解析失败: %v", err))
 		}
 	}
-	_, tgtSide, known := applySideForOp(planned.Kind)
+	_, tgtSide, known := applySideForOp(planned)
 	if !known {
 		return amb(fmt.Sprintf("操作类别 %q 不可恢复裁决", planned.Kind))
 	}
@@ -381,7 +381,7 @@ func (a *App) redoOperation(ctx context.Context, stgRun *syncstage.Run, run mode
 		defer spill.Close()
 		content = spill
 	}
-	_, tgtSide, _ := applySideForOp(v.planned.Kind)
+	_, tgtSide, _ := applySideForOp(v.planned)
 	res, execErr := applyActionRunner(actionsBySide[tgtSide], v.action, v.proof, content)
 	if execErr != nil {
 		return execErr
@@ -579,7 +579,7 @@ func (a *App) completeRecoveredRun(ctx context.Context, active model.Task, run m
 	plans := make([]applyFilePlan, len(verdicts))
 	for i := range verdicts {
 		v := verdicts[i]
-		_, tgtSide, _ := applySideForOp(v.planned.Kind)
+		_, tgtSide, _ := applySideForOp(v.planned)
 		plans[i] = applyFilePlan{op: v.planned, action: v.action, targetSide: tgtSide}
 	}
 	violations, remaining, err := verifyRescan(plan, plans, rescanP, rescanR, base, nil)

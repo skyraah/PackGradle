@@ -2,12 +2,12 @@ package sync_test
 
 // P4 合并判定面集成（票 #87）：双侧同改 → PrepareSync → GetPlan 断言分类与
 // detail 块证据（ADR-0009 §2/§3/§4/§5；契约 07 §3.3；验收规格 §3.1）。
-// 不接执行面（take_merged/write_merged/ConfirmPlan 语义归执行票）：
-// merged_clean 行在计划面只以 summary.merged_clean_count 呈现，无操作无冲突。
+// 操作面自票 #93 起接入：merged_clean 行以 write_merged 操作承载默认推荐
+//（双端前置条件、reversible），summary.merged_clean_count 独立计数。
 //
 // 覆盖：
 //  1. 干净合并：同一 toml 两侧互不重叠改动 → merged_clean（summary 计数、
-//     零冲突、GetChanges 行分类与计数）；
+//     write_merged 操作面、零冲突、GetChanges 行分类与计数）；
 //  2. 真冲突：两侧同段不同改动 → conflict_modify + Conflict.Detail 承载
 //     hunk JSON 块证据（域词汇 project/base/runtime + 起始行号）。
 
@@ -206,8 +206,19 @@ func TestMergePlanMergedClean(t *testing.T) {
 	if plan.Summary.ModifyCount != 0 {
 		t.Fatalf("merged_clean 不并入 modify 计数: %+v", plan.Summary)
 	}
-	if len(plan.Operations) != 0 {
-		t.Fatalf("执行面未接入前 merged_clean 行不得产出操作: %+v", plan.Operations)
+	// 操作面（票 #93 接入后）：draft 以 write_merged 承载默认推荐——一资源一
+	// 操作、reversible=true、双端前置条件；不并入 create/modify/delete 计数。
+	if len(plan.Operations) != 1 {
+		t.Fatalf("merged_clean 行应恰有 1 条操作: %+v", plan.Operations)
+	}
+	if plan.Operations[0].Kind != "write_merged" || !plan.Operations[0].Reversible {
+		t.Fatalf("merged_clean 操作应为 reversible write_merged: %+v", plan.Operations[0])
+	}
+	if len(plan.Operations[0].Preconditions) != 2 {
+		t.Fatalf("write_merged 应断言双端前置条件: %+v", plan.Operations[0].Preconditions)
+	}
+	if plan.Summary.CreateCount != 0 || plan.Summary.DeleteCount != 0 {
+		t.Fatalf("merged_clean 不并入 create/delete 计数: %+v", plan.Summary)
 	}
 
 	// GetPlan：计划持久化后摘要证据可读

@@ -1,6 +1,7 @@
 package sync
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -70,6 +71,7 @@ func (a *App) runApply(ctx context.Context, queued model.Task) {
 	runStart := time.Now()
 	defer func() {
 		timing.TotalMs = time.Since(runStart).Milliseconds()
+		timing.MergeDiff3MS, timing.MergeValidateMS, timing.MergeWriteMS, timing.MergeOps = a.mergePhasesSnapshot()
 		a.recordApplyTiming(timing)
 	}()
 
@@ -155,7 +157,7 @@ func (a *App) runApply(ctx context.Context, queued model.Task) {
 		return false
 	}
 
-	total := len(plan.Operations)
+	total := len(plan.Operations) + countMergedExpansions(plan.Operations)
 	t.Status = model.TaskStatusRunning
 	t.CanCancel = true // 取消语义随引擎接管收口（T03 留注）：运行中可取消，操作边界响应
 	t.Total = total
@@ -414,6 +416,18 @@ func (a *App) runApply(ctx context.Context, queued model.Task) {
 // 可安全并行；票面 4-8 worker 的上限值，多核开发机 16 逻辑 CPU 下实测最优）。
 const applyWorkers = 8
 
+// countMergedExpansions 统计 write_merged 操作的按侧展开行数（票 #93）：每行
+// 双端各一份文件执行计划，任务总量与运行头 operation_count 按展开行口径计。
+func countMergedExpansions(ops []model.PlannedOperation) int {
+	n := 0
+	for _, op := range ops {
+		if op.Kind == model.OpWriteMerged {
+			n += 2
+		}
+	}
+	return n
+}
+
 // applyBatchFirst/applyBatchMax 是 applying 的自适应批边界（票 #48）：首批判
 // 最小（运行初期取消/失败时暴露的「running 未执行」形态最少，中断粒度最细，
 // 与 T04 取消边界测试的逐操作语义对齐），此后逐批翻倍摊薄事务开销，上限
@@ -449,11 +463,13 @@ type stagedOp struct {
 // before CAS 保全 → after 内容暂存复核 → 所有权证明签发与落盘（ADR-0004 §3：
 // 进入 staged 前，将被覆盖/删除且策略要求保留的旧内容已入 CAS 并完成 hash
 // 复核；暂存副本落盘即复核 digest）。失败记录在返回值的 failCode/failErr。
+// fp 按指针传入：write_merged 行（票 #93）的重算回填 afterDigest 必须反映到
+// 调用方的 plans 切片（journal 行 after_digest 与 verify 输入同源）。
 func stageOneOperation(ctx context.Context, a *App, run *syncstage.Run, relationID string,
-	fp applyFilePlan, snaps map[model.Side]model.ObservedSnapshot,
+	fp *applyFilePlan, snaps map[model.Side]model.ObservedSnapshot,
 	rootBySide map[model.Side]string) stagedOp {
 
-	s := stagedOp{fp: fp}
+	s := stagedOp{fp: *fp}
 	if fp.dlFailCode != "" {
 		// 下载相位取数失败（err.download.* 分桶 / hash_format_unsupported 信号）：
 		// 剔出本场（ADR-0008 §7），不终场。
@@ -506,20 +522,48 @@ func stageOneOperation(ctx context.Context, a *App, run *syncstage.Run, relation
 	// 原子落盘 + digest 复核，失败即删零残留。目标已达成（幂等重放）跳过。
 	if fp.action == applyActionCreate || fp.action == applyActionModify {
 		if !fp.targetReady {
-			reader, closer, err := a.afterContentReader(ctx, fp)
-			if err != nil {
-				// 取数失败（copy/download 一条规矩，ADR-0008 §7，票 #63 语义
-				// 反转）：剔出本场不进 journal，不终止整场；其余操作照常。
-				s.skipped = true
-				s.skipCode = skipReasonContentUnavailable
-				s.skipCause = err.Error()
-				return s
+			var reader io.Reader
+			var closer func() = func() {}
+			mergeWriteStart := time.Now()
+			var mergePh mergePhaseTiming
+			if fp.mergeProduct {
+				// write_merged（票 #93，ADR-0009 §8 暂存期确定性重算）：按计划
+				// 锁定的三侧快照重跑同一 diff3（基线取 CAS、双端取活文件，全部
+				// sha256 复核与计划快照相符）——同算法同输入同输出；重算失败属
+				// 计划/端点事实矛盾，整场失败恢复面（不部分提交）。之后 ownership
+				// proof、验证、提交、暂存清理与恢复协议全走既有管线零新增环节。
+				product, digest, ph, err := a.recomputeMergeProduct(ctx, fp)
+				if err != nil {
+					s.failCode, s.failErr = resultPreconditionViolated,
+						fmt.Errorf("合并产物确定性重算失败: %w", err)
+					return s
+				}
+				mergePh = ph
+				fp.afterDigest = digest
+				s.fp = *fp // 重算回填同步到返回值（journal after_digest 同源）
+				reader = bytes.NewReader(product)
+			} else {
+				var err error
+				reader, closer, err = a.afterContentReader(ctx, *fp)
+				if err != nil {
+					// 取数失败（copy/download 一条规矩，ADR-0008 §7，票 #63 语义
+					// 反转）：剔出本场不进 journal，不终止整场；其余操作照常。
+					s.skipped = true
+					s.skipCode = skipReasonContentUnavailable
+					s.skipCause = err.Error()
+					return s
+				}
 			}
 			tempRel, stageErr := run.StageContent(fp.targetRel, reader, fp.afterDigest)
 			closer()
 			if stageErr != nil {
 				s.failCode, s.failErr = applyResultCode(stageErr), stageErr
 				return s
+			}
+			if fp.mergeProduct {
+				// 写盘分相（票 #93）：StageContent 原子落盘 + digest 复核计时。
+				mergePh.WriteMS = time.Since(mergeWriteStart).Milliseconds()
+				a.accumMergePhases(mergePh, mergePh.WriteMS)
 			}
 			s.tempRel = tempRel
 		}
@@ -559,6 +603,22 @@ func stageApplyOperations(ctx context.Context, a *App, run *syncstage.Run, relat
 	if len(plans) < workers {
 		workers = len(plans)
 	}
+	// 同路径互斥（restore stageRestoreOperations 分桶先例的锁形态）：write_merged
+	// 的按侧展开行共享同一暂存路径（双端同路径镜像同一暂存副本），并发对同
+	// 一目标原子 rename 在 Windows 上 Access denied——同路径串行，后到者命中
+	// StageContent 复用短路（逐字节不变）。其余计划行路径互斥，锁零竞争。
+	pathLocks := map[string]*sync.Mutex{}
+	var pathLocksMu sync.Mutex
+	lockFor := func(targetRel string) *sync.Mutex {
+		pathLocksMu.Lock()
+		defer pathLocksMu.Unlock()
+		m, ok := pathLocks[targetRel]
+		if !ok {
+			m = &sync.Mutex{}
+			pathLocks[targetRel] = m
+		}
+		return m
+	}
 	var wg sync.WaitGroup
 	for w := 0; w < workers; w++ {
 		wg.Add(1)
@@ -568,7 +628,14 @@ func stageApplyOperations(ctx context.Context, a *App, run *syncstage.Run, relat
 				if ctx.Err() != nil || stop.Load() {
 					continue // 未开始的操作保持未 staging
 				}
-				results[i] = stageOneOperation(ctx, a, run, relationID, plans[i], snaps, rootBySide)
+				m := lockFor(plans[i].targetRel)
+				m.Lock()
+				if ctx.Err() != nil || stop.Load() {
+					m.Unlock()
+					continue
+				}
+				results[i] = stageOneOperation(ctx, a, run, relationID, &plans[i], snaps, rootBySide)
+				m.Unlock()
 				executed[i] = true
 				if results[i].failCode != "" {
 					stop.Store(true)
@@ -1046,25 +1113,36 @@ func buildJournalRows(taskID string, plans []applyFilePlan, staged []stagedOp) (
 // buildCommitChanges 把已执行操作编译为提交变化行（目标侧前后表示；
 // before 取输入快照目标侧观察，after 取复扫目标侧观察，delete 的 after 为 nil）。
 // 刻意差异（与 restore_apply.go 的 buildRestoreCommitChanges 近复制但不去重）：
-// sync 计划逐资源单操作、op.ResourceID 天然无重复行，直接逐行产出即可；restore
-// 计划按侧建操作、同一资源可有双侧写回，那边才需要 byResource 去重合并——
-// 两函数形状对称是各自计划形态的忠实投影，勿为「统一」互挪逻辑。
+// sync 计划逐资源单操作、op.ResourceID 天然无重复行；write_merged 的按侧展开
+// 行（票 #93）是唯一例外——同一资源双端各一份文件计划，此处按资源合并为
+// 一行（commit_changes PK (commit_id, resource_id)），双端前后各归其列。
 func buildCommitChanges(plans []applyFilePlan, inP, inR, rescanP, rescanR model.ObservedSnapshot) []model.CommitChange {
 	inBySide := map[model.Side]model.ObservedSnapshot{model.SideProject: inP, model.SideRuntime: inR}
 	rescanBySide := map[model.Side]model.ObservedSnapshot{model.SideProject: rescanP, model.SideRuntime: rescanR}
 	out := make([]model.CommitChange, 0, len(plans))
+	idx := make(map[model.ResourceID]int, len(plans))
 	for _, fp := range plans {
 		if fp.action == "" {
 			continue
 		}
-		ch := model.CommitChange{ResourceID: fp.op.ResourceID, ChangeKind: string(actionChangeKind(fp.action))}
 		before := repOf(inBySide[fp.targetSide], fp.op.ResourceID)
 		after := repOf(rescanBySide[fp.targetSide], fp.op.ResourceID)
+		if i, ok := idx[fp.op.ResourceID]; ok {
+			// write_merged 双端展开行：双侧前后并入同一变化行。
+			if fp.targetSide == model.SideRuntime {
+				out[i].RuntimeBefore, out[i].RuntimeAfter = before, after
+			} else {
+				out[i].ProjectBefore, out[i].ProjectAfter = before, after
+			}
+			continue
+		}
+		ch := model.CommitChange{ResourceID: fp.op.ResourceID, ChangeKind: string(actionChangeKind(fp.action))}
 		if fp.targetSide == model.SideRuntime {
 			ch.RuntimeBefore, ch.RuntimeAfter = before, after
 		} else {
 			ch.ProjectBefore, ch.ProjectAfter = before, after
 		}
+		idx[fp.op.ResourceID] = len(out)
 		out = append(out, ch)
 	}
 	return out

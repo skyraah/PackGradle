@@ -108,6 +108,7 @@ const summaryChips = computed(() => {
         { key: 'plans.summary.delete', count: s.delete_count },
         { key: 'plans.summary.writeRuntime', count: writeRuntimeCount.value },
         { key: 'plans.summary.writeProject', count: writeProjectCount.value },
+        { key: 'plans.summary.mergedClean', count: s.merged_clean_count },
         { key: 'plans.summary.conflict', count: s.conflict_count },
         { key: 'plans.summary.unrecoverable', count: unrecoverableCount.value },
     ]
@@ -146,6 +147,35 @@ function choiceOptions(c: ConflictDTO): { value: string; labelKey: string; disab
         { value: 'take_project', labelKey: 'plans.choice.takeProject' },
         { value: 'take_runtime', labelKey: 'plans.choice.takeRuntime' },
     ]
+}
+
+// 合并行呈现（契约 07 §3.3/§6，票 #93）：write_merged 是后端固化的默认推荐
+//（非冲突操作，随授权模式免确认），本页只读呈现「将自动合并」，无决议入口。
+const isMergedOp = (kind: string): boolean => kind === 'write_merged'
+
+// 冲突块明细（ADR-0009 §3；detail 为 hunk JSON 时点开块列表：三侧行片段 + 起始行号）。
+interface HunkSide {
+    start: number
+    lines: string[]
+}
+interface Hunk {
+    project: HunkSide
+    base: HunkSide
+    runtime: HunkSide
+}
+const hunkSides: { key: keyof Hunk; labelKey: string }[] = [
+    { key: 'project', labelKey: 'plans.hunk.project' },
+    { key: 'base', labelKey: 'plans.hunk.base' },
+    { key: 'runtime', labelKey: 'plans.hunk.runtime' },
+]
+function parseHunks(detail: string | undefined): Hunk[] {
+    if (!detail) return []
+    try {
+        const obj = JSON.parse(detail) as { hunks?: Hunk[] }
+        return Array.isArray(obj.hunks) ? obj.hunks : []
+    } catch {
+        return []
+    }
 }
 
 const unresolvedCount = computed(() => {
@@ -387,7 +417,15 @@ watch(
                                         {{ op.resource_id }}
                                     </TableCell>
                                     <TableCell>
-                                        <Badge variant="outline">{{ t('plans.op.' + op.kind) }}</Badge>
+                                        <div class="flex flex-wrap items-center gap-2">
+                                            <Badge variant="outline">{{ t('plans.op.' + op.kind) }}</Badge>
+                                            <Badge v-if="isMergedOp(op.kind)" variant="secondary" class="text-emerald-600 dark:text-emerald-400">
+                                                {{ t('plans.mergeBadge') }}
+                                            </Badge>
+                                        </div>
+                                        <div v-if="isMergedOp(op.kind)" class="text-muted-foreground mt-1 text-xs">
+                                            {{ t('plans.mergeHint') }}
+                                        </div>
                                     </TableCell>
                                     <TableCell>
                                         <span :class="op.reversible ? 'text-muted-foreground' : 'text-amber-600 dark:text-amber-400'">
@@ -428,6 +466,18 @@ watch(
                                         <span v-else class="text-muted-foreground">{{ t('plans.sideMissing') }}</span>
                                     </div>
                                 </div>
+                                <!-- 冲突块明细（ADR-0009 §3；点开块列表：project/base/runtime 行片段 + 起始行号） -->
+                                <details v-if="parseHunks(c.detail).length > 0" class="rounded-md border p-2">
+                                    <summary class="cursor-pointer text-xs font-medium">{{ t('plans.hunkTitle') }}（{{ parseHunks(c.detail).length }}）</summary>
+                                    <div v-for="(h, hi) in parseHunks(c.detail)" :key="hi" class="mt-2 grid gap-2 sm:grid-cols-3">
+                                        <div v-for="side in hunkSides" :key="side.key" class="rounded-md border bg-muted/40 p-2">
+                                            <div class="text-muted-foreground mb-1">
+                                                {{ t(side.labelKey) }} · {{ t('plans.hunk.startLine', [h[side.key]?.start ?? 0]) }}
+                                            </div>
+                                            <pre class="overflow-x-auto font-mono text-[11px] leading-5">{{ (h[side.key]?.lines ?? []).join('\n') }}</pre>
+                                        </div>
+                                    </div>
+                                </details>
                                 <!-- 决议控件：仅 draft 且可推进时；计划内容本身不可编辑 -->
                                 <div v-if="canResolve" class="flex flex-wrap items-center gap-2">
                                     <label v-for="opt in choiceOptions(c)" :key="opt.value" class="flex items-center gap-1 text-sm" :class="opt.disabled ? 'text-muted-foreground cursor-not-allowed' : 'cursor-pointer'">

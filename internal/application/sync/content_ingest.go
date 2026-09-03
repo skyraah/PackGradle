@@ -3,9 +3,18 @@ package sync
 // content_ingest.go 实现 ADR-0012 §2/§3 的对象摄取通道（执行规格 §F2 裁定：
 // 对象摄取时点＝提交收口期，扫描期不落 CAS 对象）：
 //
-//   - result baseline 持久化前，对基线项目侧 mod 表示按 Content digest 统一
-//     从项目工作树读字节入 CAS（sync/restore/recovery 恢复收口与将来的 merge
-//     提交同款通道；Put 幂等，跨提交按内容寻址去重）；
+//   - result baseline 持久化前，对基线项目侧带内容指纹的表示统一从工作树读
+//     字节入 CAS（sync/restore/merge 提交同款通道；Put 幂等，跨提交按内容寻址
+//     去重）。覆盖面原为项目侧 mod metafile（ADR-0012 §2），票 #93 起扩展到
+//     项目侧全部表示——**规格偏差记录**：规格 §A 保全段的事实前提「非 mod
+//     文本现状本就进库」与代码实况不符（apply 只在覆盖/删除时做 before-content
+//     保全，创建/adopt_equal 路径不入库），合并 Base 侧因此取不到字节、生产链
+//     首次合并恒安全降级 conflict_modify（#87 移交的架构缺口）；本扩展是兑现
+//     ADR-0009 §9「合并产物一律入 CAS + 回滚零网络」承诺的最小路径，ADR-0009
+//     的意图（§9）与回滚判定面（restorable_from_cas 需对象实存）均要求基线
+//     内容在库。#98 收口时随规格偏差汇总。安全降级兜底保留：取数/复核失败仍
+//     退无 Content、不失败提交（合并判定面的「合并面不可用」降级链不依赖本
+//     通道的成败）；
 //   - 对象经提交 object_refs（purpose=baseline_content）被 sync_commits 传递
 //     引用，自动落 ADR-0006 §10.1 保护根并进入既有容量记账——GC 决策与容量
 //     口径零新参数（ADR-0012 §3）；
@@ -26,15 +35,15 @@ import (
 
 	"packgradle/internal/application/ports"
 	"packgradle/internal/core/model"
-	"packgradle/internal/core/normalize"
 )
 
 // objectRefPurposeBaselineContent 是基线内容摄取引用的 purpose（object_refs
 // 行；区别于 before_preservation——前者是结果基线的传递引用通道）。
 const objectRefPurposeBaselineContent = "baseline_content"
 
-// ingestBaselineProjectContent 在提交收口期把结果基线项目侧 mod 表示的
-// Content 引用对象统一从工作树读字节入 CAS。语义：
+// ingestBaselineProjectContent 在提交收口期把结果基线项目侧带 Content 引用的
+// 表示统一从工作树读字节入 CAS（票 #93 起覆盖全部表示，见文件头规格偏差记录；
+// mod metafile 是 ADR-0005 §7 文本例外、ADR-0009 §9 的保全对象）。语义：
 //
 //   - 读取摘要与表示 Content 不符（外部写者竞态）、文件缺失或读取/哈希失败：
 //     该表示退无 Content + 记诊断，不失败提交（降级语义的落点：restore 判定
@@ -68,9 +77,10 @@ func (a *App) ingestBaselineProjectContent(ctx context.Context, projectRoot stri
 		if rep == nil || rep.Content == nil {
 			continue
 		}
-		if normalize.KindOfResourceID(id) != model.ResourceMod {
-			continue // 捕获面仅项目侧 mod 清单（ADR-0012 §2）；文件资源字节经 before 保全入 CAS
-		}
+		// 覆盖面＝项目侧全部带内容指纹的表示（票 #93 泛化，见文件头）：mod
+		// metafile（ADR-0012 §2 原面）与非 mod 文本（ADR-0009 §9 合并产物与
+		// 合并 Base 侧的保全前提）同通道；统一读工作树字节、按表示 Content
+		// 复核后入 CAS。
 		digest := strings.ToLower(rep.Content.Digest)
 		if !ingested[digest] {
 			ok, err := a.deps.CAS.Has(ctx, digest)
