@@ -1,0 +1,47 @@
+{
+  "schema": "p3-perf-run/1",
+  "captured_at": "2026-09-03T05:20:30Z",
+  "project_root": "C:\\project\\wt-p4\\t98\\build\\perf\\fixture\\project",
+  "instance_dir": "C:\\project\\wt-p4\\t98\\build\\perf\\fixture\\instance",
+  "data_root": "build/perf/data",
+  "machine": {
+    "os": "windows",
+    "arch": "amd64",
+    "go_version": "go1.26.5",
+    "cpus": 16
+  },
+  "scan_phases_ms": {
+    "project_scan": 83,
+    "runtime_scan": 393,
+    "normalize": 10,
+    "persist": 24
+  },
+  "scan_total_ms": 529,
+  "run_total_ms": 41425,
+  "hash_cache": {
+    "hits": 3002,
+    "misses": 0,
+    "hit_ratio": 1
+  },
+  "apply": {
+    "kind": "initialize",
+    "operation_count": 2400,
+    "phases_ms": {
+      "staging": 12314,
+      "applying": 7462,
+      "verifying": 5016
+    },
+    "apply_total_ms": 40355,
+    "chain_total_ms": 40675,
+    "peak_memory_delta": {
+      "metric": "go_runtime_memstats_sys_peak_delta",
+      "baseline_bytes": 44560384,
+      "peak_bytes": 66277376,
+      "delta_bytes": 21716992,
+      "delta_mib": 20.7109375,
+      "peak_heap_inuse_bytes": 44523520,
+      "samples": 400,
+      "note": "runtime.ReadMemStats 按 GetTask 轮询间隔（~100ms）+ 终态补充采样；增量 = apply 段 Sys 峰值 − ConfirmPlan 前基线"
+    }
+  }
+}

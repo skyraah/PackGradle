@@ -1,0 +1,50 @@
+{
+  "schema": "p3-perf-run/1",
+  "captured_at": "2026-09-03T05:22:39Z",
+  "project_root": "C:\\project\\wt-p4\\t98\\build\\perf\\fixture\\project",
+  "instance_dir": "C:\\project\\wt-p4\\t98\\build\\perf\\fixture\\instance",
+  "data_root": "build/perf/data",
+  "machine": {
+    "os": "windows",
+    "arch": "amd64",
+    "go_version": "go1.26.5",
+    "cpus": 16
+  },
+  "scan_phases_ms": {
+    "project_scan": 0,
+    "runtime_scan": 0,
+    "normalize": 0,
+    "persist": 0
+  },
+  "scan_total_ms": 0,
+  "run_total_ms": 0,
+  "hash_cache": {
+    "hits": 0,
+    "misses": 0,
+    "hit_ratio": 0
+  },
+  "restore": {
+    "kind": "restore",
+    "operation_count": 4802,
+    "prepare_ms": 356,
+    "phases_ms": {
+      "staging": 32868,
+      "applying": 15120,
+      "verifying": 13987
+    },
+    "staging_download_ms": 0,
+    "download_note": "无 redownload 行（perf 夹具 mod 声明 hash 为占位值，零网络口径）——download 相位只记录不设门槛",
+    "restore_total_ms": 64903,
+    "chain_total_ms": 64978,
+    "peak_memory_delta": {
+      "metric": "go_runtime_memstats_sys_peak_delta",
+      "baseline_bytes": 61296640,
+      "peak_bytes": 70012928,
+      "delta_bytes": 8716288,
+      "delta_mib": 8.3125,
+      "peak_heap_inuse_bytes": 48431104,
+      "samples": 637,
+      "note": "runtime.ReadMemStats 按 GetTask 轮询间隔（~100ms）+ 终态补充采样；增量 = apply 段 Sys 峰值 − ConfirmPlan 前基线"
+    }
+  }
+}
