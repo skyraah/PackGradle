@@ -13,6 +13,7 @@ import { useI18n } from 'vue-i18n'
 import { useRoute, useRouter } from 'vue-router'
 import { SyncService } from '../api'
 import type { ConflictDTO, SyncPlanDTO } from '../api'
+import MergePreviewDrawer from '../components/common/MergePreviewDrawer.vue'
 import { bootstrapped, tasks, triggerRequery, workspaces } from '../stores/syncCache'
 import { showSnackbar } from '../stores/ui'
 import { errText } from '../utils/errors'
@@ -261,6 +262,17 @@ watch(
         if (prev && !now) void loadPlan()
     },
 )
+
+// —— 合并预览抽屉（契约 07 §3.4/§6，票 #94）——
+// merged_clean 行 = write_merged 操作（一资源一操作，契约 07 §3.3）；操作表行内
+// 「查看合并结果」入口打开抽屉，实时预览不落库，停用/过期计划同样可看（只读）。
+const mergePreviewOpen = ref(false)
+const mergePreviewResourceId = ref('')
+
+function openMergePreview(resourceId: string): void {
+    mergePreviewResourceId.value = resourceId
+    mergePreviewOpen.value = true
+}
 </script>
 
 <template>
@@ -387,7 +399,19 @@ watch(
                                         {{ op.resource_id }}
                                     </TableCell>
                                     <TableCell>
-                                        <Badge variant="outline">{{ t('plans.op.' + op.kind) }}</Badge>
+                                        <div class="flex flex-wrap items-center gap-1">
+                                            <Badge variant="outline">{{ t('plans.op.' + op.kind) }}</Badge>
+                                            <!-- merged_clean 行「查看合并结果」（契约 07 §6，票 #94）：
+                                                 预览抽屉 = 全文 + 行级绿红黄标注 + 语法高亮 -->
+                                            <Button
+                                                v-if="op.kind === 'write_merged'"
+                                                variant="ghost"
+                                                size="xs"
+                                                @click="openMergePreview(op.resource_id)"
+                                            >
+                                                {{ t('plans.mergePreview.open') }}
+                                            </Button>
+                                        </div>
                                     </TableCell>
                                     <TableCell>
                                         <span :class="op.reversible ? 'text-muted-foreground' : 'text-amber-600 dark:text-amber-400'">
@@ -513,6 +537,15 @@ watch(
                         </Button>
                     </CardContent>
                 </Card>
+
+                <!-- 合并预览抽屉（票 #94）：merged_clean 行入口，实时计算不落库；
+                     停用/过期计划仍可预览（只读横幅） -->
+                <MergePreviewDrawer
+                    v-model:open="mergePreviewOpen"
+                    :plan-id="plan.plan_id"
+                    :resource-id="mergePreviewResourceId"
+                    :readonly-hint="retired"
+                />
             </template>
         </template>
     </div>

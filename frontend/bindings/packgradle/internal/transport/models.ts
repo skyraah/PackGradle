@@ -125,6 +125,11 @@ export interface ChangesSummaryDTO {
     "modify_count": number;
     "delete_count": number;
     "conflict_count": number;
+
+    /**
+     * 干净合并行数（ADR-0009 §4，票 #87；契约 07 §3.3）
+     */
+    "merged_clean_count": number;
 }
 
 /**
@@ -332,6 +337,28 @@ export interface MappingRuleDTO {
     "runtime_local": string;
 }
 
+/**
+ * MergedPreviewDTO 是 merged_clean 行的合并结果预览（契约 07 §3.4，票 #94：
+ * 实时计算不落库）。行级绿红黄标注与语法高亮由前端对两段全文计算——标注与
+ * 高亮是渲染层职责，后端只供两段全文。
+ */
+export interface MergedPreviewDTO {
+    "schema_version": number;
+    "plan_id": string;
+    "resource_id": string;
+    "relative_path": string;
+
+    /**
+     * 合并后全文（与暂存期重算同一确定性逻辑，所见即所写）
+     */
+    "content": string;
+
+    /**
+     * 基线全文（增删改标注的比对锚点）
+     */
+    "base_content": string;
+}
+
 export interface OperationDTO {
     "id": string;
     "kind": string;
@@ -361,6 +388,12 @@ export interface PlanSummaryDTO {
     "modify_count": number;
     "delete_count": number;
     "conflict_count": number;
+
+    /**
+     * MergedCleanCount 是干净合并行数（ADR-0009 §4，票 #87；契约 07 §3.3）：
+     * 不并入 modify 计数，DTO 只增不删。
+     */
+    "merged_clean_count": number;
 }
 
 /**

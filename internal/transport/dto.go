@@ -456,6 +456,18 @@ type QuickUpdateResultDTO struct {
 	ApplyTaskID   string `json:"apply_task_id,omitempty"` // 仅 apply_started 回填
 }
 
+// MergedPreviewDTO 是 merged_clean 行的合并结果预览（契约 07 §3.4，票 #94：
+// 实时计算不落库）。行级绿红黄标注与语法高亮由前端对两段全文计算——标注与
+// 高亮是渲染层职责，后端只供两段全文。
+type MergedPreviewDTO struct {
+	SchemaVersion int    `json:"schema_version"`
+	PlanID        string `json:"plan_id"`
+	ResourceID    string `json:"resource_id"`
+	RelativePath  string `json:"relative_path"`
+	Content       string `json:"content"`      // 合并后全文（与暂存期重算同一确定性逻辑，所见即所写）
+	BaseContent   string `json:"base_content"` // 基线全文（增删改标注的比对锚点）
+}
+
 // ---- Apply 运行与历史读 DTO（契约 05 §3 定稿，票 #39；schema_version/slice 归一沿契约 03 §0 硬约束）----
 
 // ApplyRunDTO 是一次 Apply 的运行头投影（ADR-0004 §1 六阶段；契约 05 §3.2）。

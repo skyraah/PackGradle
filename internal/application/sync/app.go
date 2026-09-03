@@ -79,6 +79,10 @@ type Application interface {
 	// （空决议，默认推荐生效）→ 停靠判定 → ConfirmPlan 或停待确认。阻塞到链收口
 	// 再返回（对 wire 是一次 Promise）；同 relation 链进行中并发调用 join 同一结果。
 	QuickUpdate(ctx context.Context, input view.QuickUpdateInput) (view.QuickUpdateResultView, error)
+	// GetMergedPreview 合并预览（契约 07 §3.4；票 #94）：merged_clean 行实时计算
+	// 两段全文（合并后 + 基线），不落库；stale/expired 计划仍可预览（只读）；
+	// 非 merged_clean 行 → err.merge.not_mergeable。
+	GetMergedPreview(ctx context.Context, input view.GetMergedPreviewInput) (view.MergedPreviewView, error)
 }
 
 var _ Application = (*App)(nil)
