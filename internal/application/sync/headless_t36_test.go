@@ -19,6 +19,7 @@ package sync_test
 import (
 	"context"
 	"testing"
+	"time"
 
 	syncapp "packgradle/internal/application/sync"
 	"packgradle/internal/application/view"
@@ -203,12 +204,13 @@ func TestHeadlessConfirmPlanAvailabilityBlockedByActiveTask(t *testing.T) {
 	rel := mustRelationWithScan(t, app, projectRoot, instanceDir)
 	plan := mustResolvePlan(t, app, rel)
 
-	mustConfirm(t, app, plan.PlanID)
+	confirmed := mustConfirm(t, app, plan.PlanID)
 
 	ws, err := app.GetWorkspace(ctx, rel.RelationID)
 	if err != nil {
 		t.Fatal(err)
 	}
+	blockedSeen := false
 	for _, a := range ws.Availability {
 		if a.Action != "apply_sync" {
 			continue
@@ -216,9 +218,54 @@ func TestHeadlessConfirmPlanAvailabilityBlockedByActiveTask(t *testing.T) {
 		if a.Available || a.ReasonCode != "err.scan.already_running" {
 			t.Fatalf("活跃任务应阻塞 apply_sync: %+v", a)
 		}
-		return
+		blockedSeen = true
+		break
 	}
-	t.Fatal("缺少 apply_sync 条目")
+	if !blockedSeen {
+		t.Fatal("缺少 apply_sync 条目")
+	}
+	// 断言依赖活跃任务在场；返回前等 apply 离开执行态——引擎协程在确认后
+	// 仍会写 userdata/staging/task（P4 尾部更长），测试先行返回会与
+	// t.TempDir 清理竞态炸 RemoveAll（Windows: directory is not empty）。
+	// 本 fixture 的 apply 本就以 recovery_required 收场（staging 证据保留、
+	// 零后续写盘），只等终态不苛求成功（waitTask 对 recovery 会 Fatal）。
+	deadline := time.Now().Add(30 * time.Second)
+	for time.Now().Before(deadline) {
+		task, err := app.GetTask(ctx, confirmed.TaskID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		switch task.Status {
+		case model.TaskStatusSucceeded, model.TaskStatusFailed,
+			model.TaskStatusCancelled, model.TaskStatusRecoveryRequired:
+			return
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	t.Fatal("apply 超时未到终态")
+}
+
+// waitApplyQuiescent 等确认产生的 apply 任务离开执行态（任一终态即可）：
+// 引擎协程在断言完成后仍会写 userdata/staging/task，测试先行返回会与
+// t.TempDir 清理竞态（Windows: directory is not empty）。本文件 fixture 的
+// apply 允许以 recovery_required 收场（staging 证据保留、零后续写盘），故
+// 只等终态不苛求成功——waitTask 对 recovery 会 Fatal，不适用。
+func waitApplyQuiescent(t *testing.T, app syncapp.Application, taskID string) {
+	t.Helper()
+	deadline := time.Now().Add(30 * time.Second)
+	for time.Now().Before(deadline) {
+		task, err := app.GetTask(context.Background(), taskID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		switch task.Status {
+		case model.TaskStatusSucceeded, model.TaskStatusFailed,
+			model.TaskStatusCancelled, model.TaskStatusRecoveryRequired:
+			return
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	t.Fatal("apply 超时未到终态")
 }
 
 // TestHeadlessConfirmPlanIdempotentReentry 验证 D4 幂等重入：活跃运行重入返回
@@ -257,6 +304,7 @@ func TestHeadlessConfirmPlanIdempotentReentry(t *testing.T) {
 	if confs != 2 {
 		t.Fatalf("重入应追加确认记录（2 次确认）: %d", confs)
 	}
+	waitApplyQuiescent(t, app, first.TaskID)
 }
 
 // TestHeadlessConfirmPlanCommittedNotReentrant 验证 committed 拆码：同计划上一
@@ -275,6 +323,8 @@ func TestHeadlessConfirmPlanCommittedNotReentrant(t *testing.T) {
 	if code := errCode(t, err); code != "err.plan.apply_not_reentrant" {
 		t.Fatalf("committed 重入错误码: %s", code)
 	}
+	// 此处不做 waitApplyQuiescent：上面的手工 UPDATE 已把 run 状态改写为
+	// committed，引擎终态迁移被切断、任务永不到终态（等待只会超时）。
 }
 
 // TestHeadlessConfirmPlanRecoveryInProgress 验证恢复未收口拆码：运行态
