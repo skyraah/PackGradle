@@ -7,6 +7,8 @@ package sync_test
 
 import (
 	"context"
+	"crypto/sha256"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -200,7 +202,8 @@ func TestMergedPreviewNotMergeableRows(t *testing.T) {
 func TestMergedPreviewFetchFailurePropagates(t *testing.T) {
 	projectRoot, instanceDir, dataRoot := makeFixtures(t)
 	t87WriteRuntimeSide(t, instanceDir, t87Handmade)
-	// 不预置 CAS 对象：基线表示仍带内容指纹，但对象取不到（重取失败形态）。
+	// #93 摄取面泛化后基线字节随收口入 CAS，「重取失败形态」须直删对象构造
+	// （pgheadless -restore 场景③同款手术）：判定面只认 CAS 实存。
 	app, _ := newStack(t, dataRoot)
 
 	rel := mustPrepareAndCreate(t, app, projectRoot, instanceDir)
@@ -211,6 +214,12 @@ func TestMergedPreviewFetchFailurePropagates(t *testing.T) {
 		`runtime_marker = "untouched"`, `runtime_marker = "edited-by-runtime"`)
 	scanAndWait(t, app, rel.RelationID)
 	plan := t87PrepareSync(t, app, rel)
+
+	baselineDigest := fmt.Sprintf("%x", sha256.Sum256([]byte(t87Handmade)))
+	objectPath := filepath.Join(dataRoot, "objects", "sha256", baselineDigest[:2], baselineDigest)
+	if err := os.Remove(objectPath); err != nil {
+		t.Fatalf("直删基线 CAS 对象: %v", err)
+	}
 
 	_, err := app.GetMergedPreview(context.Background(), view.GetMergedPreviewInput{
 		PlanID: plan.PlanID, ResourceID: "file:config/handmade.toml",
