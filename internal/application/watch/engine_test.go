@@ -501,6 +501,23 @@ func TestEngineDynamicSubdirExpansion(t *testing.T) {
 	}
 }
 
+// TestEngineIndexWriteDoesNotTrigger 排除集触发面（红线④，票 #96；ADR-0010 §3）：
+// 写 `mods/.index` 不构成管辖失效——不触发自动链；同目标面普通写照常触发
+//（对照，排除的是 .index 段不是 mods 面）。
+func TestEngineIndexWriteDoesNotTrigger(t *testing.T) {
+	ts := newTestStack(t, model.HealthHealthy)
+
+	ts.src.emit(t, ports.DirEvent{Path: filepath.Join(ts.root, "mods", ".index", "a.jar.pw.toml"), Op: ports.DirWrite})
+	ts.src.emit(t, ports.DirEvent{Path: filepath.Join(ts.root, "mods", ".index"), Op: ports.DirCreate})
+	time.Sleep(300 * time.Millisecond) // 上限 ×2：排除面失效不应有任何链
+	if n := ts.chain.count(); n != 0 {
+		t.Fatalf("mods/.index 写入触发了 %d 次自动链, 期望 0（红线④：.index 只读不写面）", n)
+	}
+
+	ts.src.emit(t, ports.DirEvent{Path: filepath.Join(ts.root, "mods", "a.jar"), Op: ports.DirWrite})
+	waitFor(t, 2*time.Second, func() bool { return ts.chain.count() >= 1 })
+}
+
 // TestEngineMountFailuresWatchFailed 监听异常（ADR-0010 §7）：注册持续失败 →
 // 有限次数后 watch_status=unavailable + 发 watch_failed（一次性）；注册恢复 →
 // 监听自愈回 active。

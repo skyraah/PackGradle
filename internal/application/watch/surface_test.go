@@ -106,6 +106,11 @@ func TestEventMatchesTarget(t *testing.T) {
 		{"目标目录本身", `C:\packs\Collapse\mods`, dirTarget, true},
 		{"兄弟目录不触发", `C:\packs\Collapse\config\x.toml`, dirTarget, false},
 		{"段边界严格（前缀撞名不触发）", `C:\packs\Collapse\mods2\x.jar`, dirTarget, false},
+		{"排除集段（mods/.index 写入不触发，红线④）", `C:\packs\Collapse\mods\.index\a.jar.pw.toml`, dirTarget, false},
+		{"排除集目录自身事件不触发", `C:\packs\Collapse\mods\.index`, dirTarget, false},
+		{"排除集大小写不敏感", `C:\packs\Collapse\mods\.INDEX\x`, dirTarget, false},
+		{"排除段之外照常触发", `C:\packs\Collapse\mods\.index2\a.jar`, dirTarget, true},
+		{"排除段前缀照常触发", `C:\packs\Collapse\mods\a.jar`, dirTarget, true},
 	}
 	for _, c := range cases {
 		if got := eventMatchesTarget(c.eventPath, c.target); got != c.want {

@@ -1,0 +1,1910 @@
+{
+  "schema": "p4-watcher/1",
+  "ticket": "skyraah/PackGradle#96",
+  "spec": "docs/acceptance/p4-acceptance-spec.md §4.2 六场景监听不变式链（真 fsnotify 真文件写入）",
+  "date": "2026-09-03",
+  "machine": {
+    "os": "windows",
+    "arch": "amd64",
+    "go_version": "go1.26.5",
+    "cpus": 16
+  },
+  "scenarios": [
+    {
+      "name": "触发与收敛（授权开态 committed → no_diff 收敛；mods/.index 不触发）",
+      "spec": "§4.2 场景1",
+      "passed": true,
+      "assertions": [
+        "预跑 -apply 全量收口（pgheadless -project build\\watcher\\s1\\fixture\\project -instance build\\watcher\\s1\\fixture\\instance -data build\\watcher\\s1\\data -apply 退出码 0）✓",
+        "授权开关= 1（pgheadless -data build\\watcher\\s1\\data -project build\\watcher\\s1\\fixture\\project -instance build\\watcher\\s1\\fixture\\instance -set-authorized 1 退出码 0）✓",
+        "授权开态自动链 committed（提交数 +1） ✓",
+        "自触发重扫收敛（无 apply 任务的第二轮） ✓",
+        "触发窗口扫描轮数有界：2 ≤ 4 ✓",
+        "收敛后提交数稳定（无第三次自动执行） ✓",
+        "收敛后无待确认计划 ✓",
+        "收敛后静默（轮数有界的尾部证据） ✓",
+        "写 mods/.index 零自动链（红线④：监听排除） ✓",
+        "写 mods/.index 零物化（提交数不变） ✓",
+        "写 mods/.index 零链内任务事件 ✓",
+        "常驻进程经哨兵收敛退出 ✓",
+        "全链事件集 ⊆ {task_updated, relation_invalidated}（实测 [task_updated relation_invalidated]）✓"
+      ],
+      "resident": {
+        "schema": "p4-watcher-run/1",
+        "relation_id": "rel_01M1JK9GV6YCMBNB6RT2XPGX9K",
+        "authorized": true,
+        "end_reason": "sentinel",
+        "scan_rounds": 2,
+        "event_types": [
+          "task_updated",
+          "relation_invalidated"
+        ],
+        "chains": [
+          {
+            "index": 1,
+            "started_at": "2026-09-03T02:59:14.199Z",
+            "ended_at": "2026-09-03T02:59:15.833Z",
+            "duration_ms": 1634,
+            "outcome": "apply_succeeded",
+            "scan_task_id": "task_01M1JK9K1JMF7YV3R9D2PDC0VK",
+            "apply_task_id": "task_01M1JK9K3PA1WKF62MHB6Q2XAH",
+            "apply_status": "succeeded"
+          },
+          {
+            "index": 2,
+            "started_at": "2026-09-03T02:59:15.833Z",
+            "ended_at": "2026-09-03T02:59:15.833Z",
+            "duration_ms": 0,
+            "outcome": "no_apply_task",
+            "scan_task_id": "task_01M1JK9MNY925HB3JJW8ZVEAPE"
+          }
+        ],
+        "timeline": [
+          {
+            "at": "2026-09-03T02:59:12.375Z",
+            "kind": "state",
+            "health": "healthy",
+            "watch_status": "active",
+            "diff_state": "clean",
+            "commits": 1
+          },
+          {
+            "at": "2026-09-03T02:59:14.199Z",
+            "kind": "event",
+            "seq": 18,
+            "event_type": "task_updated",
+            "task_id": "task_01M1JK9K1JMF7YV3R9D2PDC0VK",
+            "task_kind": "scan",
+            "task_status": "queued"
+          },
+          {
+            "at": "2026-09-03T02:59:14.199Z",
+            "kind": "event",
+            "seq": 19,
+            "event_type": "task_updated",
+            "task_id": "task_01M1JK9K1JMF7YV3R9D2PDC0VK",
+            "task_kind": "scan",
+            "task_status": "running"
+          },
+          {
+            "at": "2026-09-03T02:59:14.199Z",
+            "kind": "event",
+            "seq": 20,
+            "event_type": "task_updated",
+            "task_id": "task_01M1JK9K1JMF7YV3R9D2PDC0VK",
+            "task_kind": "scan",
+            "task_status": "running"
+          },
+          {
+            "at": "2026-09-03T02:59:14.199Z",
+            "kind": "event",
+            "seq": 21,
+            "event_type": "task_updated",
+            "task_id": "task_01M1JK9K1JMF7YV3R9D2PDC0VK",
+            "task_kind": "scan",
+            "task_status": "running"
+          },
+          {
+            "at": "2026-09-03T02:59:14.199Z",
+            "kind": "event",
+            "seq": 22,
+            "event_type": "task_updated",
+            "task_id": "task_01M1JK9K1JMF7YV3R9D2PDC0VK",
+            "task_kind": "scan",
+            "task_status": "running"
+          },
+          {
+            "at": "2026-09-03T02:59:14.199Z",
+            "kind": "event",
+            "seq": 23,
+            "event_type": "task_updated",
+            "task_id": "task_01M1JK9K1JMF7YV3R9D2PDC0VK",
+            "task_kind": "scan",
+            "task_status": "succeeded"
+          },
+          {
+            "at": "2026-09-03T02:59:14.199Z",
+            "kind": "event",
+            "seq": 24,
+            "event_type": "relation_invalidated"
+          },
+          {
+            "at": "2026-09-03T02:59:14.199Z",
+            "kind": "event",
+            "seq": 25,
+            "event_type": "task_updated",
+            "task_id": "task_01M1JK9K3PA1WKF62MHB6Q2XAH",
+            "task_kind": "apply",
+            "task_status": "queued"
+          },
+          {
+            "at": "2026-09-03T02:59:14.199Z",
+            "kind": "event",
+            "seq": 26,
+            "event_type": "task_updated",
+            "task_id": "task_01M1JK9K3PA1WKF62MHB6Q2XAH",
+            "task_kind": "apply",
+            "task_status": "running"
+          },
+          {
+            "at": "2026-09-03T02:59:14.199Z",
+            "kind": "state",
+            "health": "healthy",
+            "watch_status": "active",
+            "pending_plan_id": "plan_01M1JK9K3M524CA1CV300WR3VW",
+            "diff_state": "dirty",
+            "commits": 1
+          },
+          {
+            "at": "2026-09-03T02:59:14.199Z",
+            "kind": "timing"
+          },
+          {
+            "at": "2026-09-03T02:59:14.416Z",
+            "kind": "event",
+            "seq": 27,
+            "event_type": "task_updated",
+            "task_id": "task_01M1JK9K3PA1WKF62MHB6Q2XAH",
+            "task_kind": "apply",
+            "task_status": "running"
+          },
+          {
+            "at": "2026-09-03T02:59:14.416Z",
+            "kind": "event",
+            "seq": 28,
+            "event_type": "task_updated",
+            "task_id": "task_01M1JK9K3PA1WKF62MHB6Q2XAH",
+            "task_kind": "apply",
+            "task_status": "running"
+          },
+          {
+            "at": "2026-09-03T02:59:14.416Z",
+            "kind": "event",
+            "seq": 29,
+            "event_type": "task_updated",
+            "task_id": "task_01M1JK9K3PA1WKF62MHB6Q2XAH",
+            "task_kind": "apply",
+            "task_status": "running"
+          },
+          {
+            "at": "2026-09-03T02:59:14.416Z",
+            "kind": "event",
+            "seq": 30,
+            "event_type": "task_updated",
+            "task_id": "task_01M1JK9K3PA1WKF62MHB6Q2XAH",
+            "task_kind": "apply",
+            "task_status": "succeeded"
+          },
+          {
+            "at": "2026-09-03T02:59:14.416Z",
+            "kind": "event",
+            "seq": 31,
+            "event_type": "relation_invalidated"
+          },
+          {
+            "at": "2026-09-03T02:59:14.416Z",
+            "kind": "state",
+            "health": "healthy",
+            "watch_status": "active",
+            "diff_state": "clean",
+            "commits": 2
+          },
+          {
+            "at": "2026-09-03T02:59:14.416Z",
+            "kind": "timing"
+          },
+          {
+            "at": "2026-09-03T02:59:15.833Z",
+            "kind": "event",
+            "seq": 32,
+            "event_type": "task_updated",
+            "task_id": "task_01M1JK9MNY925HB3JJW8ZVEAPE",
+            "task_kind": "scan",
+            "task_status": "queued"
+          },
+          {
+            "at": "2026-09-03T02:59:15.833Z",
+            "kind": "event",
+            "seq": 33,
+            "event_type": "task_updated",
+            "task_id": "task_01M1JK9MNY925HB3JJW8ZVEAPE",
+            "task_kind": "scan",
+            "task_status": "running"
+          },
+          {
+            "at": "2026-09-03T02:59:15.833Z",
+            "kind": "event",
+            "seq": 34,
+            "event_type": "task_updated",
+            "task_id": "task_01M1JK9MNY925HB3JJW8ZVEAPE",
+            "task_kind": "scan",
+            "task_status": "running"
+          },
+          {
+            "at": "2026-09-03T02:59:15.833Z",
+            "kind": "event",
+            "seq": 35,
+            "event_type": "task_updated",
+            "task_id": "task_01M1JK9MNY925HB3JJW8ZVEAPE",
+            "task_kind": "scan",
+            "task_status": "running"
+          },
+          {
+            "at": "2026-09-03T02:59:15.833Z",
+            "kind": "event",
+            "seq": 36,
+            "event_type": "task_updated",
+            "task_id": "task_01M1JK9MNY925HB3JJW8ZVEAPE",
+            "task_kind": "scan",
+            "task_status": "running"
+          },
+          {
+            "at": "2026-09-03T02:59:15.833Z",
+            "kind": "event",
+            "seq": 37,
+            "event_type": "task_updated",
+            "task_id": "task_01M1JK9MNY925HB3JJW8ZVEAPE",
+            "task_kind": "scan",
+            "task_status": "succeeded"
+          },
+          {
+            "at": "2026-09-03T02:59:15.833Z",
+            "kind": "event",
+            "seq": 38,
+            "event_type": "relation_invalidated"
+          },
+          {
+            "at": "2026-09-03T02:59:15.833Z",
+            "kind": "timing"
+          },
+          {
+            "at": "2026-09-03T02:59:16.441Z",
+            "kind": "state",
+            "health": "healthy",
+            "watch_status": "active",
+            "diff_state": "clean",
+            "commits": 2
+          },
+          {
+            "at": "2026-09-03T02:59:18.466Z",
+            "kind": "state",
+            "health": "healthy",
+            "watch_status": "active",
+            "diff_state": "clean",
+            "commits": 2
+          },
+          {
+            "at": "2026-09-03T02:59:20.492Z",
+            "kind": "state",
+            "health": "healthy",
+            "watch_status": "active",
+            "diff_state": "clean",
+            "commits": 2
+          },
+          {
+            "at": "2026-09-03T02:59:22.515Z",
+            "kind": "state",
+            "health": "healthy",
+            "watch_status": "active",
+            "diff_state": "clean",
+            "commits": 2
+          },
+          {
+            "at": "2026-09-03T02:59:24.540Z",
+            "kind": "state",
+            "health": "healthy",
+            "watch_status": "active",
+            "diff_state": "clean",
+            "commits": 2
+          },
+          {
+            "at": "2026-09-03T02:59:26.564Z",
+            "kind": "state",
+            "health": "healthy",
+            "watch_status": "active",
+            "diff_state": "clean",
+            "commits": 2
+          },
+          {
+            "at": "2026-09-03T02:59:28.588Z",
+            "kind": "state",
+            "health": "healthy",
+            "watch_status": "active",
+            "diff_state": "clean",
+            "commits": 2
+          },
+          {
+            "at": "2026-09-03T02:59:30.614Z",
+            "kind": "state",
+            "health": "healthy",
+            "watch_status": "active",
+            "diff_state": "clean",
+            "commits": 2
+          },
+          {
+            "at": "2026-09-03T02:59:32.637Z",
+            "kind": "state",
+            "health": "healthy",
+            "watch_status": "active",
+            "diff_state": "clean",
+            "commits": 2
+          },
+          {
+            "at": "2026-09-03T02:59:34.660Z",
+            "kind": "state",
+            "health": "healthy",
+            "watch_status": "active",
+            "diff_state": "clean",
+            "commits": 2
+          }
+        ]
+      }
+    },
+    {
+      "name": "去抖上界（\u003c1.5s 间隔持续写 ≥30s → 轮数 ≤10s 上限量级）",
+      "spec": "§4.2 场景2",
+      "passed": true,
+      "assertions": [
+        "预跑 -apply 全量收口（pgheadless -project build\\watcher\\s2\\fixture\\project -instance build\\watcher\\s2\\fixture\\instance -data build\\watcher\\s2\\data -apply 退出码 0）✓",
+        "授权开关= 1（pgheadless -data build\\watcher\\s2\\data -project build\\watcher\\s2\\fixture\\project -instance build\\watcher\\s2\\fixture\\instance -set-authorized 1 退出码 0）✓",
+        "风暴期链有触发且聚合（2 轮） ✓",
+        "风暴扫描轮数有上界：2 ≤ 6（30s / 10s 上限 + 收敛余量，不卡毫秒） ✓",
+        "轮数远小于写入次数：2 轮 \u003c 25 次写（静默期聚合实据） ✓",
+        "风暴后链数稳定（2，无失控重扫） ✓",
+        "风暴期至少一轮物化收口（1 轮 committed） ✓",
+        "常驻进程经哨兵收敛退出 ✓",
+        "全链事件集 ⊆ {task_updated, relation_invalidated}（实测 [task_updated relation_invalidated]）✓"
+      ],
+      "resident": {
+        "schema": "p4-watcher-run/1",
+        "relation_id": "rel_01M1JKA7Q8AGSXQC3YF6FK8QG5",
+        "authorized": true,
+        "end_reason": "sentinel",
+        "scan_rounds": 2,
+        "event_types": [
+          "task_updated",
+          "relation_invalidated"
+        ],
+        "chains": [
+          {
+            "index": 1,
+            "started_at": "2026-09-03T02:59:46.137Z",
+            "ended_at": "2026-09-03T02:59:56.488Z",
+            "duration_ms": 10351,
+            "outcome": "apply_succeeded",
+            "scan_task_id": "task_01M1JKAJ7GAXXJHAT7950SGX67",
+            "apply_task_id": "task_01M1JKAJB9EWW8C46HKCVTWDRC",
+            "apply_status": "succeeded"
+          },
+          {
+            "index": 2,
+            "started_at": "2026-09-03T02:59:56.488Z",
+            "ended_at": "2026-09-03T02:59:56.894Z",
+            "duration_ms": 406,
+            "outcome": "apply_recovery_required",
+            "scan_task_id": "task_01M1JKAWBYX7MVYK5JAH8F3J0J",
+            "apply_task_id": "task_01M1JKAWFF3J9Z1XQNRHAFCPJR",
+            "apply_status": "recovery_required"
+          }
+        ],
+        "timeline": [
+          {
+            "at": "2026-09-03T02:59:35.811Z",
+            "kind": "state",
+            "health": "healthy",
+            "watch_status": "active",
+            "diff_state": "clean",
+            "commits": 1
+          },
+          {
+            "at": "2026-09-03T02:59:37.838Z",
+            "kind": "state",
+            "health": "healthy",
+            "watch_status": "active",
+            "diff_state": "clean",
+            "commits": 1
+          },
+          {
+            "at": "2026-09-03T02:59:39.862Z",
+            "kind": "state",
+            "health": "healthy",
+            "watch_status": "active",
+            "diff_state": "clean",
+            "commits": 1
+          },
+          {
+            "at": "2026-09-03T02:59:41.886Z",
+            "kind": "state",
+            "health": "healthy",
+            "watch_status": "active",
+            "diff_state": "clean",
+            "commits": 1
+          },
+          {
+            "at": "2026-09-03T02:59:43.911Z",
+            "kind": "state",
+            "health": "healthy",
+            "watch_status": "active",
+            "diff_state": "clean",
+            "commits": 1
+          },
+          {
+            "at": "2026-09-03T02:59:45.934Z",
+            "kind": "state",
+            "health": "healthy",
+            "watch_status": "active",
+            "diff_state": "clean",
+            "commits": 1
+          },
+          {
+            "at": "2026-09-03T02:59:46.137Z",
+            "kind": "event",
+            "seq": 18,
+            "event_type": "task_updated",
+            "task_id": "task_01M1JKAJ7GAXXJHAT7950SGX67",
+            "task_kind": "scan",
+            "task_status": "queued"
+          },
+          {
+            "at": "2026-09-03T02:59:46.137Z",
+            "kind": "event",
+            "seq": 19,
+            "event_type": "task_updated",
+            "task_id": "task_01M1JKAJ7GAXXJHAT7950SGX67",
+            "task_kind": "scan",
+            "task_status": "running"
+          },
+          {
+            "at": "2026-09-03T02:59:46.137Z",
+            "kind": "event",
+            "seq": 20,
+            "event_type": "task_updated",
+            "task_id": "task_01M1JKAJ7GAXXJHAT7950SGX67",
+            "task_kind": "scan",
+            "task_status": "running"
+          },
+          {
+            "at": "2026-09-03T02:59:46.137Z",
+            "kind": "event",
+            "seq": 21,
+            "event_type": "task_updated",
+            "task_id": "task_01M1JKAJ7GAXXJHAT7950SGX67",
+            "task_kind": "scan",
+            "task_status": "running"
+          },
+          {
+            "at": "2026-09-03T02:59:46.137Z",
+            "kind": "event",
+            "seq": 22,
+            "event_type": "task_updated",
+            "task_id": "task_01M1JKAJ7GAXXJHAT7950SGX67",
+            "task_kind": "scan",
+            "task_status": "running"
+          },
+          {
+            "at": "2026-09-03T02:59:46.137Z",
+            "kind": "event",
+            "seq": 23,
+            "event_type": "task_updated",
+            "task_id": "task_01M1JKAJ7GAXXJHAT7950SGX67",
+            "task_kind": "scan",
+            "task_status": "succeeded"
+          },
+          {
+            "at": "2026-09-03T02:59:46.137Z",
+            "kind": "event",
+            "seq": 24,
+            "event_type": "relation_invalidated"
+          },
+          {
+            "at": "2026-09-03T02:59:46.137Z",
+            "kind": "state",
+            "health": "healthy",
+            "watch_status": "active",
+            "diff_state": "dirty",
+            "commits": 1
+          },
+          {
+            "at": "2026-09-03T02:59:46.137Z",
+            "kind": "timing"
+          },
+          {
+            "at": "2026-09-03T02:59:46.339Z",
+            "kind": "event",
+            "seq": 25,
+            "event_type": "task_updated",
+            "task_id": "task_01M1JKAJB9EWW8C46HKCVTWDRC",
+            "task_kind": "apply",
+            "task_status": "queued"
+          },
+          {
+            "at": "2026-09-03T02:59:46.339Z",
+            "kind": "event",
+            "seq": 26,
+            "event_type": "task_updated",
+            "task_id": "task_01M1JKAJB9EWW8C46HKCVTWDRC",
+            "task_kind": "apply",
+            "task_status": "running"
+          },
+          {
+            "at": "2026-09-03T02:59:46.339Z",
+            "kind": "event",
+            "seq": 27,
+            "event_type": "task_updated",
+            "task_id": "task_01M1JKAJB9EWW8C46HKCVTWDRC",
+            "task_kind": "apply",
+            "task_status": "running"
+          },
+          {
+            "at": "2026-09-03T02:59:46.339Z",
+            "kind": "event",
+            "seq": 28,
+            "event_type": "task_updated",
+            "task_id": "task_01M1JKAJB9EWW8C46HKCVTWDRC",
+            "task_kind": "apply",
+            "task_status": "running"
+          },
+          {
+            "at": "2026-09-03T02:59:46.339Z",
+            "kind": "event",
+            "seq": 29,
+            "event_type": "task_updated",
+            "task_id": "task_01M1JKAJB9EWW8C46HKCVTWDRC",
+            "task_kind": "apply",
+            "task_status": "running"
+          },
+          {
+            "at": "2026-09-03T02:59:46.339Z",
+            "kind": "event",
+            "seq": 30,
+            "event_type": "task_updated",
+            "task_id": "task_01M1JKAJB9EWW8C46HKCVTWDRC",
+            "task_kind": "apply",
+            "task_status": "running"
+          },
+          {
+            "at": "2026-09-03T02:59:46.339Z",
+            "kind": "event",
+            "seq": 31,
+            "event_type": "task_updated",
+            "task_id": "task_01M1JKAJB9EWW8C46HKCVTWDRC",
+            "task_kind": "apply",
+            "task_status": "running"
+          },
+          {
+            "at": "2026-09-03T02:59:46.339Z",
+            "kind": "state",
+            "health": "healthy",
+            "watch_status": "active",
+            "pending_plan_id": "plan_01M1JKAJB69C85XAZS975TMGR5",
+            "diff_state": "dirty",
+            "commits": 1
+          },
+          {
+            "at": "2026-09-03T02:59:46.549Z",
+            "kind": "event",
+            "seq": 32,
+            "event_type": "task_updated",
+            "task_id": "task_01M1JKAJB9EWW8C46HKCVTWDRC",
+            "task_kind": "apply",
+            "task_status": "running"
+          },
+          {
+            "at": "2026-09-03T02:59:46.549Z",
+            "kind": "event",
+            "seq": 33,
+            "event_type": "task_updated",
+            "task_id": "task_01M1JKAJB9EWW8C46HKCVTWDRC",
+            "task_kind": "apply",
+            "task_status": "succeeded"
+          },
+          {
+            "at": "2026-09-03T02:59:46.549Z",
+            "kind": "event",
+            "seq": 34,
+            "event_type": "relation_invalidated"
+          },
+          {
+            "at": "2026-09-03T02:59:46.549Z",
+            "kind": "state",
+            "health": "healthy",
+            "watch_status": "active",
+            "diff_state": "clean",
+            "commits": 2
+          },
+          {
+            "at": "2026-09-03T02:59:46.549Z",
+            "kind": "timing"
+          },
+          {
+            "at": "2026-09-03T02:59:48.576Z",
+            "kind": "state",
+            "health": "healthy",
+            "watch_status": "active",
+            "diff_state": "clean",
+            "commits": 2
+          },
+          {
+            "at": "2026-09-03T02:59:50.604Z",
+            "kind": "state",
+            "health": "healthy",
+            "watch_status": "active",
+            "diff_state": "clean",
+            "commits": 2
+          },
+          {
+            "at": "2026-09-03T02:59:52.632Z",
+            "kind": "state",
+            "health": "healthy",
+            "watch_status": "active",
+            "diff_state": "clean",
+            "commits": 2
+          },
+          {
+            "at": "2026-09-03T02:59:54.660Z",
+            "kind": "state",
+            "health": "healthy",
+            "watch_status": "active",
+            "diff_state": "clean",
+            "commits": 2
+          },
+          {
+            "at": "2026-09-03T02:59:56.488Z",
+            "kind": "event",
+            "seq": 35,
+            "event_type": "task_updated",
+            "task_id": "task_01M1JKAWBYX7MVYK5JAH8F3J0J",
+            "task_kind": "scan",
+            "task_status": "queued"
+          },
+          {
+            "at": "2026-09-03T02:59:56.488Z",
+            "kind": "event",
+            "seq": 36,
+            "event_type": "task_updated",
+            "task_id": "task_01M1JKAWBYX7MVYK5JAH8F3J0J",
+            "task_kind": "scan",
+            "task_status": "running"
+          },
+          {
+            "at": "2026-09-03T02:59:56.488Z",
+            "kind": "event",
+            "seq": 37,
+            "event_type": "task_updated",
+            "task_id": "task_01M1JKAWBYX7MVYK5JAH8F3J0J",
+            "task_kind": "scan",
+            "task_status": "running"
+          },
+          {
+            "at": "2026-09-03T02:59:56.488Z",
+            "kind": "event",
+            "seq": 38,
+            "event_type": "task_updated",
+            "task_id": "task_01M1JKAWBYX7MVYK5JAH8F3J0J",
+            "task_kind": "scan",
+            "task_status": "running"
+          },
+          {
+            "at": "2026-09-03T02:59:56.488Z",
+            "kind": "event",
+            "seq": 39,
+            "event_type": "task_updated",
+            "task_id": "task_01M1JKAWBYX7MVYK5JAH8F3J0J",
+            "task_kind": "scan",
+            "task_status": "running"
+          },
+          {
+            "at": "2026-09-03T02:59:56.488Z",
+            "kind": "event",
+            "seq": 40,
+            "event_type": "task_updated",
+            "task_id": "task_01M1JKAWBYX7MVYK5JAH8F3J0J",
+            "task_kind": "scan",
+            "task_status": "succeeded"
+          },
+          {
+            "at": "2026-09-03T02:59:56.488Z",
+            "kind": "event",
+            "seq": 41,
+            "event_type": "relation_invalidated"
+          },
+          {
+            "at": "2026-09-03T02:59:56.488Z",
+            "kind": "state",
+            "health": "healthy",
+            "watch_status": "active",
+            "diff_state": "dirty",
+            "commits": 2
+          },
+          {
+            "at": "2026-09-03T02:59:56.691Z",
+            "kind": "event",
+            "seq": 42,
+            "event_type": "task_updated",
+            "task_id": "task_01M1JKAWFF3J9Z1XQNRHAFCPJR",
+            "task_kind": "apply",
+            "task_status": "queued"
+          },
+          {
+            "at": "2026-09-03T02:59:56.691Z",
+            "kind": "event",
+            "seq": 43,
+            "event_type": "task_updated",
+            "task_id": "task_01M1JKAWFF3J9Z1XQNRHAFCPJR",
+            "task_kind": "apply",
+            "task_status": "running"
+          },
+          {
+            "at": "2026-09-03T02:59:56.691Z",
+            "kind": "event",
+            "seq": 44,
+            "event_type": "task_updated",
+            "task_id": "task_01M1JKAWFF3J9Z1XQNRHAFCPJR",
+            "task_kind": "apply",
+            "task_status": "running"
+          },
+          {
+            "at": "2026-09-03T02:59:56.691Z",
+            "kind": "event",
+            "seq": 45,
+            "event_type": "task_updated",
+            "task_id": "task_01M1JKAWFF3J9Z1XQNRHAFCPJR",
+            "task_kind": "apply",
+            "task_status": "running"
+          },
+          {
+            "at": "2026-09-03T02:59:56.691Z",
+            "kind": "event",
+            "seq": 46,
+            "event_type": "task_updated",
+            "task_id": "task_01M1JKAWFF3J9Z1XQNRHAFCPJR",
+            "task_kind": "apply",
+            "task_status": "running"
+          },
+          {
+            "at": "2026-09-03T02:59:56.691Z",
+            "kind": "event",
+            "seq": 47,
+            "event_type": "task_updated",
+            "task_id": "task_01M1JKAWFF3J9Z1XQNRHAFCPJR",
+            "task_kind": "apply",
+            "task_status": "running"
+          },
+          {
+            "at": "2026-09-03T02:59:56.691Z",
+            "kind": "state",
+            "health": "healthy",
+            "watch_status": "active",
+            "pending_plan_id": "plan_01M1JKAWFCGKS2TTX9SEPYT1H8",
+            "diff_state": "dirty",
+            "commits": 2
+          },
+          {
+            "at": "2026-09-03T02:59:56.894Z",
+            "kind": "event",
+            "seq": 48,
+            "event_type": "task_updated",
+            "task_id": "task_01M1JKAWFF3J9Z1XQNRHAFCPJR",
+            "task_kind": "apply",
+            "task_status": "running"
+          },
+          {
+            "at": "2026-09-03T02:59:56.894Z",
+            "kind": "event",
+            "seq": 49,
+            "event_type": "task_updated",
+            "task_id": "task_01M1JKAWFF3J9Z1XQNRHAFCPJR",
+            "task_kind": "apply",
+            "task_status": "running"
+          },
+          {
+            "at": "2026-09-03T02:59:56.894Z",
+            "kind": "event",
+            "seq": 50,
+            "event_type": "task_updated",
+            "task_id": "task_01M1JKAWFF3J9Z1XQNRHAFCPJR",
+            "task_kind": "apply",
+            "task_status": "recovery_required"
+          },
+          {
+            "at": "2026-09-03T02:59:56.894Z",
+            "kind": "state",
+            "health": "recovery_required",
+            "watch_status": "active",
+            "pending_plan_id": "plan_01M1JKAWFCGKS2TTX9SEPYT1H8",
+            "diff_state": "dirty",
+            "commits": 2
+          },
+          {
+            "at": "2026-09-03T02:59:56.894Z",
+            "kind": "timing"
+          },
+          {
+            "at": "2026-09-03T02:59:58.924Z",
+            "kind": "state",
+            "health": "recovery_required",
+            "watch_status": "active",
+            "pending_plan_id": "plan_01M1JKAWFCGKS2TTX9SEPYT1H8",
+            "diff_state": "dirty",
+            "commits": 2
+          },
+          {
+            "at": "2026-09-03T03:00:00.954Z",
+            "kind": "state",
+            "health": "recovery_required",
+            "watch_status": "active",
+            "pending_plan_id": "plan_01M1JKAWFCGKS2TTX9SEPYT1H8",
+            "diff_state": "dirty",
+            "commits": 2
+          },
+          {
+            "at": "2026-09-03T03:00:02.984Z",
+            "kind": "state",
+            "health": "recovery_required",
+            "watch_status": "active",
+            "pending_plan_id": "plan_01M1JKAWFCGKS2TTX9SEPYT1H8",
+            "diff_state": "dirty",
+            "commits": 2
+          },
+          {
+            "at": "2026-09-03T03:00:05.014Z",
+            "kind": "state",
+            "health": "recovery_required",
+            "watch_status": "active",
+            "pending_plan_id": "plan_01M1JKAWFCGKS2TTX9SEPYT1H8",
+            "diff_state": "dirty",
+            "commits": 2
+          },
+          {
+            "at": "2026-09-03T03:00:07.047Z",
+            "kind": "state",
+            "health": "recovery_required",
+            "watch_status": "active",
+            "pending_plan_id": "plan_01M1JKAWFCGKS2TTX9SEPYT1H8",
+            "diff_state": "dirty",
+            "commits": 2
+          },
+          {
+            "at": "2026-09-03T03:00:09.086Z",
+            "kind": "state",
+            "health": "recovery_required",
+            "watch_status": "active",
+            "pending_plan_id": "plan_01M1JKAWFCGKS2TTX9SEPYT1H8",
+            "diff_state": "dirty",
+            "commits": 2
+          },
+          {
+            "at": "2026-09-03T03:00:11.127Z",
+            "kind": "state",
+            "health": "recovery_required",
+            "watch_status": "active",
+            "pending_plan_id": "plan_01M1JKAWFCGKS2TTX9SEPYT1H8",
+            "diff_state": "dirty",
+            "commits": 2
+          }
+        ]
+      }
+    },
+    {
+      "name": "停靠待确认（授权关态/冲突必停 + 收口点失效事件）",
+      "spec": "§4.2 场景3",
+      "passed": true,
+      "assertions": [
+        "预跑 -apply 全量收口（pgheadless -project build\\watcher\\s3\\fixture\\project -instance build\\watcher\\s3\\fixture\\instance -data build\\watcher\\s3\\data -apply 退出码 0）✓",
+        "pending_plan_id 就绪（停靠待确认） ✓",
+        "停靠期监听保持 active ✓",
+        "授权关态零自动物化（提交数不变） ✓",
+        "收口点 relation_invalidated 发射（窗口 2 条 ≥ 2：扫描提交发点 + 停靠新发点） ✓",
+        "含冲突差异零自动执行（链面） ✓",
+        "含冲突差异零提交（红线①：冲突永不自动） ✓",
+        "常驻进程经哨兵收敛退出 ✓",
+        "全链事件集 ⊆ {task_updated, relation_invalidated}（实测 [task_updated relation_invalidated]）✓",
+        "停靠计划含冲突行（1 个，红线①事实面） ✓"
+      ],
+      "resident": {
+        "schema": "p4-watcher-run/1",
+        "relation_id": "rel_01M1JKBBY8378XS3TWJZNZJVYN",
+        "authorized": false,
+        "end_reason": "sentinel",
+        "scan_rounds": 2,
+        "event_types": [
+          "task_updated",
+          "relation_invalidated"
+        ],
+        "chains": [
+          {
+            "index": 1,
+            "started_at": "2026-09-03T03:00:14.670Z",
+            "ended_at": "2026-09-03T03:00:16.491Z",
+            "duration_ms": 1821,
+            "outcome": "no_apply_task",
+            "scan_task_id": "task_01M1JKBE384HQRDB64GW9JEXAD"
+          },
+          {
+            "index": 2,
+            "started_at": "2026-09-03T03:00:16.491Z",
+            "ended_at": "2026-09-03T03:00:16.491Z",
+            "duration_ms": 0,
+            "outcome": "no_apply_task",
+            "scan_task_id": "task_01M1JKBFT1GSR659DBBJ643AX3"
+          }
+        ],
+        "timeline": [
+          {
+            "at": "2026-09-03T03:00:12.846Z",
+            "kind": "state",
+            "health": "healthy",
+            "watch_status": "active",
+            "diff_state": "clean",
+            "commits": 1
+          },
+          {
+            "at": "2026-09-03T03:00:14.670Z",
+            "kind": "event",
+            "seq": 18,
+            "event_type": "task_updated",
+            "task_id": "task_01M1JKBE384HQRDB64GW9JEXAD",
+            "task_kind": "scan",
+            "task_status": "queued"
+          },
+          {
+            "at": "2026-09-03T03:00:14.670Z",
+            "kind": "event",
+            "seq": 19,
+            "event_type": "task_updated",
+            "task_id": "task_01M1JKBE384HQRDB64GW9JEXAD",
+            "task_kind": "scan",
+            "task_status": "running"
+          },
+          {
+            "at": "2026-09-03T03:00:14.670Z",
+            "kind": "event",
+            "seq": 20,
+            "event_type": "task_updated",
+            "task_id": "task_01M1JKBE384HQRDB64GW9JEXAD",
+            "task_kind": "scan",
+            "task_status": "running"
+          },
+          {
+            "at": "2026-09-03T03:00:14.670Z",
+            "kind": "event",
+            "seq": 21,
+            "event_type": "task_updated",
+            "task_id": "task_01M1JKBE384HQRDB64GW9JEXAD",
+            "task_kind": "scan",
+            "task_status": "running"
+          },
+          {
+            "at": "2026-09-03T03:00:14.670Z",
+            "kind": "event",
+            "seq": 22,
+            "event_type": "task_updated",
+            "task_id": "task_01M1JKBE384HQRDB64GW9JEXAD",
+            "task_kind": "scan",
+            "task_status": "running"
+          },
+          {
+            "at": "2026-09-03T03:00:14.670Z",
+            "kind": "event",
+            "seq": 23,
+            "event_type": "task_updated",
+            "task_id": "task_01M1JKBE384HQRDB64GW9JEXAD",
+            "task_kind": "scan",
+            "task_status": "succeeded"
+          },
+          {
+            "at": "2026-09-03T03:00:14.670Z",
+            "kind": "event",
+            "seq": 24,
+            "event_type": "relation_invalidated"
+          },
+          {
+            "at": "2026-09-03T03:00:14.670Z",
+            "kind": "event",
+            "seq": 25,
+            "event_type": "relation_invalidated"
+          },
+          {
+            "at": "2026-09-03T03:00:14.670Z",
+            "kind": "state",
+            "health": "healthy",
+            "watch_status": "active",
+            "pending_plan_id": "plan_01M1JKBE58RF24NS0W4HW30SHC",
+            "diff_state": "dirty",
+            "commits": 1
+          },
+          {
+            "at": "2026-09-03T03:00:14.670Z",
+            "kind": "timing"
+          },
+          {
+            "at": "2026-09-03T03:00:16.491Z",
+            "kind": "event",
+            "seq": 26,
+            "event_type": "task_updated",
+            "task_id": "task_01M1JKBFT1GSR659DBBJ643AX3",
+            "task_kind": "scan",
+            "task_status": "queued"
+          },
+          {
+            "at": "2026-09-03T03:00:16.491Z",
+            "kind": "event",
+            "seq": 27,
+            "event_type": "task_updated",
+            "task_id": "task_01M1JKBFT1GSR659DBBJ643AX3",
+            "task_kind": "scan",
+            "task_status": "running"
+          },
+          {
+            "at": "2026-09-03T03:00:16.491Z",
+            "kind": "event",
+            "seq": 28,
+            "event_type": "task_updated",
+            "task_id": "task_01M1JKBFT1GSR659DBBJ643AX3",
+            "task_kind": "scan",
+            "task_status": "running"
+          },
+          {
+            "at": "2026-09-03T03:00:16.491Z",
+            "kind": "event",
+            "seq": 29,
+            "event_type": "task_updated",
+            "task_id": "task_01M1JKBFT1GSR659DBBJ643AX3",
+            "task_kind": "scan",
+            "task_status": "running"
+          },
+          {
+            "at": "2026-09-03T03:00:16.491Z",
+            "kind": "event",
+            "seq": 30,
+            "event_type": "task_updated",
+            "task_id": "task_01M1JKBFT1GSR659DBBJ643AX3",
+            "task_kind": "scan",
+            "task_status": "running"
+          },
+          {
+            "at": "2026-09-03T03:00:16.491Z",
+            "kind": "event",
+            "seq": 31,
+            "event_type": "task_updated",
+            "task_id": "task_01M1JKBFT1GSR659DBBJ643AX3",
+            "task_kind": "scan",
+            "task_status": "succeeded"
+          },
+          {
+            "at": "2026-09-03T03:00:16.491Z",
+            "kind": "event",
+            "seq": 32,
+            "event_type": "relation_invalidated"
+          },
+          {
+            "at": "2026-09-03T03:00:16.491Z",
+            "kind": "event",
+            "seq": 33,
+            "event_type": "relation_invalidated"
+          },
+          {
+            "at": "2026-09-03T03:00:16.491Z",
+            "kind": "state",
+            "health": "healthy",
+            "watch_status": "active",
+            "pending_plan_id": "plan_01M1JKBFVVZD2HHQZZ9N7JXGRV",
+            "diff_state": "conflicted",
+            "commits": 1
+          },
+          {
+            "at": "2026-09-03T03:00:16.491Z",
+            "kind": "timing"
+          }
+        ]
+      }
+    },
+    {
+      "name": "连败暂停与复位（假 CDN 全挂 ×2 → paused → 手动成功复位）",
+      "spec": "§4.2 场景4",
+      "passed": true,
+      "assertions": [
+        "预跑 -apply 全量收口（pgheadless -project build\\watcher\\s4\\fixture\\project -instance build\\watcher\\s4\\fixture\\instance -data build\\watcher\\s4\\data -apply -cdn http://127.0.0.1:2240/files 退出码 0）✓",
+        "授权开关= 1（pgheadless -data build\\watcher\\s4\\data -project build\\watcher\\s4\\fixture\\project -instance build\\watcher\\s4\\fixture\\instance -set-authorized 1 退出码 0）✓",
+        "第一次失败后仍是 active（连败计数 1/2） ✓",
+        "失败轮零提交 ✓",
+        "恰两次自动执行失败（×2 注入） ✓",
+        "连败 2 次 watch_status=paused ✓",
+        "暂停期无第三次自动执行（轮数不变） ✓",
+        "暂停期零物化（提交数不变） ✓",
+        "暂停态保持（非 unavailable=监听未死） ✓",
+        "手动快速更新成功复位 active ✓",
+        "手动快速更新 committed（v2 落盘） ✓",
+        "复位后自动链照常物化 ✓",
+        "常驻进程经哨兵收敛退出 ✓",
+        "全链事件集 ⊆ {task_updated, relation_invalidated}（实测 [task_updated relation_invalidated]）✓"
+      ],
+      "resident": {
+        "schema": "p4-watcher-run/1",
+        "relation_id": "rel_01M1JKBGA5KKME7HF758PVZXYF",
+        "authorized": true,
+        "end_reason": "sentinel",
+        "scan_rounds": 4,
+        "event_types": [
+          "task_updated",
+          "relation_invalidated"
+        ],
+        "chains": [
+          {
+            "index": 1,
+            "started_at": "2026-09-03T03:00:18.976Z",
+            "ended_at": "2026-09-03T03:00:21.001Z",
+            "duration_ms": 2025,
+            "outcome": "apply_failed",
+            "scan_task_id": "task_01M1JKBJA1DGD8NNG72FRTYAT2",
+            "apply_task_id": "task_01M1JKBJC5DRCADJME927BYXE8",
+            "apply_status": "failed"
+          },
+          {
+            "index": 2,
+            "started_at": "2026-09-03T03:00:21.001Z",
+            "ended_at": "2026-09-03T03:00:35.816Z",
+            "duration_ms": 14815,
+            "outcome": "apply_failed",
+            "scan_task_id": "task_01M1JKBM8M6N3VHHQYK9AMKZR9",
+            "apply_task_id": "task_01M1JKBMAJXF4AFKTQBFWVPAH2",
+            "apply_status": "failed"
+          },
+          {
+            "index": 3,
+            "started_at": "2026-09-03T03:00:35.816Z",
+            "ended_at": "2026-09-03T03:00:37.433Z",
+            "duration_ms": 1617,
+            "outcome": "apply_succeeded",
+            "scan_task_id": "task_01M1JKC2JVF9DNBNWV03DX7EGP",
+            "apply_task_id": "task_01M1JKC2MS9FG75ZYSZCYVQMSQ",
+            "apply_status": "succeeded",
+            "manual": true
+          },
+          {
+            "index": 4,
+            "started_at": "2026-09-03T03:00:37.433Z",
+            "ended_at": "2026-09-03T03:00:37.650Z",
+            "duration_ms": 217,
+            "outcome": "apply_succeeded",
+            "scan_task_id": "task_01M1JKC4CVX13QD2Y3W979B7FX",
+            "apply_task_id": "task_01M1JKC4ES14ZMQTEZ98ZFDF78",
+            "apply_status": "succeeded",
+            "manual": true
+          }
+        ],
+        "timeline": [
+          {
+            "at": "2026-09-03T03:00:17.157Z",
+            "kind": "state",
+            "health": "healthy",
+            "watch_status": "active",
+            "diff_state": "clean",
+            "commits": 1
+          },
+          {
+            "at": "2026-09-03T03:00:18.976Z",
+            "kind": "event",
+            "seq": 15,
+            "event_type": "task_updated",
+            "task_id": "task_01M1JKBJA1DGD8NNG72FRTYAT2",
+            "task_kind": "scan",
+            "task_status": "queued"
+          },
+          {
+            "at": "2026-09-03T03:00:18.976Z",
+            "kind": "event",
+            "seq": 16,
+            "event_type": "task_updated",
+            "task_id": "task_01M1JKBJA1DGD8NNG72FRTYAT2",
+            "task_kind": "scan",
+            "task_status": "running"
+          },
+          {
+            "at": "2026-09-03T03:00:18.976Z",
+            "kind": "event",
+            "seq": 17,
+            "event_type": "task_updated",
+            "task_id": "task_01M1JKBJA1DGD8NNG72FRTYAT2",
+            "task_kind": "scan",
+            "task_status": "running"
+          },
+          {
+            "at": "2026-09-03T03:00:18.976Z",
+            "kind": "event",
+            "seq": 18,
+            "event_type": "task_updated",
+            "task_id": "task_01M1JKBJA1DGD8NNG72FRTYAT2",
+            "task_kind": "scan",
+            "task_status": "running"
+          },
+          {
+            "at": "2026-09-03T03:00:18.976Z",
+            "kind": "event",
+            "seq": 19,
+            "event_type": "task_updated",
+            "task_id": "task_01M1JKBJA1DGD8NNG72FRTYAT2",
+            "task_kind": "scan",
+            "task_status": "running"
+          },
+          {
+            "at": "2026-09-03T03:00:18.976Z",
+            "kind": "event",
+            "seq": 20,
+            "event_type": "task_updated",
+            "task_id": "task_01M1JKBJA1DGD8NNG72FRTYAT2",
+            "task_kind": "scan",
+            "task_status": "succeeded"
+          },
+          {
+            "at": "2026-09-03T03:00:18.976Z",
+            "kind": "event",
+            "seq": 21,
+            "event_type": "relation_invalidated"
+          },
+          {
+            "at": "2026-09-03T03:00:18.976Z",
+            "kind": "event",
+            "seq": 22,
+            "event_type": "task_updated",
+            "task_id": "task_01M1JKBJC5DRCADJME927BYXE8",
+            "task_kind": "apply",
+            "task_status": "queued"
+          },
+          {
+            "at": "2026-09-03T03:00:18.976Z",
+            "kind": "event",
+            "seq": 23,
+            "event_type": "task_updated",
+            "task_id": "task_01M1JKBJC5DRCADJME927BYXE8",
+            "task_kind": "apply",
+            "task_status": "running"
+          },
+          {
+            "at": "2026-09-03T03:00:18.976Z",
+            "kind": "state",
+            "health": "healthy",
+            "watch_status": "active",
+            "pending_plan_id": "plan_01M1JKBJC254SPKJHTZ08AEXHT",
+            "diff_state": "dirty",
+            "commits": 1
+          },
+          {
+            "at": "2026-09-03T03:00:18.976Z",
+            "kind": "timing"
+          },
+          {
+            "at": "2026-09-03T03:00:18.976Z",
+            "kind": "timing"
+          },
+          {
+            "at": "2026-09-03T03:00:19.183Z",
+            "kind": "event",
+            "seq": 24,
+            "event_type": "task_updated",
+            "task_id": "task_01M1JKBJC5DRCADJME927BYXE8",
+            "task_kind": "apply",
+            "task_status": "failed"
+          },
+          {
+            "at": "2026-09-03T03:00:21.001Z",
+            "kind": "event",
+            "seq": 25,
+            "event_type": "task_updated",
+            "task_id": "task_01M1JKBM8M6N3VHHQYK9AMKZR9",
+            "task_kind": "scan",
+            "task_status": "queued"
+          },
+          {
+            "at": "2026-09-03T03:00:21.001Z",
+            "kind": "event",
+            "seq": 26,
+            "event_type": "task_updated",
+            "task_id": "task_01M1JKBM8M6N3VHHQYK9AMKZR9",
+            "task_kind": "scan",
+            "task_status": "running"
+          },
+          {
+            "at": "2026-09-03T03:00:21.001Z",
+            "kind": "event",
+            "seq": 27,
+            "event_type": "task_updated",
+            "task_id": "task_01M1JKBM8M6N3VHHQYK9AMKZR9",
+            "task_kind": "scan",
+            "task_status": "running"
+          },
+          {
+            "at": "2026-09-03T03:00:21.001Z",
+            "kind": "event",
+            "seq": 28,
+            "event_type": "task_updated",
+            "task_id": "task_01M1JKBM8M6N3VHHQYK9AMKZR9",
+            "task_kind": "scan",
+            "task_status": "running"
+          },
+          {
+            "at": "2026-09-03T03:00:21.001Z",
+            "kind": "event",
+            "seq": 29,
+            "event_type": "task_updated",
+            "task_id": "task_01M1JKBM8M6N3VHHQYK9AMKZR9",
+            "task_kind": "scan",
+            "task_status": "running"
+          },
+          {
+            "at": "2026-09-03T03:00:21.001Z",
+            "kind": "event",
+            "seq": 30,
+            "event_type": "task_updated",
+            "task_id": "task_01M1JKBM8M6N3VHHQYK9AMKZR9",
+            "task_kind": "scan",
+            "task_status": "succeeded"
+          },
+          {
+            "at": "2026-09-03T03:00:21.001Z",
+            "kind": "event",
+            "seq": 31,
+            "event_type": "relation_invalidated"
+          },
+          {
+            "at": "2026-09-03T03:00:21.001Z",
+            "kind": "event",
+            "seq": 32,
+            "event_type": "task_updated",
+            "task_id": "task_01M1JKBMAJXF4AFKTQBFWVPAH2",
+            "task_kind": "apply",
+            "task_status": "queued"
+          },
+          {
+            "at": "2026-09-03T03:00:21.001Z",
+            "kind": "event",
+            "seq": 33,
+            "event_type": "task_updated",
+            "task_id": "task_01M1JKBMAJXF4AFKTQBFWVPAH2",
+            "task_kind": "apply",
+            "task_status": "running"
+          },
+          {
+            "at": "2026-09-03T03:00:21.001Z",
+            "kind": "event",
+            "seq": 34,
+            "event_type": "task_updated",
+            "task_id": "task_01M1JKBMAJXF4AFKTQBFWVPAH2",
+            "task_kind": "apply",
+            "task_status": "failed"
+          },
+          {
+            "at": "2026-09-03T03:00:21.001Z",
+            "kind": "state",
+            "health": "healthy",
+            "watch_status": "active",
+            "pending_plan_id": "plan_01M1JKBMAGXK75A71PWFSZJXGJ",
+            "diff_state": "dirty",
+            "commits": 1
+          },
+          {
+            "at": "2026-09-03T03:00:21.001Z",
+            "kind": "timing"
+          },
+          {
+            "at": "2026-09-03T03:00:21.001Z",
+            "kind": "timing"
+          },
+          {
+            "at": "2026-09-03T03:00:21.203Z",
+            "kind": "state",
+            "health": "healthy",
+            "watch_status": "paused",
+            "pending_plan_id": "plan_01M1JKBMAGXK75A71PWFSZJXGJ",
+            "diff_state": "dirty",
+            "commits": 1
+          },
+          {
+            "at": "2026-09-03T03:00:23.223Z",
+            "kind": "state",
+            "health": "healthy",
+            "watch_status": "paused",
+            "pending_plan_id": "plan_01M1JKBMAGXK75A71PWFSZJXGJ",
+            "diff_state": "dirty",
+            "commits": 1
+          },
+          {
+            "at": "2026-09-03T03:00:25.244Z",
+            "kind": "state",
+            "health": "healthy",
+            "watch_status": "paused",
+            "pending_plan_id": "plan_01M1JKBMAGXK75A71PWFSZJXGJ",
+            "diff_state": "dirty",
+            "commits": 1
+          },
+          {
+            "at": "2026-09-03T03:00:27.263Z",
+            "kind": "state",
+            "health": "healthy",
+            "watch_status": "paused",
+            "pending_plan_id": "plan_01M1JKBMAGXK75A71PWFSZJXGJ",
+            "diff_state": "dirty",
+            "commits": 1
+          },
+          {
+            "at": "2026-09-03T03:00:29.285Z",
+            "kind": "state",
+            "health": "healthy",
+            "watch_status": "paused",
+            "pending_plan_id": "plan_01M1JKBMAGXK75A71PWFSZJXGJ",
+            "diff_state": "dirty",
+            "commits": 1
+          },
+          {
+            "at": "2026-09-03T03:00:31.305Z",
+            "kind": "state",
+            "health": "healthy",
+            "watch_status": "paused",
+            "pending_plan_id": "plan_01M1JKBMAGXK75A71PWFSZJXGJ",
+            "diff_state": "dirty",
+            "commits": 1
+          },
+          {
+            "at": "2026-09-03T03:00:33.326Z",
+            "kind": "state",
+            "health": "healthy",
+            "watch_status": "paused",
+            "pending_plan_id": "plan_01M1JKBMAGXK75A71PWFSZJXGJ",
+            "diff_state": "dirty",
+            "commits": 1
+          },
+          {
+            "at": "2026-09-03T03:00:35.344Z",
+            "kind": "state",
+            "health": "healthy",
+            "watch_status": "paused",
+            "pending_plan_id": "plan_01M1JKBMAGXK75A71PWFSZJXGJ",
+            "diff_state": "dirty",
+            "commits": 1
+          },
+          {
+            "at": "2026-09-03T03:00:35.547Z",
+            "kind": "note",
+            "note": "控制命令 quickupdate"
+          },
+          {
+            "at": "2026-09-03T03:00:35.614Z",
+            "kind": "note",
+            "note": "手动快速更新收口 outcome=apply_started plan=plan_01M1JKC2MPNC0VNRDNA0SNJVT3 task=task_01M1JKC2MS9FG75ZYSZCYVQMSQ err=\u003cnil\u003e"
+          },
+          {
+            "at": "2026-09-03T03:00:35.816Z",
+            "kind": "event",
+            "seq": 35,
+            "event_type": "task_updated",
+            "task_id": "task_01M1JKC2JVF9DNBNWV03DX7EGP",
+            "task_kind": "scan",
+            "task_status": "queued"
+          },
+          {
+            "at": "2026-09-03T03:00:35.816Z",
+            "kind": "event",
+            "seq": 36,
+            "event_type": "task_updated",
+            "task_id": "task_01M1JKC2JVF9DNBNWV03DX7EGP",
+            "task_kind": "scan",
+            "task_status": "running"
+          },
+          {
+            "at": "2026-09-03T03:00:35.816Z",
+            "kind": "event",
+            "seq": 37,
+            "event_type": "task_updated",
+            "task_id": "task_01M1JKC2JVF9DNBNWV03DX7EGP",
+            "task_kind": "scan",
+            "task_status": "running"
+          },
+          {
+            "at": "2026-09-03T03:00:35.816Z",
+            "kind": "event",
+            "seq": 38,
+            "event_type": "task_updated",
+            "task_id": "task_01M1JKC2JVF9DNBNWV03DX7EGP",
+            "task_kind": "scan",
+            "task_status": "running"
+          },
+          {
+            "at": "2026-09-03T03:00:35.816Z",
+            "kind": "event",
+            "seq": 39,
+            "event_type": "task_updated",
+            "task_id": "task_01M1JKC2JVF9DNBNWV03DX7EGP",
+            "task_kind": "scan",
+            "task_status": "running"
+          },
+          {
+            "at": "2026-09-03T03:00:35.816Z",
+            "kind": "event",
+            "seq": 40,
+            "event_type": "task_updated",
+            "task_id": "task_01M1JKC2JVF9DNBNWV03DX7EGP",
+            "task_kind": "scan",
+            "task_status": "succeeded"
+          },
+          {
+            "at": "2026-09-03T03:00:35.816Z",
+            "kind": "event",
+            "seq": 41,
+            "event_type": "relation_invalidated"
+          },
+          {
+            "at": "2026-09-03T03:00:35.816Z",
+            "kind": "event",
+            "seq": 42,
+            "event_type": "task_updated",
+            "task_id": "task_01M1JKC2MS9FG75ZYSZCYVQMSQ",
+            "task_kind": "apply",
+            "task_status": "queued"
+          },
+          {
+            "at": "2026-09-03T03:00:35.816Z",
+            "kind": "event",
+            "seq": 43,
+            "event_type": "task_updated",
+            "task_id": "task_01M1JKC2MS9FG75ZYSZCYVQMSQ",
+            "task_kind": "apply",
+            "task_status": "running"
+          },
+          {
+            "at": "2026-09-03T03:00:35.816Z",
+            "kind": "event",
+            "seq": 44,
+            "event_type": "task_updated",
+            "task_id": "task_01M1JKC2MS9FG75ZYSZCYVQMSQ",
+            "task_kind": "apply",
+            "task_status": "running"
+          },
+          {
+            "at": "2026-09-03T03:00:35.816Z",
+            "kind": "event",
+            "seq": 45,
+            "event_type": "task_updated",
+            "task_id": "task_01M1JKC2MS9FG75ZYSZCYVQMSQ",
+            "task_kind": "apply",
+            "task_status": "running"
+          },
+          {
+            "at": "2026-09-03T03:00:35.816Z",
+            "kind": "event",
+            "seq": 46,
+            "event_type": "task_updated",
+            "task_id": "task_01M1JKC2MS9FG75ZYSZCYVQMSQ",
+            "task_kind": "apply",
+            "task_status": "running"
+          },
+          {
+            "at": "2026-09-03T03:00:35.816Z",
+            "kind": "event",
+            "seq": 47,
+            "event_type": "task_updated",
+            "task_id": "task_01M1JKC2MS9FG75ZYSZCYVQMSQ",
+            "task_kind": "apply",
+            "task_status": "running"
+          },
+          {
+            "at": "2026-09-03T03:00:35.816Z",
+            "kind": "event",
+            "seq": 48,
+            "event_type": "task_updated",
+            "task_id": "task_01M1JKC2MS9FG75ZYSZCYVQMSQ",
+            "task_kind": "apply",
+            "task_status": "succeeded"
+          },
+          {
+            "at": "2026-09-03T03:00:35.816Z",
+            "kind": "event",
+            "seq": 49,
+            "event_type": "relation_invalidated"
+          },
+          {
+            "at": "2026-09-03T03:00:35.816Z",
+            "kind": "state",
+            "health": "healthy",
+            "watch_status": "active",
+            "pending_plan_id": "plan_01M1JKBMAGXK75A71PWFSZJXGJ",
+            "diff_state": "clean",
+            "commits": 2
+          },
+          {
+            "at": "2026-09-03T03:00:35.816Z",
+            "kind": "timing"
+          },
+          {
+            "at": "2026-09-03T03:00:35.816Z",
+            "kind": "timing"
+          },
+          {
+            "at": "2026-09-03T03:00:37.433Z",
+            "kind": "event",
+            "seq": 50,
+            "event_type": "task_updated",
+            "task_id": "task_01M1JKC4CVX13QD2Y3W979B7FX",
+            "task_kind": "scan",
+            "task_status": "queued"
+          },
+          {
+            "at": "2026-09-03T03:00:37.433Z",
+            "kind": "event",
+            "seq": 51,
+            "event_type": "task_updated",
+            "task_id": "task_01M1JKC4CVX13QD2Y3W979B7FX",
+            "task_kind": "scan",
+            "task_status": "running"
+          },
+          {
+            "at": "2026-09-03T03:00:37.433Z",
+            "kind": "event",
+            "seq": 52,
+            "event_type": "task_updated",
+            "task_id": "task_01M1JKC4CVX13QD2Y3W979B7FX",
+            "task_kind": "scan",
+            "task_status": "running"
+          },
+          {
+            "at": "2026-09-03T03:00:37.433Z",
+            "kind": "event",
+            "seq": 53,
+            "event_type": "task_updated",
+            "task_id": "task_01M1JKC4CVX13QD2Y3W979B7FX",
+            "task_kind": "scan",
+            "task_status": "running"
+          },
+          {
+            "at": "2026-09-03T03:00:37.433Z",
+            "kind": "event",
+            "seq": 54,
+            "event_type": "task_updated",
+            "task_id": "task_01M1JKC4CVX13QD2Y3W979B7FX",
+            "task_kind": "scan",
+            "task_status": "running"
+          },
+          {
+            "at": "2026-09-03T03:00:37.433Z",
+            "kind": "state",
+            "health": "healthy",
+            "watch_status": "active",
+            "pending_plan_id": "plan_01M1JKBMAGXK75A71PWFSZJXGJ",
+            "diff_state": "dirty",
+            "commits": 2
+          },
+          {
+            "at": "2026-09-03T03:00:37.433Z",
+            "kind": "timing"
+          },
+          {
+            "at": "2026-09-03T03:00:37.650Z",
+            "kind": "event",
+            "seq": 55,
+            "event_type": "task_updated",
+            "task_id": "task_01M1JKC4CVX13QD2Y3W979B7FX",
+            "task_kind": "scan",
+            "task_status": "succeeded"
+          },
+          {
+            "at": "2026-09-03T03:00:37.650Z",
+            "kind": "event",
+            "seq": 56,
+            "event_type": "relation_invalidated"
+          },
+          {
+            "at": "2026-09-03T03:00:37.650Z",
+            "kind": "event",
+            "seq": 57,
+            "event_type": "task_updated",
+            "task_id": "task_01M1JKC4ES14ZMQTEZ98ZFDF78",
+            "task_kind": "apply",
+            "task_status": "queued"
+          },
+          {
+            "at": "2026-09-03T03:00:37.650Z",
+            "kind": "event",
+            "seq": 58,
+            "event_type": "task_updated",
+            "task_id": "task_01M1JKC4ES14ZMQTEZ98ZFDF78",
+            "task_kind": "apply",
+            "task_status": "running"
+          },
+          {
+            "at": "2026-09-03T03:00:37.650Z",
+            "kind": "event",
+            "seq": 59,
+            "event_type": "task_updated",
+            "task_id": "task_01M1JKC4ES14ZMQTEZ98ZFDF78",
+            "task_kind": "apply",
+            "task_status": "running"
+          },
+          {
+            "at": "2026-09-03T03:00:37.650Z",
+            "kind": "event",
+            "seq": 60,
+            "event_type": "task_updated",
+            "task_id": "task_01M1JKC4ES14ZMQTEZ98ZFDF78",
+            "task_kind": "apply",
+            "task_status": "running"
+          },
+          {
+            "at": "2026-09-03T03:00:37.650Z",
+            "kind": "event",
+            "seq": 61,
+            "event_type": "task_updated",
+            "task_id": "task_01M1JKC4ES14ZMQTEZ98ZFDF78",
+            "task_kind": "apply",
+            "task_status": "running"
+          },
+          {
+            "at": "2026-09-03T03:00:37.650Z",
+            "kind": "event",
+            "seq": 62,
+            "event_type": "task_updated",
+            "task_id": "task_01M1JKC4ES14ZMQTEZ98ZFDF78",
+            "task_kind": "apply",
+            "task_status": "succeeded"
+          },
+          {
+            "at": "2026-09-03T03:00:37.650Z",
+            "kind": "event",
+            "seq": 63,
+            "event_type": "relation_invalidated"
+          },
+          {
+            "at": "2026-09-03T03:00:37.650Z",
+            "kind": "state",
+            "health": "healthy",
+            "watch_status": "active",
+            "pending_plan_id": "plan_01M1JKBMAGXK75A71PWFSZJXGJ",
+            "diff_state": "clean",
+            "commits": 3
+          },
+          {
+            "at": "2026-09-03T03:00:37.650Z",
+            "kind": "timing"
+          }
+        ]
+      }
+    },
+    {
+      "name": "恢复期只标脏（recovery_required 触发无自动物化）",
+      "spec": "§4.2 场景5",
+      "passed": true,
+      "assertions": [
+        "预跑 -apply 全量收口（pgheadless -project build\\watcher\\s5\\fixture\\project -instance build\\watcher\\s5\\fixture\\instance -data build\\watcher\\s5\\data -apply 退出码 0）✓",
+        "恢复所需关系在场（造数手术） ✓",
+        "恢复期挂载保持（watch_status=active） ✓",
+        "恢复期触发不发射自动链（只标脏） ✓",
+        "恢复期无自动物化（提交数不变） ✓",
+        "恢复期零链内任务事件 ✓",
+        "等待窗内挂载未漂移 ✓",
+        "常驻进程经哨兵收敛退出 ✓",
+        "全链事件集 ⊆ {task_updated, relation_invalidated}（实测 []）✓"
+      ],
+      "resident": {
+        "schema": "p4-watcher-run/1",
+        "relation_id": "rel_01M1JKC51FRKSQDGT2WWB9V2WF",
+        "authorized": false,
+        "end_reason": "sentinel",
+        "scan_rounds": 0,
+        "event_types": [],
+        "chains": null,
+        "timeline": [
+          {
+            "at": "2026-09-03T03:00:38.670Z",
+            "kind": "state",
+            "health": "recovery_required",
+            "watch_status": "active",
+            "pending_plan_id": "plan_01M1JKC58FV1DSQ6THH5QRBC2B",
+            "diff_state": "clean",
+            "commits": 1
+          },
+          {
+            "at": "2026-09-03T03:00:40.697Z",
+            "kind": "state",
+            "health": "recovery_required",
+            "watch_status": "active",
+            "pending_plan_id": "plan_01M1JKC58FV1DSQ6THH5QRBC2B",
+            "diff_state": "clean",
+            "commits": 1
+          },
+          {
+            "at": "2026-09-03T03:00:42.733Z",
+            "kind": "state",
+            "health": "recovery_required",
+            "watch_status": "active",
+            "pending_plan_id": "plan_01M1JKC58FV1DSQ6THH5QRBC2B",
+            "diff_state": "clean",
+            "commits": 1
+          },
+          {
+            "at": "2026-09-03T03:00:44.766Z",
+            "kind": "state",
+            "health": "recovery_required",
+            "watch_status": "active",
+            "pending_plan_id": "plan_01M1JKC58FV1DSQ6THH5QRBC2B",
+            "diff_state": "clean",
+            "commits": 1
+          },
+          {
+            "at": "2026-09-03T03:00:46.802Z",
+            "kind": "state",
+            "health": "recovery_required",
+            "watch_status": "active",
+            "pending_plan_id": "plan_01M1JKC58FV1DSQ6THH5QRBC2B",
+            "diff_state": "clean",
+            "commits": 1
+          },
+          {
+            "at": "2026-09-03T03:00:48.838Z",
+            "kind": "state",
+            "health": "recovery_required",
+            "watch_status": "active",
+            "pending_plan_id": "plan_01M1JKC58FV1DSQ6THH5QRBC2B",
+            "diff_state": "clean",
+            "commits": 1
+          },
+          {
+            "at": "2026-09-03T03:00:50.872Z",
+            "kind": "state",
+            "health": "recovery_required",
+            "watch_status": "active",
+            "pending_plan_id": "plan_01M1JKC58FV1DSQ6THH5QRBC2B",
+            "diff_state": "clean",
+            "commits": 1
+          },
+          {
+            "at": "2026-09-03T03:00:52.906Z",
+            "kind": "state",
+            "health": "recovery_required",
+            "watch_status": "active",
+            "pending_plan_id": "plan_01M1JKC58FV1DSQ6THH5QRBC2B",
+            "diff_state": "clean",
+            "commits": 1
+          }
+        ]
+      }
+    },
+    {
+      "name": "并发 join（双调同结果 + 其他来源任务互斥）",
+      "spec": "§4.2 场景6",
+      "passed": true,
+      "assertions": [
+        "预跑 -apply 全量收口（pgheadless -project build\\watcher\\s6\\fixture\\project -instance build\\watcher\\s6\\fixture\\instance -data build\\watcher\\s6\\data -apply 退出码 0）✓",
+        "授权开关= 1（pgheadless -data build\\watcher\\s6\\data -project build\\watcher\\s6\\fixture\\project -instance build\\watcher\\s6\\fixture\\instance -set-authorized 1 退出码 0）✓",
+        "并发双调零错误 ✓",
+        "并发双调返回同一 outcome ✓",
+        "并发双调返回同一 apply 任务（join 同结果） ✓",
+        "并发双调只建一个扫描任务（单飞实据：+1） ✓",
+        "其他来源活跃任务互斥（错误码透传） ✓",
+        "互斥探针成立（扫描在场窗口内 QuickUpdate 被拒） ✓",
+        "全链事件集 ⊆ {task_updated, relation_invalidated}（实测 [task_updated relation_invalidated]）✓"
+      ]
+    }
+  ],
+  "verdict": {
+    "all_pass": true
+  },
+  "note": "六场景零真网（连败注入=假 CDN 控制面全场 5xx 脚本，pgfixture -serve）；断言面=pgheadless -watch -record 的 p4-watcher-run/1 时间线（事件流/状态快照/链摘要，逐场景内嵌 resident 字段）；只断不变式与轮数上界（验收规格 §8.4：不卡毫秒时序）"
+}

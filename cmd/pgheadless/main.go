@@ -65,9 +65,13 @@ func main() {
 	restoreTarget := flag.Bool("restore-target", false, "restore 强杀目标进程（票 #66 acceptance:recovery:restore）：建夹具历史（c1/c2）→ PrepareRestore(最老提交) → ConfirmRestorePlan → 轮询至 committed；stdout 相位标记供 pgrecovery killwindow 观察（-cdn 为空时自动拉起假 CDN 进程）")
 	restoreCold := flag.Bool("restore-cold", false, "3000 fixture restore 冷链路度量（票 #66 acceptance:perf：漂移删全部受管文本 → restore c1 → committed exact；-metrics 记 restore 段，pgfixture -eval 评 restore 冷 ≤30s/内存 <256MiB）")
 	setAuthorized := flag.Int("set-authorized", -1, "设置工作区授权开关后退出（票 #66 L1 数据准备：1=开启快速更新授权，0=关闭；需 -data 与 -project/-instance 指向既有关系）")
+	watch := flag.Bool("watch", false, "常驻监听模式（票 #96 acceptance:watcher，ADR-0010）：挂 watcher+自动链常驻不退出；-record 写事件/扫描轮数时间线（p4-watcher-run/1）；退出=哨兵文件或 -watch-timeout（超时退出码 3）")
+	watchTimeout := flag.Duration("watch-timeout", 10*time.Minute, "-watch 安全超时（超时强制收敛）")
+	watchExitSentinel := flag.String("watch-exit-sentinel", "", "-watch 退出哨兵文件路径（存在即收敛退出；空=只由超时收敛）")
+	watchControl := flag.String("watch-control", "", "-watch 手动快速更新命令目录（出现 quickupdate 命令文件即经 transport 服务执行后删除；空=无控制面）")
 	pgfixtureBin := flag.String("pgfixture", filepath.Join("bin", "pgfixture.exe"), "pgfixture 可执行文件（-download 自动拉起假 CDN 进程用）")
 	dlWork := flag.String("download-work", filepath.Join("build", "download"), "-download 链工作目录（夹具）")
-	dlRecord := flag.String("record", "", "-download 记录 JSON 路径（空=自动 docs/acceptance/records/p3-download-<date>-<host>.json；\"-\"=不落盘）")
+	dlRecord := flag.String("record", "", "记录 JSON 输出路径（-download=p3-download 记录 / -watch=p4-watcher-run 时间线记录；\"-\"=不落盘）")
 	flag.Parse()
 
 	// -revive 只需数据根，不需 fixture 端点。
@@ -149,6 +153,29 @@ func main() {
 
 	ctx := context.Background()
 	app := stack.App
+
+	// 票 #96：-watch 常驻监听模式（关系先于引擎启动建立——引擎只在 kick/链尾
+	// resync，启动初挂依赖既有 relation）。授权开/关态变体由编排进程先用
+	// -set-authorized 准备，本模式只投影事实。
+	if *watch {
+		rel := ensureRelation(ctx, app, projectAbs, instanceAbs)
+		ws, err := app.GetWorkspace(ctx, rel.RelationID)
+		fatalOn(err, "GetWorkspace（-watch 授权投影）")
+		if *watchControl != "" {
+			if err := os.MkdirAll(*watchControl, 0o755); err != nil {
+				log.Fatalf("创建 -watch 控制目录失败: %v", err)
+			}
+		}
+		runWatchMode(watchEnv{
+			stack: stack, app: app, svc: stack.Service, db: stack.DB,
+			relationID: rel.RelationID, authorized: ws.AuthorizedApply,
+			projectRoot: projectAbs, instanceDir: instanceAbs, dataRoot: root,
+			recordPath: *dlRecord, metricsPath: *metricsPath,
+			exitSentinel: *watchExitSentinel, controlDir: *watchControl,
+			timeout: *watchTimeout,
+		})
+		return
+	}
 
 	// 票 #64：-commits（历史夹具）与 -gc（验收链）独立成模，不走单计划链路。
 	if *commits > 0 {
@@ -456,6 +483,8 @@ type metricsRecord struct {
 	Restore      *restoreChainStats `json:"restore,omitempty"` // 仅 -restore-cold 链路（票 #66）
 	GC           *gcChainStats      `json:"gc,omitempty"`      // 仅 -gc 链路（票 #66）
 	Merge        *mergeChainStats   `json:"merge,omitempty"`   // 仅 -merge 链路（票 #93：merge 分相只记录不设门槛）
+
+	Watcher      *watcherMetrics    `json:"watcher,omitempty"` // 仅 -watch 常驻模式（票 #96）
 }
 
 func writeMetrics(path string, rec metricsRecord) {

@@ -1,0 +1,13 @@
+name = "Fixture Mod 0000"
+filename = "fixture-mod-0000-1.2.1.jar"
+side = "both"
+version = "1.2.1"
+
+[download]
+url = "https://cdn.modrinth.dev/fixture-mod-0000-1.2.1.jar"
+hash-format = "sha256"
+hash = "000000000000000000000000000000000000000000000000b36781c10ee5bb84"
+
+[update.modrinth]
+mod-id = "MOD0000X"
+version-id = "v1.2.1"

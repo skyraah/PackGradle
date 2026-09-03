@@ -56,10 +56,11 @@ func SurfaceFor(policy model.MappingPolicy, projectRoot, runtimeRoot, relationID
 	return out
 }
 
-// excludedDirNames 是递归补挂子目录时排除的目录段名（ADR-0010 §3 排除集）：
+// excludedDirNames 是监听面排除的目录段名（ADR-0010 §3 排除集）：
 // `mods/.index`（Prism 事后自行重写只产噪声，其变化由 mods 文件变化本身反映）、
-// logs/saves 等非管辖树、Prism 自有元数据。管辖面本身由 policy 前缀约束，
-// 排除集只作用于「管辖目录内部递归补挂」这一动态扩展面。
+// logs/saves 等非管辖树、Prism 自有元数据。作用两面：触发语义匹配不认穿越
+// 排除段的事件路径（crossesExcludedDir），递归补挂不下探排除段目录
+//（engine.expandLocked）。管辖面本身由 policy 前缀约束。
 var excludedDirNames = map[string]bool{
 	".index":  true, // mods/.index
 	"logs":    true,
@@ -73,9 +74,31 @@ func ExcludedDirName(name string) bool { return excludedDirNames[strings.ToLower
 
 // eventMatchesTarget 判断事件路径是否落在语义目标管辖范围内（含目标本身）。
 // Windows 路径大小写不敏感，经 fsutil.SamePath/小写前缀归一。File 非空时
-// 只认该文件自身的事件（目录其余部分不受管辖）。
+// 只认该文件自身的事件（目录其余部分不受管辖）；事件路径自目标目录以下
+// 穿越排除集段不构成管辖触发（ADR-0010 §3：写 `mods/.index` 不触发）。
 func eventMatchesTarget(eventPath string, t SurfaceTarget) bool {
-	return matchUnder(eventPath, t.Dir) && (t.File == "" || sameFileName(eventPath, t.File))
+	if !matchUnder(eventPath, t.Dir) {
+		return false
+	}
+	if t.File != "" && !sameFileName(eventPath, t.File) {
+		return false
+	}
+	return !crossesExcludedDir(eventPath, t.Dir)
+}
+
+// crossesExcludedDir 判断事件路径自 dir 以下是否穿越排除集目录段（段边界
+// 严格、大小写不敏感；路径等于 dir 本身不算穿越）。
+func crossesExcludedDir(eventPath, dir string) bool {
+	rel, err := filepath.Rel(filepath.Clean(dir), filepath.Clean(eventPath))
+	if err != nil || rel == "." {
+		return false
+	}
+	for _, seg := range strings.Split(filepath.ToSlash(rel), "/") {
+		if ExcludedDirName(seg) {
+			return true
+		}
+	}
+	return false
 }
 
 // matchUnder 判断 p 是否等于 dir 或位于 dir 之下（段边界严格，大小写不敏感）。

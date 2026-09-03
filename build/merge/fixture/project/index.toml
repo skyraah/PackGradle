@@ -1,0 +1,31 @@
+hash-format = "sha256"
+
+[[files]]
+file = "mods/fixture-mod-0000.pw.toml"
+hash = "93e469abec40f967575f3b13227044136fe99cc0a7b3fd6f3c6aa5ad121e1ca5"
+metafile = true
+
+[[files]]
+file = "mods/fixture-mod-0001.pw.toml"
+hash = "a0e945530271c8afe5885ac671a68e39e9ded87b717deaf0b852d55d3014f15e"
+metafile = true
+
+[[files]]
+file = "mods/fixture-mod-0002.pw.toml"
+hash = "7cb7d9be061352ebbd0ae27d96c60f82013d6201167045e7e28cf7534a90d101"
+metafile = true
+
+[[files]]
+file = "mods/fixture-mod-0003.pw.toml"
+hash = "550a9bde3b8da805812ef945f6176ea7e94dd13c364eb01433642f96b97dadbf"
+metafile = true
+
+[[files]]
+file = "mods/fixture-mod-0004.pw.toml"
+hash = "3d1a736c32059bffb85a817a4c9e344c669cb2362a80944f68c03c8153dd5b69"
+metafile = true
+
+[[files]]
+file = "mods/fixture-mod-0005.pw.toml"
+hash = "eed5ed623570b98eabdec506a6d064d3ad3efa84dc4f02844cac8f006961450a"
+metafile = true

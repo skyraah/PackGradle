@@ -1,0 +1,12 @@
+name = "Fixture Mod 0004"
+filename = "fixture-mod-0004-1.2.5.jar"
+side = "both"
+
+[download]
+url = "https://media.curseforge.dev/fixture-mod-0004-1.2.5.jar"
+hash-format = "sha256"
+hash = "0000000000000000000000000000000000000000000000005d79b079478de434"
+
+[update.curseforge]
+project-id = 900004
+file-id = 1000004
