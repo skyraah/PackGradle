@@ -18,7 +18,7 @@ package sync
 import (
 	"context"
 	"errors"
-	"log"
+	"log/slog"
 
 	"packgradle/internal/core/model"
 )
@@ -48,22 +48,22 @@ func (a *App) RunLazyCleanup(ctx context.Context) error {
 	if n, err := a.deps.Cleanup.TruncateTaskEvents(ctx, TaskEventsKeep); err != nil {
 		errs = append(errs, err)
 	} else if n > 0 {
-		log.Printf("cleanup: task_events 截断 %d 条（窗口 %d）", n, TaskEventsKeep)
+		slog.Info("cleanup: task_events 截断", "count", n, "window", TaskEventsKeep)
 	}
 	if n, err := a.deps.Cleanup.DeleteExpiredPlans(ctx, now); err != nil {
 		errs = append(errs, err)
 	} else if n > 0 {
-		log.Printf("cleanup: 历史计划行删除 %d 条", n)
+		slog.Info("cleanup: 历史计划行删除", "count", n)
 	}
 	if n, err := a.deps.Cleanup.DeleteExpiredPreparations(ctx, now); err != nil {
 		errs = append(errs, err)
 	} else if n > 0 {
-		log.Printf("cleanup: 过期预检删除 %d 条", n)
+		slog.Info("cleanup: 过期预检删除", "count", n)
 	}
 	if n, err := a.deps.Cleanup.PruneTerminalTasks(ctx, TerminalTasksKeep); err != nil {
 		errs = append(errs, err)
 	} else if n > 0 {
-		log.Printf("cleanup: 终态任务修剪 %d 条（窗口 %d）", n, TerminalTasksKeep)
+		slog.Info("cleanup: 终态任务修剪", "count", n, "window", TerminalTasksKeep)
 	}
 	return errors.Join(errs...)
 }
@@ -77,7 +77,7 @@ func (a *App) lazyCleanupAfterTask(_ context.Context, t model.Task) {
 	}
 	go func() {
 		if err := a.RunLazyCleanup(ctxWithoutCancel(context.Background())); err != nil {
-			log.Printf("cleanup: 任务 %s 终态后清理失败（下轮续清）: %v", t.TaskID, err)
+			slog.Warn("cleanup: 任务终态后清理失败（下轮续清）", "task", t.TaskID, "err", err)
 		}
 	}()
 }

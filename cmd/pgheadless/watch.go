@@ -24,6 +24,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 
@@ -320,7 +321,7 @@ func (env watchEnv) pollEvents(rec *watchRecord, lastSeq *int64, now time.Time) 
 			}
 		}
 		rec.Timeline = append(rec.Timeline, e)
-		if !containsStr(rec.EventTypes, evType) {
+		if !slices.Contains(rec.EventTypes, evType) {
 			rec.EventTypes = append(rec.EventTypes, evType)
 		}
 	}
@@ -456,16 +457,6 @@ func consumeControlFiles(dir string) []string {
 		}
 	}
 	return out
-}
-
-// containsStr 列表包含判定（事件类型去重）。
-func containsStr(list []string, s string) bool {
-	for _, v := range list {
-		if v == s {
-			return true
-		}
-	}
-	return false
 }
 
 // countCommits 读提交数（记录观察面：编排进程断言「无自动物化」的账面）。

@@ -124,7 +124,9 @@ func runRestoreCold(ctx context.Context, app syncapp.Application, rel view.Relat
 	if err != nil {
 		return nil, fmt.Errorf("ConfirmRestorePlan: %w", err)
 	}
-	final, err := waitApplyTask(ctx, app, tv.TaskID, mem, applyPollBaseTimeout+4*time.Minute)
+	final, err := waitTask(ctx, app, tv.TaskID, taskWait{
+		interval: applyPollInterval, timeout: applyPollBaseTimeout + 4*time.Minute, mem: mem, onPhase: applyPollProgress,
+	})
 	if err != nil {
 		return nil, err
 	}

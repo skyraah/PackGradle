@@ -27,7 +27,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
-	"log"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"sort"
@@ -110,7 +110,7 @@ func (a *App) ingestBaselineProjectContent(ctx context.Context, projectRoot stri
 		}
 	}
 	for _, d := range diags {
-		log.Printf("commit: 基线内容摄取降级 %s（%s）: %s", d.RelativePath, d.Code, d.Detail)
+		slog.Warn("commit: 基线内容摄取降级", "path", d.RelativePath, "code", d.Code, "detail", d.Detail)
 	}
 	return refs, diags
 }

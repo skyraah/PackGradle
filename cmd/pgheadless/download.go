@@ -30,7 +30,6 @@ package main
 import (
 	"context"
 	"crypto/sha1"
-	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -629,10 +628,9 @@ func dnlWriteFixture(dir string, versions map[string]dnlVersion) error {
 	return os.WriteFile(filepath.Join(proj, "index.toml"), []byte(index.String()), 0o644)
 }
 
-// dsha256 字节摘要前缀（断言消息用）。
+// dsha256 字节摘要前缀（断言消息用；完整摘要统一走 main.go sha256Hex）。
 func dsha256(b []byte) string {
-	sum := sha256.Sum256(b)
-	return hex.EncodeToString(sum[:8])
+	return sha256Hex(b)[:8]
 }
 
 // ---- 记录形态（p3-download/1） ----

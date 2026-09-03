@@ -50,9 +50,7 @@ func (a *App) recomputeMergeProduct(ctx context.Context, fp *applyFilePlan) ([]b
 	// 双端根按侧装配：合并资源双端同路径（文件资源），重算必须以 project 为
 	// A 侧、runtime 为 B 侧（与计划期 diff3 同序，CONTEXT.md 域词汇口径）。
 	projRoot, rtRoot := fp.root, fp.sourceRoot
-	if fp.targetSide == model.SideProject {
-		projRoot, rtRoot = fp.root, fp.sourceRoot
-	} else {
+	if fp.targetSide != model.SideProject {
 		projRoot, rtRoot = fp.sourceRoot, fp.root
 	}
 	preBySide := map[string]model.Precondition{}

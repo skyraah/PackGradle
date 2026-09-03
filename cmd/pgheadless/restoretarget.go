@@ -24,7 +24,6 @@ package main
 import (
 	"context"
 	"crypto/sha1"
-	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
 	"os"
@@ -61,11 +60,6 @@ func rtModBytes(tag string, i int) []byte {
 
 func rtSha1(b []byte) string {
 	sum := sha1.Sum(b)
-	return hex.EncodeToString(sum[:])
-}
-
-func rtSha256(b []byte) string {
-	sum := sha256.Sum256(b)
 	return hex.EncodeToString(sum[:])
 }
 
@@ -276,7 +270,9 @@ func runRestoreTargetRel(ctx context.Context, app syncapp.Application, rel view.
 
 	// ---- ③轮询至终态（相位标记 = killwindow 观察面；内存采样随轮询）----
 	mem := beginMemPeakSample()
-	final, err := waitApplyTask(ctx, app, tv.TaskID, mem, applyPollBaseTimeout+2*time.Minute)
+	final, err := waitTask(ctx, app, tv.TaskID, taskWait{
+		interval: applyPollInterval, timeout: applyPollBaseTimeout + 2*time.Minute, mem: mem, onPhase: applyPollProgress,
+	})
 	if err != nil {
 		return err
 	}

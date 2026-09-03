@@ -27,8 +27,6 @@ package main
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -113,7 +111,7 @@ func runMergeChain(ctx context.Context, stack *bootstrap.Stack, app syncapp.Appl
 	if err != nil {
 		return nil, err
 	}
-	metaDigest := mrgSha256Hex(metaEdited)
+	metaDigest := sha256Hex(metaEdited)
 
 	// 双改后先扫描（察觉上游变更），再在双端最新快照上出计划。
 	if _, err := app.StartScan(ctx, rel.RelationID); err != nil {
@@ -196,7 +194,7 @@ func runMergeChain(ctx context.Context, stack *bootstrap.Stack, app syncapp.Appl
 	}
 	// 产物入 CAS（红线②）+ mod metafile 新内容入 CAS（提交收口期摄取）。
 	for _, d := range []struct{ label, digest string }{
-		{"合并产物", mrgSha256String(product)},
+		{"合并产物", sha256Hex([]byte(product))},
 		{"mod metafile", metaDigest},
 	} {
 		ok, herr := stack.CAS.Has(ctx, d.digest)
@@ -274,7 +272,7 @@ func runMergeChain(ctx context.Context, stack *bootstrap.Stack, app syncapp.Appl
 	if qu.Outcome != syncapp.QuickUpdateApplyStarted {
 		return nil, fmt.Errorf("场景③ 授权开态 merged_clean 应随非冲突批量免确认直达: outcome=%s", qu.Outcome)
 	}
-	if _, err := mrgWaitTask(ctx, app, qu.ApplyTaskID); err != nil {
+	if _, err := waitTask(ctx, app, qu.ApplyTaskID, mrgWaitOpts()); err != nil {
 		return nil, fmt.Errorf("场景③ apply: %w", err)
 	}
 	product3 := string(merge.Texts([]byte(product), []byte(proj3), []byte(rt3)).Merged)
@@ -406,7 +404,7 @@ func runMergeChain(ctx context.Context, stack *bootstrap.Stack, app syncapp.Appl
 	return stats, nil
 }
 
-// ---- 链内辅助（pgheadless 包内复用 waitScan/waitApplyTask/applyResolutions）----
+// ---- 链内辅助（pgheadless 包内复用 waitScan/waitTask/applyResolutions）----
 
 // mrgEnableConfigRule 确保 config 受管规则在场（acceptance:headless 的
 // PrepareRelation 建议已带 config/kubejs/scripts 规则；幂等补齐——已有同前缀
@@ -470,7 +468,7 @@ func mrgConfirmAndWait(ctx context.Context, app syncapp.Application, planID stri
 	if err != nil {
 		return "", err
 	}
-	final, err := mrgWaitTask(ctx, app, tv.TaskID)
+	final, err := waitTask(ctx, app, tv.TaskID, mrgWaitOpts())
 	if err != nil {
 		return "", err
 	}
@@ -486,7 +484,7 @@ func mrgConfirmRestoreAndWait(ctx context.Context, app syncapp.Application, plan
 	if err != nil {
 		return "", err
 	}
-	final, err := mrgWaitTask(ctx, app, tv.TaskID)
+	final, err := waitTask(ctx, app, tv.TaskID, mrgWaitOpts())
 	if err != nil {
 		return "", err
 	}
@@ -496,9 +494,9 @@ func mrgConfirmRestoreAndWait(ctx context.Context, app syncapp.Application, plan
 	return final.CommitID, nil
 }
 
-// mrgWaitTask 轮询任务至终态（waitApplyTask 复用；内存采样不启用）。
-func mrgWaitTask(ctx context.Context, app syncapp.Application, taskID string) (view.TaskView, error) {
-	return waitApplyTask(ctx, app, taskID, nil, mergePollTimeout)
+// mrgWaitOpts 是 merge 链的轮询选项（apply 节奏 + 链超时；内存采样不启用）。
+func mrgWaitOpts() taskWait {
+	return taskWait{interval: applyPollInterval, timeout: mergePollTimeout, onPhase: applyPollProgress}
 }
 
 // mrgPrepareSync 在双端最新快照上产出 exact draft。
@@ -571,12 +569,3 @@ func mrgMustReplace(s, from, to string) string {
 	}
 	return strings.Replace(s, from, to, 1)
 }
-
-// mrgSha256Hex 字节内容 sha256（hex）。
-func mrgSha256Hex(b []byte) string {
-	sum := sha256.Sum256(b)
-	return hex.EncodeToString(sum[:])
-}
-
-// mrgSha256String 字符串内容 sha256（hex）。
-func mrgSha256String(s string) string { return mrgSha256Hex([]byte(s)) }

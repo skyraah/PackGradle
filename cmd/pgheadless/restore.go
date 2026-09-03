@@ -35,9 +35,7 @@ package main
 
 import (
 	"context"
-	"crypto/sha256"
 	"database/sql"
-	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -70,11 +68,6 @@ const (
 	rstPgE  = "pg_e = \"v1\"\n"
 	rstPgE2 = "pg_e = \"v2\"\n"
 )
-
-func rsha256(s string) string {
-	sum := sha256.Sum256([]byte(s))
-	return hex.EncodeToString(sum[:])
-}
 
 // rstSeedFiles 写入受管 config 种子：pg-a 项目侧单侧、pg-b 运行侧单侧、
 // pg-c 双侧（initialize 后三者在基线中双侧 present，rec=cas）。
@@ -192,7 +185,7 @@ func runRestoreChain(ctx context.Context, stack *bootstrap.Stack, cdn *cdnproc.S
 	}
 	// 直删 CAS 对象（验收规格 §3「CAS miss 构造」路径）→ prepare#2 降标
 	// user_object_required + no_redownload_info，exact_infeasible + blocked_by。
-	digest := rsha256(rstPgC)
+	digest := sha256Hex([]byte(rstPgC))
 	objectPath := filepath.Join(dataRoot, "objects", "sha256", digest[:2], digest)
 	if err := os.Remove(objectPath); err != nil {
 		return fmt.Errorf("场景③ 直删 CAS 对象: %w", err)
@@ -315,7 +308,7 @@ func runRestoreChain(ctx context.Context, stack *bootstrap.Stack, cdn *cdnproc.S
 	if err := rstScan(ctx, app, rel.RelationID); err != nil {
 		return err
 	}
-	d1, d2 := rsha256(string(metaV1)), rsha256(string(metaV2))
+	d1, d2 := sha256Hex(metaV1), sha256Hex([]byte(metaV2))
 	// 探测端点确定性（零真网）：把 jar 载体字节登记进假 CDN 的直链路径，
 	// PrepareRestore 对 redownload 候选行的 HEAD 探测得 2xx → availability=ok，
 	// 行保持 redownload_required（矩阵乐观标记），可用性面不依赖真网形状。
@@ -426,7 +419,7 @@ func runRestoreChain(ctx context.Context, stack *bootstrap.Stack, cdn *cdnproc.S
 	// 项目侧内容的 v0 已随 c1 收口入 CAS（「运行端漂移天然 miss」的前提不再
 	// 成立——这本身是回滚承诺增强的体现）；user_object_required 行的构造路径
 	// = 直删目标摘要对象，语义与「从未保全」一致（判定面只认 CAS 实存）。
-	pgEDigest := rsha256(rstPgE)
+	pgEDigest := sha256Hex([]byte(rstPgE))
 	pgEObject := filepath.Join(dataRoot, "objects", "sha256", pgEDigest[:2], pgEDigest)
 	if err := os.Remove(pgEObject); err != nil {
 		return fmt.Errorf("场景② 直删 pg-e CAS 对象: %w", err)
@@ -783,21 +776,10 @@ func rstScan(ctx context.Context, app syncapp.Application, relationID string) er
 	return nil
 }
 
-// rstWaitTask 轮询任务至任一终态。
+// rstWaitTask 轮询任务至任一终态（循环本体收敛到 wait.go waitTask；restore 面
+// 的节奏/超时参数包，restoretarget/download 链共用）。
 func rstWaitTask(ctx context.Context, app syncapp.Application, taskID string) (view.TaskView, error) {
-	deadline := time.Now().Add(restorePollTimeout)
-	for time.Now().Before(deadline) {
-		tv, err := app.GetTask(ctx, taskID)
-		if err != nil {
-			return view.TaskView{}, err
-		}
-		switch tv.Status {
-		case model.TaskStatusSucceeded, model.TaskStatusFailed, model.TaskStatusCancelled, model.TaskStatusRecoveryRequired:
-			return tv, nil
-		}
-		time.Sleep(restorePollInterval)
-	}
-	return view.TaskView{}, fmt.Errorf("任务 %s 超时未结束", taskID)
+	return waitTask(ctx, app, taskID, taskWait{interval: restorePollInterval, timeout: restorePollTimeout})
 }
 
 // rstFindItem 按 ResourceID 查判定行（缺失返回 nil）。

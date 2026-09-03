@@ -152,7 +152,9 @@ func applyOneCommit(ctx context.Context, app syncapp.Application, rel view.Relat
 	fatalOn(err, "ResolvePlan(seed)")
 	tv, err := app.ConfirmPlan(ctx, view.ConfirmPlanInput{PlanID: resolved.PlanID})
 	fatalOn(err, "ConfirmPlan(seed)")
-	final, err := waitApplyTask(ctx, app, tv.TaskID, nil, gcPollTimeout)
+	final, err := waitTask(ctx, app, tv.TaskID, taskWait{
+		interval: applyPollInterval, timeout: gcPollTimeout, onPhase: applyPollProgress,
+	})
 	fatalOn(err, "waitApplyTask(seed)")
 	if final.Status != model.TaskStatusSucceeded {
 		log.Fatalf("种子提交 %d 收口 %s（期望 succeeded）", seq, final.Status)
@@ -210,7 +212,10 @@ func runGCChain(ctx context.Context, stack *bootstrap.Stack, app syncapp.Applica
 		fmt.Println("== -gc == 夹具已收口，等待排队任务自动续排（开窗自动继续）")
 	}
 
-	final, err := waitTaskStatus(ctx, app, gcTask.TaskID, model.TaskStatusSucceeded, gcPollTimeout)
+	final, err := waitTask(ctx, app, gcTask.TaskID, taskWait{
+		interval: gcPollInterval, timeout: gcPollTimeout,
+		want: model.TaskStatusSucceeded, onPhase: gcPollProgress,
+	})
 	if err != nil {
 		return err
 	}
@@ -736,31 +741,10 @@ func listAllCommits(ctx context.Context, app syncapp.Application, relationID str
 	}
 }
 
-// waitTaskStatus 轮询任务到期望状态（终态任一则提前失败面返回）。
-func waitTaskStatus(ctx context.Context, app syncapp.Application, taskID, want string, timeout time.Duration) (view.TaskView, error) {
-	deadline := time.Now().Add(timeout)
-	lastPhase := ""
-	for {
-		tv, err := app.GetTask(ctx, taskID)
-		if err != nil {
-			return view.TaskView{}, err
-		}
-		if tv.Phase != lastPhase {
-			fmt.Printf("  [gc poll] status=%s phase=%s msg=%s\n", tv.Status, tv.Phase, tv.MessageKey)
-			lastPhase = tv.Phase
-		}
-		if tv.Status == want {
-			return tv, nil
-		}
-		switch tv.Status {
-		case model.TaskStatusFailed, model.TaskStatusCancelled, model.TaskStatusRecoveryRequired:
-			return tv, fmt.Errorf("gc 任务终态 %s（期望 %s）problem=%s", tv.Status, want, problemText(tv.Problem))
-		}
-		if time.Now().After(deadline) {
-			return tv, fmt.Errorf("gc 任务超时未达 %s（当前 %s/%s）", want, tv.Status, tv.Phase)
-		}
-		time.Sleep(gcPollInterval)
-	}
+// gcPollProgress 是 GC 面的相位进度行（stdout 形态沿既有 waitTaskStatus，
+// 验收依赖的输出形态不动；轮询循环本体收敛到 wait.go waitTask）。
+func gcPollProgress(tv view.TaskView) {
+	fmt.Printf("  [gc poll] status=%s phase=%s msg=%s\n", tv.Status, tv.Phase, tv.MessageKey)
 }
 
 // gcObjectState 查对象行状态（"" = 无行）。

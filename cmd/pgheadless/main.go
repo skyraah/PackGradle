@@ -22,6 +22,8 @@ package main
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -610,4 +612,11 @@ func fatalOn(err error, stage string) {
 	if err != nil {
 		log.Fatalf("%s 失败: %v", stage, err)
 	}
+}
+
+// sha256Hex 字节内容 sha256（hex；包内唯一摘要助手——merge/restore/download
+// 各链原先各持一份，评审 T3 收敛于此）。
+func sha256Hex(b []byte) string {
+	sum := sha256.Sum256(b)
+	return hex.EncodeToString(sum[:])
 }

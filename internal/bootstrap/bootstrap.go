@@ -7,7 +7,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
-	"log"
+	"log/slog"
 
 	"packgradle/internal/adapters/fsnotifywatch"
 	"packgradle/internal/adapters/filesystem"
@@ -213,7 +213,7 @@ func build(root string, retention ports.RetentionSettingsStore, dl download.Opti
 	// 旧数据行物理删除（另一触发时机 = 任务终态后，runner 终态钩子承担）。
 	// 机会主义通道：失败只记日志不阻断启动，下一轮触发续清。
 	if err := app.RunLazyCleanup(context.Background()); err != nil {
-		log.Printf("bootstrap: 启动惰性清理失败（不阻断启动，下轮续清）: %v", err)
+		slog.Warn("bootstrap: 启动惰性清理失败（不阻断启动，下轮续清）", "err", err)
 	}
 
 	// 端点管理用例（/sources、/runtimes 页）：与 sync 共用同一数据库、
@@ -269,7 +269,7 @@ func build(root string, retention ports.RetentionSettingsStore, dl download.Opti
 	var watchEng *watch.Engine
 	wsrc, werr := fsnotifywatch.New()
 	if werr != nil {
-		log.Printf("bootstrap: 监听事件源构造失败（监听面禁用，降级回手动）: %v", werr)
+		slog.Warn("bootstrap: 监听事件源构造失败（监听面禁用，降级回手动）", "err", werr)
 	} else {
 		watchEng, werr = watch.New(watch.Deps{
 			Relations: sqlite.NewRelationRepository(db),
@@ -302,7 +302,7 @@ func build(root string, retention ports.RetentionSettingsStore, dl download.Opti
 			Now: defaultNow,
 		})
 		if werr != nil {
-			log.Printf("bootstrap: 监听引擎装配失败（监听面禁用，降级回手动）: %v", werr)
+			slog.Warn("bootstrap: 监听引擎装配失败（监听面禁用，降级回手动）", "err", werr)
 			_ = wsrc.Close()
 			watchEng = nil
 		} else {
