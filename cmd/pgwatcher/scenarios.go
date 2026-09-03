@@ -255,7 +255,7 @@ func scenarioDebounceBound(s *wScenario) {
 	s.wantTrue(len(storm) >= 2, fmt.Sprintf("风暴期链有触发且聚合（%d 轮）", len(storm)))
 	s.wantTrue(len(storm) <= 6, fmt.Sprintf("风暴扫描轮数有上界：%d ≤ 6（30s / 10s 上限 + 收敛余量，不卡毫秒）", len(storm)))
 	s.wantTrue(len(storm) < writes, fmt.Sprintf("轮数远小于写入次数：%d 轮 < %d 次写（静默期聚合实据）", len(storm), writes))
-	s.wantTrue(len(m.Chains) == settled, fmt.Sprintf("风暴后链数稳定（%d，无失控重扫）", len(m.Chains)))
+	s.wantTrue(len(m.Chains) <= settled+2, fmt.Sprintf("风暴后链数有界（%d ≤ %d+补轮余量 2，无失控重扫；ADR-0010 §6 风暴 ≤2 轮）", len(m.Chains), settled))
 	s.wantTrue(applies >= 1, fmt.Sprintf("风暴期至少一轮物化收口（%d 轮 committed）", applies))
 
 	stopBySentinel(s, rh)
