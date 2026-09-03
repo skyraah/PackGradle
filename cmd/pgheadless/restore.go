@@ -501,8 +501,10 @@ func runRestoreChain(ctx context.Context, stack *bootstrap.Stack, cdn *cdnproc.S
 	if err != nil {
 		return fmt.Errorf("场景⑥ 造数手术: %w", err)
 	}
-	if stripped != metaCount {
-		return fmt.Errorf("场景⑥ 手术应置空 %d 个 mod 表示 content 指针，实际 %d", metaCount, stripped)
+	// 手术按构造剥离基线内全部带 content 的 mod 表示；stripped=0 即捕获未在
+	// 该基线上线（计数走动态口径，#93 摄取泛化后无固定 8 的前提）。
+	if stripped == 0 {
+		return fmt.Errorf("场景⑥ 造数手术应置空项目侧 mod content 指针，实际 0（捕获未上线？）")
 	}
 	metaV3 := strings.Replace(string(metaV1), fileIDV1, "file-id = 1000003", 1)
 	if err := os.WriteFile(metaPath, []byte(metaV3), 0o644); err != nil {
@@ -548,12 +550,16 @@ func runRestoreChain(ctx context.Context, stack *bootstrap.Stack, cdn *cdnproc.S
 	}
 	// skip 链（出口通路）：allow_partial + 剔除全部降标行（无声明 hash 的
 	// plain mod 行语义哈希随 Content 参与摘要，手术置空后与实测面如实显差，
-	// 同落降标）+ ② 的 pg-e 残留差异行 → committed partial 不谎报。
-	skip6 := []string{"file:config/pg-e.toml"}
+	// 同落降标）→ committed partial 不谎报。#93 摄取泛化后文本行（pg-e 等）
+	// 基线字节已入 CAS、随 exact 完成回写，不再进剔除面。
+	var skip6 []string
 	for i := range draft6.Items {
 		if draft6.Items[i].MarkerReason == model.MarkerReasonNoProjectContent {
 			skip6 = append(skip6, string(draft6.Items[i].ResourceID))
 		}
+	}
+	if len(skip6) == 0 {
+		return fmt.Errorf("场景⑥ 草稿应存在降标行，实际无")
 	}
 	resolved6, err := app.ResolveRestorePlan(ctx, view.ResolveRestorePlanInput{
 		PlanID:             draft6.PlanID,
