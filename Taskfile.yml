@@ -251,6 +251,31 @@ tasks:
       - rm -rf build/recovery-restore
       - bin/pgrecovery.exe -mode restore
 
+  # watcher 验收链（验收规格 §4.2/§9.1；票 #96）：pgheadless -watch 常驻监听
+  # 模式（生产装配同链路：fsnotify + 触发器状态机 + QuickUpdate 自动链）+
+  # pgwatcher 编排 harness（外部写真文件驱动，沿 pgrecovery 先例）——六场景
+  # 逐场景独立夹具与数据目录：①触发与收敛（授权开态 committed → 写盘自触发
+  # 重扫 no_diff 收敛、轮数有界；写 `mods/.index` 不触发，红线④）②去抖上界
+  #（<1.5s 间隔持续写 ≥30s → 风暴轮数 ≤10s 上限量级）③停靠待确认（授权关态
+  # awaiting_confirmation + pending_plan_id + 收口点 relation_invalidated；
+  # 双侧同段冲突必停，红线①）④连败暂停与复位（假 CDN 全场 5xx 脚本 ×2 →
+  # watch_status=paused + 无第三次自动执行 + 监听保持 → 控制面手动快速更新
+  # 成功复位 active）⑤恢复期只标脏（造数手术 recovery_required → 触发零自动
+  # 物化）⑥并发 join（双调同结果 + 其他来源任务 err.scan.already_running 互
+  # 斥）。全链事件集断言 ⊆ {task_updated, relation_invalidated}（红线⑤，零新
+  # 事件类型）。断言数据面 = pgheadless -record 的 p4-watcher-run/1 时间线
+  #（事件/扫描轮数）；-metrics 增量 watcher 段（触发→链收口墙钟 + 快速更新链
+  # 相位，只记录不设门槛）。记录归 docs/acceptance/records/p4-watcher-<date>-
+  # <host>.json。任一断言失败非零退出。
+  acceptance:watcher:
+    summary: Runs the pgheadless resident-watch chain - six scenarios driven by external real-file writes (trigger+converge, debounce bound, dock awaiting, fail-pause via fake-CDN 5xx, recovery dirty-only, concurrent join) with event-set and round-bound assertions (acceptance L0)
+    cmds:
+      - go build -o bin/pgheadless.exe ./cmd/pgheadless
+      - go build -o bin/pgfixture.exe ./cmd/pgfixture
+      - go build -o bin/pgwatcher.exe ./cmd/pgwatcher
+      - rm -rf build/watcher
+      - bin/pgwatcher.exe -work build/watcher
+
   # B 口径前端构建门槛（验收规格 §1.1）：vue-tsc 类型检查 + Vite 生产构建
   #（package.json `build` = `vue-tsc && vite build --mode production`）。
   frontend:build:
