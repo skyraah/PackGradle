@@ -446,7 +446,7 @@ func deriveRestoreFilePlans(plan model.SyncPlan, base *model.SyncBaseline,
 			recoverability:  defaultRecoverability(op.ResourceID),
 			materialization: model.MaterializationCopy,
 		}
-		_, tgtSide, known := applySideForOp(op.Kind)
+		_, tgtSide, known := applySideForOp(op)
 		if !known {
 			fp.blockedCode = resultUnsupportedOp
 			out = append(out, fp)

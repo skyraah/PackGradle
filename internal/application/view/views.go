@@ -165,6 +165,8 @@ type ScanTimingView struct {
 // ApplyTimingView 是最近一次 Apply 运行的分相耗时（P2 验收规格 §3 apply 度量
 // 供数口；T09 pgheadless -metrics 消费。只在具体 *syncapp.App 上暴露，
 // 不入 transport 契约）。未走到的相为 0；失败路径记录已完成的相。
+// Merge 分相（票 #93，P4 验收规格 §6：diff3/校验/写盘）只记录不设门槛，
+// 无 write_merged 行的运行为 0。
 type ApplyTimingView struct {
 	RelationID     string `json:"relation_id"`
 	OperationCount int    `json:"operation_count"`
@@ -172,6 +174,10 @@ type ApplyTimingView struct {
 	ApplyingMs     int64  `json:"applying_ms"`
 	VerifyingMs    int64  `json:"verifying_ms"`
 	TotalMs        int64  `json:"total_ms"`
+	MergeDiff3MS   int64  `json:"merge_diff3_ms"`
+	MergeValidateMS int64 `json:"merge_validate_ms"`
+	MergeWriteMS   int64  `json:"merge_write_ms"`
+	MergeOps       int    `json:"merge_ops"`
 }
 
 // WorkspacePage 是工作区分页。

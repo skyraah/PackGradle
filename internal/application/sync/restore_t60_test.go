@@ -707,8 +707,10 @@ func TestRestore60CASMissStagedCompletion(t *testing.T) {
 	if rerr != nil || string(got) != fxApplyB {
 		t.Fatalf("b.toml = %q（err=%v），期望 %q", string(got), rerr, fxApplyB)
 	}
-	// 写回后 CAS 对象文件仍缺失：staged 字节消费零 CAS 污染（ADR-0005 §7）。
-	if _, err := os.Stat(objectPath); !errors.Is(err, os.ErrNotExist) {
-		t.Fatalf("写回后 CAS 对象文件应仍缺失: %v", err)
+	// 写回后 CAS 对象由提交收口期基线内容摄取重建（票 #93 泛化：项目侧全部
+	// 表示统一入 CAS；staging 补全路径本身仍零 CAS 污染，ADR-0005 §7）——
+	// 后续回滚到本提交时 b 行自动 restorable_from_cas，不再依赖补全。
+	if _, err := os.Stat(objectPath); err != nil {
+		t.Fatalf("写回后 CAS 对象应由基线内容摄取重建: %v", err)
 	}
 }

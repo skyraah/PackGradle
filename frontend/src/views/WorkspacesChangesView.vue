@@ -173,6 +173,7 @@ const classTones: Record<string, BadgeTone> = {
     runtime_to_project: BUSY,
     remove_runtime_candidate: WARN,
     remove_project_candidate: WARN,
+    merged_clean: OK,
     conflict_modify: BAD,
     conflict_delete_modify: BAD,
 }

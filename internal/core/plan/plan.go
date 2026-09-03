@@ -139,8 +139,12 @@ func BuildDraft(in BuildInput) (model.SyncPlan, error) {
 		case diff.ClassAdoptEqual:
 			summary.AdoptEqualCount++
 		case diff.ClassMergedClean:
-			// 干净合并行（ADR-0009 §4，票 #87）：非冲突操作计数，不并入
-			// modify；write_merged 操作面归执行票（暂存期按三侧快照重算）。
+			// 干净合并行（ADR-0009 §4/§8，票 #93）：非冲突操作——draft 即以
+			// write_merged 操作承载「将自动合并」默认推荐（一资源一操作=双端
+			// 写合并产物；内容源=暂存期按计划锁定的三侧快照确定性重算），
+			// 前置条件断言双端字节与计划快照相符；计数不并入 modify（契约 07 §3.3）。
+			op = newOperation(model.OpWriteMerged, d.ResourceID,
+				mergedPreconditions(d.ResourceID, projObs, rtObs))
 			summary.MergedCleanCount++
 		}
 		if op != nil && opAllowed(direction, op.Kind) {
@@ -193,6 +197,9 @@ func BuildDraft(in BuildInput) (model.SyncPlan, error) {
 }
 
 // Resolve 校验 resolutions 恰好覆盖 draft 的全部冲突后应用选择，生成 resolved plan。
+// 干净合并行（write_merged，票 #93）不是冲突：无需决议（空决议即含默认推荐），
+// 显式 take_merged 决议照常接受并记录；take_merged 作用于其他行 →
+// ErrResolutionInvalidChoice。
 // project/runtime 快照用于生成 resolution 操作的前置条件；Resolve 不修改 draft，
 // 也不假设快照仍与 draft 一致（不一致时前置条件会在 Apply 阶段拦截）。
 // preserveMaxBytes 是大文件保全阈值（与 BuildDraft.PreserveMaxBytes 同源，ADR-0007
@@ -209,10 +216,32 @@ func Resolve(draft model.SyncPlan, project, runtime model.ObservedSnapshot, reso
 	for _, c := range draft.Conflicts {
 		conflictByResource[c.ResourceID] = c
 	}
+	// mergedByResource 是 draft 中 write_merged 行（干净合并，票 #93）：显式
+	// take_merged 决议只能指向这些行；操作在 draft 即已生成，决议只记录选择。
+	mergedByResource := make(map[model.ResourceID]bool)
+	for _, op := range draft.Operations {
+		if op.Kind == model.OpWriteMerged {
+			mergedByResource[op.ResourceID] = true
+		}
+	}
 
 	covered := make(map[model.ResourceID]bool, len(resolutions))
 	sorted := make([]model.Resolution, 0, len(resolutions))
 	for _, r := range resolutions {
+		// take_merged 专用校验（票 #93，契约 07 §3.3）：只对 merged_clean 行
+		// 合法；作用于冲突行或任何其他行 → 既有 ErrResolutionInvalidChoice
+		//（应用层透传 err.plan.resolution_invalid）。
+		if r.Choice == model.ChoiceTakeMerged {
+			if !mergedByResource[r.ResourceID] {
+				return model.SyncPlan{}, fmt.Errorf("%w: %s 不接受 %s（非干净合并行）", ErrResolutionInvalidChoice, r.ResourceID, r.Choice)
+			}
+			if covered[r.ResourceID] {
+				return model.SyncPlan{}, fmt.Errorf("%w: %s 重复", ErrResolutionIncomplete, r.ResourceID)
+			}
+			covered[r.ResourceID] = true
+			sorted = append(sorted, r)
+			continue
+		}
 		conflict, ok := conflictByResource[r.ResourceID]
 		if !ok {
 			return model.SyncPlan{}, fmt.Errorf("%w: %s", ErrResolutionUnknown, r.ResourceID)
@@ -491,6 +520,32 @@ func writePreconditions(id model.ResourceID, sourceSide string, source, target *
 	return []model.Precondition{src, tgt}
 }
 
+// mergedPreconditions 生成 write_merged 操作前置条件（票 #93，契约 07 §3.3
+// 「前置条件=双端字节与计划快照相符」）：双侧都必须 present 且指纹匹配——
+// 干净合并以双侧同改为前提，任一侧在确认后漂移即前置拦截，不部分提交。
+func mergedPreconditions(id model.ResourceID, project, runtime *model.ResourceObservation) []model.Precondition {
+	pcs := make([]model.Precondition, 0, 2)
+	for _, side := range []struct {
+		name string
+		obs  *model.ResourceObservation
+	}{
+		{sideProject, project}, {sideRuntime, runtime},
+	} {
+		pc := model.Precondition{ResourceID: id, Side: side.name}
+		if side.obs != nil {
+			pc.Existence = existencePresent
+			if c := side.obs.Representation.Content; c != nil {
+				expected := *c
+				pc.Expected = &expected
+			}
+		} else {
+			pc.Existence = existenceAbsent
+		}
+		pcs = append(pcs, pc)
+	}
+	return pcs
+}
+
 // removePreconditions 生成 remove 操作前置条件：被删除侧当前必须 present
 // 且指纹匹配（有 Content 则填期望值）。
 func removePreconditions(id model.ResourceID, side string, target *model.ResourceObservation) []model.Precondition {
@@ -525,6 +580,8 @@ func kindRank(k model.OperationKind) int {
 		return 3
 	case model.OpMaterialize:
 		return 4
+	case model.OpWriteMerged:
+		return 5 // 双端写合并产物（票 #93）；新类别追加新权重，既有排序不变
 	default:
 		return 99 // 未知类别排最后，保证确定性
 	}

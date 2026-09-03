@@ -165,8 +165,10 @@ func (a *App) ConfirmPlan(ctx context.Context, input view.ConfirmPlanInput) (vie
 			Preconditions:    aggregatePreconditions(p.Operations),
 			// prepared 意图尚无 staging 事实，恢复引用为空集；
 			// 引擎进 staged 前落 CAS/staging 引用（ADR-0004 §3），仓储原样保存。
-			RecoveryRefs:   json.RawMessage("[]"),
-			OperationCount: len(p.Operations),
+			RecoveryRefs: json.RawMessage("[]"),
+			// operation_count 按展开行口径（票 #93）：write_merged 双端各一份
+			// journal 行，与逐操作清单/任务进度一致。
+			OperationCount: len(p.Operations) + countMergedExpansions(p.Operations),
 			CreatedAt:      nowStr,
 			UpdatedAt:      nowStr,
 		}); err != nil {

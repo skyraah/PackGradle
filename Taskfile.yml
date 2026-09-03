@@ -112,6 +112,28 @@ tasks:
       - rm -rf build/headless/data-restore
       - bin/pgheadless.exe -project build/headless/fixture-restore/project -instance build/headless/fixture-restore/instance -data build/headless/data-restore -restore
 
+  # 合并执行面验收链（验收规格 §3.2 场景 1/2/3；票 #93）：含手工样本夹具
+  # （pgfixture 双侧样本落位）→ pgheadless -merge 三场景断言链——①初次同步后
+  # 双改注入：merged_clean_count/write_merged 操作面断言 + take_merged 误用
+  # resolution_invalid + resolve take_merged → confirm → committed → 双端落盘
+  # 字节=确定性重算产物（merge.Texts 同算法复算）、未冲突区域字节级不变
+  # （红线③）、产物与 mod metafile 入 CAS（红线②）；②先回初次提交再回合并
+  # 提交：merged 行 restorable_from_cas → committed（链内零 CDN 配置，committed
+  # 即零网络零用户介入证据）；③授权开态 QuickUpdate 免确认直达 committed +
+  # 含冲突差异永不自动停 awaiting_confirmation（红线①）。-metrics 记 merge
+  # 分相（diff3/校验/写盘，只记录不设门槛）并归档 p4-merge 记录。任一断言
+  # 失败非零退出。
+  acceptance:merge:
+    summary: Runs the pgheadless -merge three-scenario chain (merged_clean full chain with byte/CAS assertions, zero-network rollback via restorable_from_cas, authorized-mode quick update with conflict red line) and archives merge-phase metrics (acceptance L0)
+    cmds:
+      - go build -o bin/pgheadless.exe ./cmd/pgheadless
+      - go build -o bin/pgfixture.exe ./cmd/pgfixture
+      - rm -rf build/merge
+      - go run ./cmd/pgfixture -out build/merge/fixture -mods 6 -text-files 12
+      - rm -rf build/merge/data
+      - bin/pgheadless.exe -project build/merge/fixture/project -instance build/merge/fixture/instance -data build/merge/data -merge -metrics build/merge/metrics-merge.json
+      - cp build/merge/metrics-merge.json docs/acceptance/records/p4-merge-$(date +%F)-$(hostname)-t01.json
+
   # 性能基线（验收规格 §2 沿用 + P2 §3 + P3 §7 新增；票 #24/#46/#66）：3,000
   # 资源确定性 fixture（产物入 build/perf，不入 git）→ 冷扫描（全新数据目录）
   # → 热扫描（同目录紧接二次）→ -apply 度量（initialize 全量 copy 即冷 apply，

@@ -165,6 +165,14 @@ type App struct {
 	applyTimingMu   sync.Mutex
 	lastApplyTiming view.ApplyTimingView
 
+	// merge 分相累计（票 #93，-metrics merge 分相 diff3/校验/写盘供数）：
+	// staging worker 并发累加（applyTimingMu 同锁保护），runApply 收口时
+	// mergePhasesSnapshot 取走并入 ApplyTimingView。
+	mergeDiff3MS    int64
+	mergeValidateMS int64
+	mergeWriteMS    int64
+	mergeOps        int
+
 	// gcMu 串行化 GC 任务创建段（RequestGC 的单飞检查+创建非原子，进程内
 	// 双保险；跨通道并发触发的后到请求复用首个任务）。gcKick 是安全窗口的
 	// 唤醒通道（任务终态/恢复处置 kick，ADR-0007 §3；带缓冲单槽，无等待者

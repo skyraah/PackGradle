@@ -180,6 +180,7 @@ func runRestoreChain(ctx context.Context, stack *bootstrap.Stack, cdn *cdnproc.S
 	if err != nil {
 		return fmt.Errorf("D2 apply: %w", err)
 	}
+	_ = c3 // 提交事实由历史断言覆盖；票 #93 起引用计数断言以 c1 为基准
 	// prepare#1：CAS 实存 → restorable_from_cas。
 	draft3a, err := app.PrepareRestore(ctx, view.PrepareRestoreInput{RelationID: rel.RelationID, CommitID: c1})
 	if err != nil {
@@ -250,9 +251,11 @@ func runRestoreChain(ctx context.Context, stack *bootstrap.Stack, cdn *cdnproc.S
 	if got, rerr := os.ReadFile(filepath.Join(gameCfg, "pg-c.toml")); rerr != nil || string(got) != rstPgC {
 		return fmt.Errorf("场景③ pg-c 复验 = %q（err=%v）", string(got), rerr)
 	}
-	// staging 面消费后 CAS 对象文件仍缺失（写回零 CAS 回填）。
-	if _, err := os.Stat(objectPath); !os.IsNotExist(err) {
-		return fmt.Errorf("场景③ 写回后 CAS 对象应仍缺失（err=%v）", err)
+	// staging 补全面零 CAS 污染（ADR-0005 §7）；写回后的提交收口期基线内容
+	// 摄取（票 #93 泛化：项目侧全部表示统一入 CAS）使对象按 pg-c 内容重建——
+	// 后续回滚到本提交时该行自动 restorable_from_cas，不再依赖补全。
+	if _, err := os.Stat(objectPath); err != nil {
+		return fmt.Errorf("场景③ 写回后 CAS 对象应由基线内容摄取重建（err=%v）", err)
 	}
 	fmt.Println("== 场景③ 补全就绪面 == 通过（CAS miss → hash_mismatch → staged 翻转 → exact committed）")
 
@@ -361,22 +364,29 @@ func runRestoreChain(ctx context.Context, stack *bootstrap.Stack, cdn *cdnproc.S
 	if !draft5.ExactFeasible {
 		return fmt.Errorf("场景⑤ 项目侧 CAS 命中后 exact 应可行")
 	}
-	// CAS 增量断言：每提交只有变更过的 metafile 产新对象（跨提交内容寻址去
-	// 重）——c1/c2/c3 各自 baseline_content 引用集相同（8 个 metafile），全部
-	// 作为一个去重集存活；场景⑤ restore 收口摄取回 v0 引用零新对象。
-	const metaCount = 8 // -mods 6 + -plain-mods 2
-	for _, cid := range []string{c1, c2, c3} {
-		n, err := rstBaselineContentRefs(stack.DB, cid)
-		if err != nil {
-			return fmt.Errorf("场景⑤ baseline_content 引用: %w", err)
-		}
-		if n != metaCount {
-			return fmt.Errorf("场景⑤ 提交 %s baseline_content 引用 = %d，期望 %d", cid, n, metaCount)
-		}
+	// CAS 增量断言基准：票 #93 摄取面泛化（项目侧全部带内容指纹的表示：
+	// metafile + 非模文本）后，各提交引用数随内容集演进而变（D1 删 pg-b 等），
+	// 固定计数不可用——以 c1 收口的引用数为基准：场景⑤ restore 回到 c1 状态，
+	// 结果基线内容集与 c1 一致 → cR4 引用数必须相同（跨提交去重不虚增）。
+	baseRefs, err := rstBaselineContentRefs(stack.DB, c1)
+	if err != nil {
+		return fmt.Errorf("场景⑤ baseline_content 引用: %w", err)
+	}
+	if baseRefs <= 0 {
+		return fmt.Errorf("场景⑤ c1 baseline_content 引用 = %d，应为正", baseRefs)
 	}
 	resolved5, err := app.ResolveRestorePlan(ctx, view.ResolveRestorePlanInput{PlanID: draft5.PlanID, RequestedExactness: "exact"})
 	if err != nil {
 		return fmt.Errorf("场景⑤ resolve exact: %w", err)
+	}
+	// restore 摄取零新对象的基准：收口前全链去重 digest 数（票 #93 泛化面上
+	// 写回内容 = c1 既有对象，收口后集合不变）。
+	before, err := rstDistinctBaselineContentDigests(stack.DB, rel.RelationID)
+	if err != nil {
+		return err
+	}
+	if before <= 0 {
+		return fmt.Errorf("场景⑤ 收口前去重 digest = %d，应为正", before)
 	}
 	cR4, err := rstConfirmAndRestore(ctx, app, rel, resolved5.PlanID, model.TaskOutcomeExact)
 	if err != nil {
@@ -388,36 +398,45 @@ func runRestoreChain(ctx context.Context, stack *bootstrap.Stack, cdn *cdnproc.S
 	}
 	if total, err := rstDistinctBaselineContentDigests(stack.DB, rel.RelationID); err != nil {
 		return err
-	} else if total != metaCount {
-		return fmt.Errorf("场景⑤ 全链 baseline_content 去重 digest = %d，期望 %d（restore 摄取零新对象）", total, metaCount)
+	} else if total != before {
+		return fmt.Errorf("场景⑤ 全链 baseline_content 去重 digest = %d，期望 %d（restore 摄取零新对象）", total, before)
 	}
 	if n, err := rstBaselineContentRefs(stack.DB, cR4); err != nil {
 		return err
-	} else if n != metaCount {
-		return fmt.Errorf("场景⑤ restore 提交 baseline_content 引用 = %d，期望 %d", n, metaCount)
+	} else if n != baseRefs {
+		return fmt.Errorf("场景⑤ restore 提交 baseline_content 引用 = %d，期望 %d（同一内容集）", n, baseRefs)
 	}
 	if err := rstAssertClean(ctx, app, rel.RelationID); err != nil {
 		return fmt.Errorf("场景⑤: %w", err)
 	}
-	fmt.Printf("== 场景⑤ metafile 捕获回滚 == 通过（CAS 命中写回 + 跨提交去重 %d digest + 零网络零介入 committed cR4=%s）\n", metaCount, cR4)
+	fmt.Printf("== 场景⑤ metafile 捕获回滚 == 通过（CAS 命中写回 + 跨提交去重 %d digest + 零网络零介入 committed cR4=%s）\n", before, cR4)
 
 	// ---- 场景②：partial（红线④）----
 	// D3（纯外部漂移，不经 sync——restore 判定面直接观察）：运行端 pg-e 改写
-	//（v0 从未保全 → CAS miss → user_object_required）+ 手放 jar（deletion_warn
-	// 删除行来源；无 metafile 无 .index 的裸 jar 不进 sync 计划面）。手放 jar
-	// 与 pg-e 漂移同批进入 restore 输入快照。
+	// + 手放 jar（deletion_warn 删除行来源；无 metafile 无 .index 的裸 jar 不进
+	// sync 计划面）。手放 jar 与 pg-e 漂移同批进入 restore 输入快照。CAS miss
+	// 由目标对象直删手术构造（票 #93 摄取面泛化后 v0 随收口入 CAS，见下）。
 	if err := os.WriteFile(filepath.Join(gameCfg, "pg-e.toml"), []byte(rstPgE2), 0o644); err != nil {
 		return err
 	}
 	if err := os.WriteFile(filepath.Join(gameDir, "mods", "hand-placed-1.0.jar"), []byte("hand placed jar"), 0o644); err != nil {
 		return err
 	}
+	// CAS miss 构造（验收规格 §3 同款手术，场景③ 先例）：票 #93 摄取面泛化后，
+	// 项目侧内容的 v0 已随 c1 收口入 CAS（「运行端漂移天然 miss」的前提不再
+	// 成立——这本身是回滚承诺增强的体现）；user_object_required 行的构造路径
+	// = 直删目标摘要对象，语义与「从未保全」一致（判定面只认 CAS 实存）。
+	pgEDigest := rsha256(rstPgE)
+	pgEObject := filepath.Join(dataRoot, "objects", "sha256", pgEDigest[:2], pgEDigest)
+	if err := os.Remove(pgEObject); err != nil {
+		return fmt.Errorf("场景② 直删 pg-e CAS 对象: %w", err)
+	}
 	if err := rstScan(ctx, app, rel.RelationID); err != nil {
 		return err
 	}
-	// 回滚 c1：pg-e 行 modify（运行侧漂移、CAS miss → user_object_required，
-	// 未补全 → 合法 skip）；手放 jar 为删除行（目标 absent 当前 present、无重
-	// 取信息 → deletion_warn，不可 skip，照删）。
+	// 回滚 c1：pg-e 行 modify（运行侧漂移、目标对象经手术直删 → CAS miss →
+	// user_object_required，未补全 → 合法 skip）；手放 jar 为删除行（目标
+	// absent 当前 present、无重取信息 → deletion_warn，不可 skip，照删）。
 	draft2, err := app.PrepareRestore(ctx, view.PrepareRestoreInput{RelationID: rel.RelationID, CommitID: c1})
 	if err != nil {
 		return fmt.Errorf("场景② PrepareRestore: %w", err)

@@ -59,6 +59,7 @@ func main() {
 	revive := flag.String("revive", "", "从回收站人工复活指定 digest（票 #64 CLI 形态；解压回 objects 并置回 ready）")
 	keepCommits := flag.Int("keep-commits", 0, "写入 config.toml [retention] keep_commits 后继续（0=不动配置；验收 K=3 保底用）")
 	restore := flag.Bool("restore", false, "回滚六场景断言链（P3 票 #60 四场景 + 票 #88 metafile 捕获回滚：ADR-0012 出口① + 票 #95 存量降级 skip 链：ADR-0012 出口③；需 -plain-mods 夹具；假 CDN 进程自动拉起供探测端点）")
+	mergeChain := flag.Bool("merge", false, "合并执行面三场景断言链（票 #93 acceptance:merge：merged_clean 全链/回滚零网络/授权模式；需含手工样本的 -dual-edit 型夹具；零 CDN 配置）")
 	cdnURL := flag.String("cdn", "", "假 CDN BaseURL（票 #66 验收缝，如 http://127.0.0.1:PORT/files）：下载引擎与 CF 探测指向假 CDN 进程（pgfixture -serve），零真网；空 = 生产 CDN 前缀")
 	downloadChain := flag.Bool("download", false, "假 CDN 五场景断言链（票 #66 acceptance:download：成功链/探测降标/failed 可重入/剔除语义/续传；零真网。独立 fixture 与数据目录；-cdn 为空时自动拉起 pgfixture -serve）")
 	restoreTarget := flag.Bool("restore-target", false, "restore 强杀目标进程（票 #66 acceptance:recovery:restore）：建夹具历史（c1/c2）→ PrepareRestore(最老提交) → ConfirmRestorePlan → 轮询至 committed；stdout 相位标记供 pgrecovery killwindow 观察（-cdn 为空时自动拉起假 CDN 进程）")
@@ -198,6 +199,25 @@ func main() {
 		if err := runRestoreTarget(ctx, app, projectAbs, instanceAbs, cdn); err != nil {
 			log.Fatalf("-restore-target 链路失败: %v", err)
 		}
+		return
+	}
+
+	// 票 #93：-merge 合并执行面三场景链（独立模；合并 Base 侧与回滚实存判定
+	// 依赖提交收口期摄取通道，零 CDN 配置即零网络证据）。
+	if *mergeChain {
+		rel0 := ensureRelation(ctx, app, projectAbs, instanceAbs)
+		stats, err := runMergeChain(ctx, stack, app, rel0, projectAbs, instanceAbs)
+		if err != nil {
+			log.Fatalf("-merge 链路失败: %v", err)
+		}
+		if *metricsPath != "" {
+			writeMetrics(*metricsPath, metricsRecord{
+				Schema: "p3-perf-run/1", CapturedAt: time.Now().UTC().Format(time.RFC3339),
+				ProjectRoot: projectAbs, InstanceDir: instanceAbs, DataRoot: root,
+				Machine: newMachineInfo(), Merge: stats,
+			})
+		}
+		fmt.Println("headless -merge 链路完成（三场景断言全过）")
 		return
 	}
 
@@ -435,6 +455,7 @@ type metricsRecord struct {
 	Apply        *applyChainStats   `json:"apply,omitempty"`   // 仅 -apply 链路成功时非空
 	Restore      *restoreChainStats `json:"restore,omitempty"` // 仅 -restore-cold 链路（票 #66）
 	GC           *gcChainStats      `json:"gc,omitempty"`      // 仅 -gc 链路（票 #66）
+	Merge        *mergeChainStats   `json:"merge,omitempty"`   // 仅 -merge 链路（票 #93：merge 分相只记录不设门槛）
 }
 
 func writeMetrics(path string, rec metricsRecord) {
