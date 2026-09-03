@@ -1,7 +1,8 @@
 package main
 
-// pgheadless -merge（P4 票 #93；验收规格 §3.2 场景 1/2/3）：合并执行面 A 口径
-// 断言链。独立 fixture 与数据目录（Taskfile acceptance:merge 供数）：
+// pgheadless -merge（P4 票 #93；验收规格 §3.2 四场景；场景④票 #98 补齐）：
+// 合并执行面 A 口径断言链。独立 fixture 与数据目录（Taskfile acceptance:merge
+// 供数）：
 //
 //	场景① merged_clean 全链：初次同步 → 手工注释样本双侧互不重叠改动 +
 //	   mod metafile 注入手工注释（语义不变、内容实测变）→ PrepareSync 断言
@@ -16,6 +17,11 @@ package main
 //	场景③ 授权模式口径：授权开态 → QuickUpdate 含 merged_clean 行随非冲突
 //	   批量免确认直达 apply_started/committed → 落盘字节=重算产物；再构造
 //	   同段真冲突 → QuickUpdate 永不自动、停 awaiting_confirmation（红线①）。
+//	场景④ 预览与错误码（票 #94 GetMergedPreview；#93 链上断言移交 #98）：
+//	   a) resolved 计划的 merged 行预览「所见即所写」——content=确认后落盘
+//	      字节（同算法同输入）、base_content=基线全文；b) 对冲突行预览 →
+//	      err.merge.not_mergeable（{0}=resource_id）；c) SQL 手术置过期的新
+//	      merged draft 仍可预览（只读，零有效期校验）且 content=重算产物。
 //
 // -metrics 时记录 merge 分相（diff3/校验/写盘，LastApplyTiming 供数）。
 
@@ -143,14 +149,32 @@ func runMergeChain(ctx context.Context, stack *bootstrap.Stack, app syncapp.Appl
 	if len(resolved.ConfirmationRequirements) != 0 {
 		return nil, fmt.Errorf("场景① merged_clean 属非冲突操作，确认要求应为空: %+v", resolved.ConfirmationRequirements)
 	}
-	c1, err := mrgConfirmAndWait(ctx, app, resolved.PlanID)
-	if err != nil {
-		return nil, fmt.Errorf("场景① confirm/apply: %w", err)
-	}
 	// 确定性重算产物（同算法同输入同输出——harness 以 merge.Texts 复算）。
 	product := string(merge.Texts(baseBytes, []byte(projBefore), []byte(rtBefore)).Merged)
 	if len(merge.Texts(baseBytes, []byte(projBefore), []byte(rtBefore)).Hunks) != 0 {
 		return nil, fmt.Errorf("场景① 夹具自检：样本应干净合并")
+	}
+	// ---- 场景④a 预览「所见即所写」（票 #98 补齐 §3.2 场景④；#94）：
+	// resolved 计划的 merged 行预览 content=确认后落盘字节（同算法同输入），
+	// base_content=基线全文。取数在 confirm 前——预览三侧走端点活文件并复核
+	// 计划输入快照指纹（merge_preview.go 口径），confirm 后活文件被合并产物
+	// 覆盖即属外部写者竞态语义，预览断言必须在落盘前完成。----
+	pv, err := app.GetMergedPreview(ctx, view.GetMergedPreviewInput{
+		PlanID: resolved.PlanID, ResourceID: string(mergedResource),
+	})
+	if err != nil {
+		return nil, fmt.Errorf("场景④a GetMergedPreview: %w", err)
+	}
+	if pv.Content != product {
+		return nil, fmt.Errorf("场景④a 预览 content≠确定性重算产物（所见即所写不成立）\n got=%q\nwant=%q", pv.Content, product)
+	}
+	if pv.BaseContent != string(baseBytes) {
+		return nil, fmt.Errorf("场景④a 预览 base_content≠基线全文（标注锚点不成立）\n got=%q\nwant=%q", pv.BaseContent, string(baseBytes))
+	}
+	fmt.Printf("== 场景④a 合并预览所见即所写 == 通过（content=%dB=落盘产物，base_content=%dB=基线全文）\n", len(pv.Content), len(pv.BaseContent))
+	c1, err := mrgConfirmAndWait(ctx, app, resolved.PlanID)
+	if err != nil {
+		return nil, fmt.Errorf("场景① confirm/apply: %w", err)
 	}
 	for path, want := range map[string]string{projFile: product, rtFile: product} {
 		got, rerr := os.ReadFile(path)
@@ -297,6 +321,79 @@ func runMergeChain(ctx context.Context, stack *bootstrap.Stack, app syncapp.Appl
 		return nil, fmt.Errorf("场景③ 停靠后不得有活跃任务（红线①）: %d", len(active.Items))
 	}
 	fmt.Printf("== 场景③b 含冲突停靠 == 通过（永不自动，停 awaiting_confirmation）\n")
+
+	// ---- 场景④c 非 merged 行预览拒绝（票 #98 补齐 §3.2 场景④）：冲突行
+	// 预览 → err.merge.not_mergeable（{0}=resource_id）。取数在文件再改动前
+	// ——预览按计划锁定快照复核活文件指纹，改动后属竞态语义（透传），不再是
+	// not_mergeable 的干净证据。----
+	conflictResource := string(docked.Conflicts[0].ResourceID)
+	_, pvErr := app.GetMergedPreview(ctx, view.GetMergedPreviewInput{
+		PlanID: qu2.PlanID, ResourceID: conflictResource,
+	})
+	if pvErr == nil || errs.CodeOf(pvErr) != "err.merge.not_mergeable" {
+		return nil, fmt.Errorf("场景④c 冲突行预览应 err.merge.not_mergeable: %v", pvErr)
+	}
+	args := errs.ArgsOf(pvErr)
+	if len(args) == 0 || args[0] != conflictResource {
+		return nil, fmt.Errorf("场景④c not_mergeable 的 {0} 应为 resource_id: %v（want %s）", args, conflictResource)
+	}
+	fmt.Printf("== 场景④c 非 merged 行预览拒绝 == 通过（err.merge.not_mergeable {0}=%s）\n", conflictResource)
+
+	// ---- 场景④b stale/expired 计划仍可预览（只读；票 #98 补齐）：还原双侧
+	// 到 product3 解除③b 冲突差异 → 再做一轮互不重叠双改 → 新 draft 含
+	// merged_clean 行 → SQL 手术置 expires_at 过期（造数手术，沿 #95/#96 先例）
+	// → 预览零有效期校验仍返回，content=同算法重算产物。----
+	if err := os.WriteFile(projFile, []byte(product3), 0o644); err != nil {
+		return nil, err
+	}
+	if err := os.WriteFile(rtFile, []byte(product3), 0o644); err != nil {
+		return nil, err
+	}
+	proj4 := mrgMustReplace(product3, "render_distance = 20", "render_distance = 22")
+	rt4 := mrgMustReplace(product3, "master_volume = 0.55", "master_volume = 0.40")
+	if err := os.WriteFile(projFile, []byte(proj4), 0o644); err != nil {
+		return nil, err
+	}
+	if err := os.WriteFile(rtFile, []byte(rt4), 0o644); err != nil {
+		return nil, err
+	}
+	if _, err := app.StartScan(ctx, rel.RelationID); err != nil {
+		return nil, err
+	}
+	waitScan(ctx, app, rel.RelationID)
+	draft4, err := mrgPrepareSync(ctx, app, rel)
+	if err != nil {
+		return nil, fmt.Errorf("场景④b PrepareSync: %w", err)
+	}
+	if draft4.Summary.MergedCleanCount != 1 || draft4.Summary.ConflictCount != 0 {
+		return nil, fmt.Errorf("场景④b summary = %+v，期望 merged_clean=1 冲突=0", draft4.Summary)
+	}
+	if len(draft4.Operations) != 1 || draft4.Operations[0].Kind != "write_merged" {
+		return nil, fmt.Errorf("场景④b 操作面 %+v，期望单条 write_merged", draft4.Operations)
+	}
+	// 过期手术（造数手术，沿 #95/#96 先例）：status 置 confirmed + expires_at
+	// 置过去——「过期的已确认计划」（用户故事 9「过期待确认计划仍可预览」的字
+	// 面）。选 confirmed 而非 draft/resolved 过期是确定性要求：惰性清理
+	// DeleteExpiredPlans 只物理删过期/过时的 draft/resolved 行，而④b 扫描任务
+	// 的终态钩子异步触发清理，与断言存在调度竞态；confirmed 行不在判定域内，
+	// 预览（零状态/零有效期校验）读到的一定是过期计划本身。
+	if _, err := stack.DB.ExecContext(ctx,
+		"UPDATE sync_plans SET status='confirmed', expires_at=? WHERE id=?",
+		"2000-01-01T00:00:00Z", draft4.PlanID); err != nil {
+		return nil, fmt.Errorf("场景④b 过期手术: %w", err)
+	}
+	pv4, err := app.GetMergedPreview(ctx, view.GetMergedPreviewInput{
+		PlanID: draft4.PlanID, ResourceID: string(draft4.Operations[0].ResourceID),
+	})
+	if err != nil {
+		return nil, fmt.Errorf("场景④b 过期计划预览应只读可用: %w", err)
+	}
+	product4 := string(merge.Texts([]byte(product3), []byte(proj4), []byte(rt4)).Merged)
+	if pv4.Content != product4 || pv4.BaseContent != product3 {
+		return nil, fmt.Errorf("场景④b 过期计划预览≠重算产物（content 一致=%v base 一致=%v）",
+			pv4.Content == product4, pv4.BaseContent == product3)
+	}
+	fmt.Printf("== 场景④b stale/expired 计划预览 == 通过（只读可预览，content=重算产物）\n")
 
 	stats := &mergeChainStats{
 		Kind:            "merge",
