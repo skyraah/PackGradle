@@ -1,8 +1,0 @@
-name = "Perf Fixture"
-author = "pgfixture"
-version = "1.0.0"
-
-[index]
-file = "index.toml"
-hash-format = "sha256"
-hash = "6713ac9ca3c20562cb6ccc906b719b65c7fdedeb661fab3aef5eca6b2a5baf8f"

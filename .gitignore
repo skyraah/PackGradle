@@ -27,3 +27,12 @@ build/perf/
 # A 口径 headless 链路（acceptance:headless）产物：fixture 与用户数据目录不入 git
 build/headless/
 build/gc/
+
+# 验收链运行产物（L0 harness 输出，不入 git；沿 build/android/.gradle 先例）
+build/headless/
+build/perf/
+build/recovery/
+build/gc/
+build/l1/
+build/merge/
+build/watcher/

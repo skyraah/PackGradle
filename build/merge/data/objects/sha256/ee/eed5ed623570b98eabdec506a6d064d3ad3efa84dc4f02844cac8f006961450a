@@ -1,8 +1,0 @@
-name = "Fixture Mod 0005"
-filename = "fixture-mod-0005-1.2.6.jar"
-side = "server"
-
-[download]
-url = "https://example.dev/fixture-mod-0005-1.2.6.jar"
-hash-format = "sha256"
-hash = "0000000000000000000000000000000000000000000000004d3d38fdda7d6675"
