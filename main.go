@@ -1,22 +1,26 @@
 package main
 
 import (
+	"context"
 	"embed"
 	"encoding/json"
 	"errors"
 	"log/slog"
 	"os"
 	"path/filepath"
+	"time"
 
 	"packgradle/internal/appconfig"
 	"packgradle/internal/bootstrap"
 	"packgradle/internal/errs"
+	"packgradle/internal/notify"
 	"packgradle/internal/service"
 	"packgradle/internal/sessionlog"
 	"packgradle/internal/singleinstance"
 	"packgradle/internal/store"
 
 	"github.com/wailsapp/wails/v3/pkg/application"
+	"github.com/wailsapp/wails/v3/pkg/services/notifications"
 )
 
 // Wails 会将 frontend/dist 下的文件嵌入二进制，作为前端资源服务器。
@@ -24,6 +28,23 @@ import (
 
 //go:embed all:frontend/dist
 var assets embed.FS
+
+// localeZH 是唯一文案源 zh-CN.json（前端 i18n 同源；票 #97 起系统通知文案等
+// 后端可见的非 err.* 界面文案也从此取，不再有 Go 侧第二文案出处）。
+//
+//go:embed frontend/src/locales/zh-CN.json
+var localeZH []byte
+
+// loadNotifyCopy 从 zh-CN.json 取系统通知文案（票 #97）。解析失败或键缺失退
+// notify.DefaultCopy 同文缺省，不阻断启动、不静默丢通知。
+func loadNotifyCopy() notify.Copy {
+	var kv map[string]string
+	if err := json.Unmarshal(localeZH, &kv); err != nil {
+		slog.Warn("系统通知文案解析失败（退内置缺省）", "err", err)
+		return notify.DefaultCopy()
+	}
+	return notify.NewCopy(kv["notify.pendingPlan.title"], kv["notify.pendingPlan.body"])
+}
 
 // marshalError 将结构化错误（errs.AppError）序列化为 JSON 传给前端，
 // 前端从 err.cause 读取 {code, args, detail} 并按语言文件渲染。
@@ -88,10 +109,25 @@ func main() {
 	// 常驻监听（窗口开闭无关）；事件源不可用已在装配期降级回手动。
 	newStack.StartWatcher()
 
+	// 系统通知平台面装配（票 #97，契约 07 §3.5）：Windows=wails notifications
+	// 服务（wintoast 子包，随已 pin 的 wails 模块）；文案取 zh-CN locale 唯一
+	// 文案源（非 err.* 界面文案也入 locale）；工作区显示名供 toast 文案槽。
+	// 非 Windows 构建恒不弹（v1 平台面，横幅/角标照常）。headless 工具不经此处。
+	notify.AttachWails(newStack.Notify, loadNotifyCopy(), func(relationID string) string {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		w, err := newStack.App.GetWorkspace(ctx, relationID)
+		if err != nil {
+			return ""
+		}
+		return w.Relation.Project.DisplayName
+	})
+
 	// 创建 Wails 应用。'Bind' 中注册的 Go 服务方法可供前端直接调用。
 	// 新旧并存：legacy 三服务保持既有行为（已冻结）；SyncService 为 P1 只读核心出口，
 	// ProjectService/RuntimeService 为端点管理出口（/sources、/runtimes 页），
-	// SettingsService 为设置/开关域出口（契约 06 §2）。
+	// SettingsService 为设置/开关域出口（契约 06 §2）。notifications 服务
+	//（票 #97）提供 toast 发送面与 ServiceStartup（wintoast 注册/激活回调）。
 	app := application.New(application.Options{
 		Name:        "PackGradle",
 		Description: "packwiz 与 Prism Launcher 整合包开发环境工具",
@@ -103,6 +139,7 @@ func main() {
 			application.NewService(newStack.ProjectService),
 			application.NewService(newStack.RuntimeService),
 			application.NewService(newStack.Settings),
+			application.NewService(notifications.New()),
 		},
 		MarshalError: marshalError,
 		Assets: application.AssetOptions{

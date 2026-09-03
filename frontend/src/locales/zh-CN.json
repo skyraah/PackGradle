@@ -698,6 +698,8 @@
   "workspaces.quickUpdate.upToDate": "已是最新，无需更新",
   "workspaces.quickUpdate.waitTimeout": "任务长时间未收口，快速更新已中止；请到任务中心查看进度",
   "workspaces.pendingPlanBadge": "有待确认计划",
+  "notify.pendingPlan.title": "「{0}」有待确认计划",
+  "notify.pendingPlan.body": "自动同步已停靠待人工确认，点击直达计划页处理。",
   "workspaces.settings.title": "工作区设置",
   "workspaces.settings.subtitle": "工作区级开关与偏好",
   "workspaces.settings.backToList": "前往工作区列表",
