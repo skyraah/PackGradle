@@ -478,6 +478,27 @@ type QuickUpdateResultView struct {
 	ApplyTaskID string `json:"apply_task_id,omitempty"` // 仅 apply_started 回填
 }
 
+// ---- 合并预览投影（契约 07 §3.4；票 #94）----
+
+// GetMergedPreviewInput 是合并预览用例输入：只收 plan_id + resource_id。
+// stale/expired 计划仍可预览（只读），不做修订/有效期拦截。
+type GetMergedPreviewInput struct {
+	PlanID     string `json:"plan_id"`
+	ResourceID string `json:"resource_id"`
+}
+
+// MergedPreviewView 是 merged_clean 行的合并预览（契约 07 §3.4 MergedPreviewDTO
+// 的应用层投影，transport 负责转 DTO）：Content=合并后全文（与暂存期重算同一
+// 确定性逻辑，所见即所写）、BaseContent=基线全文（前端行级增删改标注的比对
+// 锚点）。行级标注与语法高亮是渲染层职责，后端只供两段全文。
+type MergedPreviewView struct {
+	PlanID       string `json:"plan_id"`
+	ResourceID   string `json:"resource_id"`
+	RelativePath string `json:"relative_path"`
+	Content      string `json:"content"`
+	BaseContent  string `json:"base_content"`
+}
+
 // ---- 设置域投影（契约 06 §3.6；票 #57）----
 
 // RetentionSettingsView 是保留策略设置投影（config.toml [retention] 承载，

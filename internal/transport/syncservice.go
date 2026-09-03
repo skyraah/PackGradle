@@ -275,6 +275,19 @@ func (s *SyncService) QuickUpdate(relationID string) (QuickUpdateResultDTO, erro
 	return quickUpdateResultDTO(v), nil
 }
 
+// GetMergedPreview 合并预览（契约 07 §2/§3.4，票 #94）：merged_clean 行实时
+// 计算两段全文（合并后 + 基线），不落库；stale/expired 计划仍可预览（只读）；
+// 非 merged_clean 行 → err.merge.not_mergeable（{0}=resource_id）。
+func (s *SyncService) GetMergedPreview(planID, resourceID string) (MergedPreviewDTO, error) {
+	v, err := s.app.GetMergedPreview(context.Background(), view.GetMergedPreviewInput{
+		PlanID: planID, ResourceID: resourceID,
+	})
+	if err != nil {
+		return MergedPreviewDTO{}, err
+	}
+	return mergedPreviewDTO(v), nil
+}
+
 // GetApplyRun 返回该工作区当前/最近一次 Apply 运行头投影（契约 05 §3.2；票 #39）。
 // 关系无任何运行记录 → err.apply.no_run。
 func (s *SyncService) GetApplyRun(relationID string) (ApplyRunDTO, error) {

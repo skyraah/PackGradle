@@ -36,6 +36,7 @@ export type {
     GetChangesDTO,
     HashCacheStatsDTO,
     MappingRuleDTO,
+    MergedPreviewDTO,
     OperationDTO,
     PlanSummaryDTO,
     PolicyDTO,

@@ -208,6 +208,19 @@ func quickUpdateResultDTO(v view.QuickUpdateResultView) QuickUpdateResultDTO {
 	}
 }
 
+// mergedPreviewDTO 投影合并预览（契约 07 §3.4，票 #94）：两段全文直映，
+// schema_version 由投影补齐（应用层 view 不携带）。
+func mergedPreviewDTO(v view.MergedPreviewView) MergedPreviewDTO {
+	return MergedPreviewDTO{
+		SchemaVersion: model.CurrentSchemaVersion,
+		PlanID:        v.PlanID,
+		ResourceID:    v.ResourceID,
+		RelativePath:  v.RelativePath,
+		Content:       v.Content,
+		BaseContent:   v.BaseContent,
+	}
+}
+
 func representationDTO(r *model.Representation) *RepresentationDTO {
 	if r == nil {
 		return nil
