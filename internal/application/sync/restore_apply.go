@@ -4,7 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log"
+	"log/slog"
 	"path/filepath"
 	"sync"
 	"sync/atomic"
@@ -75,7 +75,7 @@ func (a *App) runRestore(ctx context.Context, queued model.Task) {
 	// 接管检查（runApply 同构）：仅 queued 任务可被引擎拾起。
 	t, err := a.deps.Tasks.Get(ctx, queued.TaskID)
 	if err != nil {
-		log.Printf("restore: 读取任务 %s 失败，放弃接管: %v", queued.TaskID, err)
+		slog.Warn("restore: 读取任务失败，放弃接管", "task", queued.TaskID, "err", err)
 		return
 	}
 	if t.Status != model.TaskStatusQueued {
@@ -86,7 +86,7 @@ func (a *App) runRestore(ctx context.Context, queued model.Task) {
 	}
 	run, err := a.deps.ApplyRuns.Get(ctx, t.TaskID)
 	if err != nil {
-		log.Printf("restore: 读取任务 %s 的运行头失败: %v", t.TaskID, err)
+		slog.Warn("restore: 读取任务的运行头失败", "task", t.TaskID, "err", err)
 		return
 	}
 	if run.State != model.ApplyRunPrepared {
@@ -312,8 +312,12 @@ func (a *App) runRestore(ctx context.Context, queued model.Task) {
 	rescanP.CapturedAt = nowStr
 	rescanR.SnapshotID = a.deps.IDs("snap_")
 	rescanR.CapturedAt = nowStr
+	// 基线内容摄取（ADR-0012 §2/规格 §F2）：restore 结果基线与 sync 同款通道，
+	// 项目侧 mod 表示按 Content digest 统一从工作树读字节入 CAS（Put 幂等；
+	// 竞态降级记诊断不失败提交）。引用行与提交同事务落 object_refs。
+	contentRefs, ingestDiags := a.ingestBaselineProjectContent(ctx, proj.RootPath, &newBaseline)
 	commit := buildSyncCommit(rel, plan, commitID, baselineID, nowStr, completeness, remaining,
-		rescanP.SnapshotID, rescanR.SnapshotID, buildRestoreCommitChanges(keepPlans, snapP, snapR, rescanP, rescanR), nil)
+		rescanP.SnapshotID, rescanR.SnapshotID, buildRestoreCommitChanges(keepPlans, snapP, snapR, rescanP, rescanR), nil, ingestDiags)
 	// restore 账目（ADR-0006 §9）：parent=当前 head（历史追加不改写）、
 	// previous_baseline=回滚前的头基线（计划 BaseBaselineID 是目标基线，不是
 	// 回滚前的头）；kind=restore 由 buildSyncCommit 沿 plan.Kind 承载。
@@ -338,6 +342,7 @@ func (a *App) runRestore(ctx context.Context, queued model.Task) {
 				casRefs = append(casRefs, *s.casRef)
 			}
 		}
+		casRefs = append(casRefs, contentRefs...)
 		if err := repos.Commits.InsertObjectRefs(ctx, "commit", commitID, casRefs); err != nil {
 			return fmt.Errorf("写入对象引用: %w", err)
 		}
@@ -375,13 +380,13 @@ func (a *App) runRestore(ctx context.Context, queued model.Task) {
 	//（用户补全字节提交后随计划清理，契约 06 §0.3；failed 重试路径不清锚，
 	// 跨运行延续）。清理幂等可重试，失败保留证据（staging_cleared 保持 false）。
 	if err := syncstage.CleanupRun(a.deps.StagingRoot, t.TaskID); err != nil {
-		log.Printf("restore: 清理暂存失败（staging_cleared 保持未清理，可重试）: %v", err)
+		slog.Warn("restore: 清理暂存失败（staging_cleared 保持未清理，可重试）", "err", err)
 	} else if err := a.deps.ApplyRuns.MarkStagingCleared(commitCtx, t.TaskID, a.nowStr()); err != nil {
-		log.Printf("restore: 记录 staging_cleared 失败: %v", err)
+		slog.Warn("restore: 记录 staging_cleared 失败", "err", err)
 	}
 	if anchor := restoreStagingAnchor(plan); anchor != t.TaskID {
 		if err := syncstage.CleanupRun(a.deps.StagingRoot, anchor); err != nil {
-			log.Printf("restore: 清理计划暂存锚 %s 失败（可重试）: %v", anchor, err)
+			slog.Warn("restore: 清理计划暂存锚失败（可重试）", "anchor", anchor, "err", err)
 		}
 	}
 
@@ -392,7 +397,7 @@ func (a *App) runRestore(ctx context.Context, queued model.Task) {
 	t.CommitID = commitID
 	t.Outcome = completeness
 	if _, err := a.runner.Update(commitCtx, t); err != nil {
-		log.Printf("restore: 任务 %s 成功终态落库失败: %v", t.TaskID, err)
+		slog.Warn("restore: 任务成功终态落库失败", "task", t.TaskID, "err", err)
 		return
 	}
 	// relation_invalidated 在 committed 事务提交后发射（契约 06 §7 新发射点，
@@ -441,7 +446,7 @@ func deriveRestoreFilePlans(plan model.SyncPlan, base *model.SyncBaseline,
 			recoverability:  defaultRecoverability(op.ResourceID),
 			materialization: model.MaterializationCopy,
 		}
-		_, tgtSide, known := applySideForOp(op.Kind)
+		_, tgtSide, known := applySideForOp(op)
 		if !known {
 			fp.blockedCode = resultUnsupportedOp
 			out = append(out, fp)
@@ -580,7 +585,7 @@ func (a *App) fetchRestoreDownloads(ctx context.Context, run *syncstage.Run, pla
 				fp.blockedCode = resultContentUnavailable
 			}
 		}
-		log.Printf("restore: 下载引擎未装配，%d 个重取行按取数失败处置", len(reqs))
+		slog.Warn("restore: 下载引擎未装配，重取行按取数失败处置", "count", len(reqs))
 		return nil
 	}
 
@@ -913,7 +918,7 @@ func buildRestoreResultBaseline(relID, parentID string, rescanP, rescanR model.O
 		// buildVerifiedBaseline 仅在表示不可语义摘要时报错；restore 的写回目标
 		// 已在 prepare/verify 两处按同一口径摘要成功，此分支不可达，防御性返回
 		//（调用方 committed 事务内插入失败走恢复面）。
-		log.Printf("restore: 构造结果基线失败（防御分支）: %v", err)
+		slog.Warn("restore: 构造结果基线失败（防御分支）", "err", err)
 		return model.SyncBaseline{}
 	}
 	if len(skipIDs) > 0 && base != nil {
@@ -923,7 +928,7 @@ func buildRestoreResultBaseline(relID, parentID string, rescanP, rescanR model.O
 			}
 		}
 		if b.BaselineDigest, err = normalize.BaselineDigest(b); err != nil {
-			log.Printf("restore: 重算结果基线摘要失败（防御分支）: %v", err)
+			slog.Warn("restore: 重算结果基线摘要失败（防御分支）", "err", err)
 		}
 	}
 	return b
@@ -939,12 +944,12 @@ func (a *App) failRestoreFailed(ctx context.Context, t model.Task, run model.App
 	code string, args []string, cause error) {
 
 	if err := a.deps.ApplyRuns.AdvanceState(ctx, run.TaskID, model.ApplyRunFailed, a.nowStr()); err != nil {
-		log.Printf("restore: 运行 %s 推进 failed 失败: %v", run.TaskID, err)
+		slog.Warn("restore: 运行推进 failed 失败", "run", run.TaskID, "err", err)
 	}
 	if err := syncstage.CleanupRun(a.deps.StagingRoot, run.TaskID); err != nil {
-		log.Printf("restore: 清理 failed 运行暂存失败（可重试）: %v", err)
+		slog.Warn("restore: 清理 failed 运行暂存失败（可重试）", "err", err)
 	} else if err := a.deps.ApplyRuns.MarkStagingCleared(ctx, run.TaskID, a.nowStr()); err != nil {
-		log.Printf("restore: 记录 staging_cleared 失败: %v", err)
+		slog.Warn("restore: 记录 staging_cleared 失败", "err", err)
 	}
 
 	t.Status = model.TaskStatusFailed
@@ -953,11 +958,11 @@ func (a *App) failRestoreFailed(ctx context.Context, t model.Task, run model.App
 	t.CanCancel = false
 	t.Problem = &model.Problem{Code: code, Args: args, Detail: cause.Error()}
 	if _, err := a.runner.Update(ctx, t); err != nil {
-		log.Printf("restore: 任务 %s failed 终态落库失败: %v", t.TaskID, err)
+		slog.Warn("restore: 任务 failed 终态落库失败", "task", t.TaskID, "err", err)
 		return
 	}
-	log.Printf("restore: 运行 %s staging 相位失败（code=%s），failed 终局（零部分提交，不进恢复面）: %v",
-		run.TaskID, code, cause)
+	slog.Warn("restore: 运行 staging 相位失败，failed 终局（零部分提交，不进恢复面）",
+		"run", run.TaskID, "code", code, "cause", cause)
 }
 
 // recoverRestore 是 restore 运行 applying 及之后失败的恢复出口（recoverApply
@@ -966,18 +971,18 @@ func (a *App) failRestoreFailed(ctx context.Context, t model.Task, run model.App
 func (a *App) recoverRestore(ctx context.Context, t model.Task, run model.ApplyRun, fromState, code string, cause error) {
 	if !applyRunTerminal(fromState) {
 		if err := a.deps.ApplyRuns.AdvanceState(ctx, run.TaskID, model.ApplyRunRecoveryRequired, a.nowStr()); err != nil {
-			log.Printf("restore: 运行 %s 推进 recovery_required 失败（已是终态或库不可写）: %v", run.TaskID, err)
+			slog.Warn("restore: 运行推进 recovery_required 失败（已是终态或库不可写）", "run", run.TaskID, "err", err)
 		}
 	}
 	if err := a.deps.Relations.UpdateHealth(ctx, run.RelationID, model.HealthRecoveryRequired); err != nil {
-		log.Printf("restore: 关系 %s 标记恢复态失败: %v", run.RelationID, err)
+		slog.Warn("restore: 关系标记恢复态失败", "relation", run.RelationID, "err", err)
 	}
 	t.Status = model.TaskStatusRecoveryRequired
 	t.MessageKey = "msg.task.restore.recovery_required"
 	t.Problem = &model.Problem{Code: CodeRecoveryInProgress, Detail: cause.Error()}
 	if _, err := a.runner.Update(ctx, t); err != nil {
-		log.Printf("restore: 任务 %s 恢复终态落库失败: %v", t.TaskID, err)
+		slog.Warn("restore: 任务恢复终态落库失败", "task", t.TaskID, "err", err)
 		return
 	}
-	log.Printf("restore: 运行 %s 进入 recovery_required（code=%s）: %v", run.TaskID, code, cause)
+	slog.Warn("restore: 运行进入 recovery_required", "run", run.TaskID, "code", code, "cause", cause)
 }

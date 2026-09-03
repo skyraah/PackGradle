@@ -15,10 +15,20 @@ import (
 // （Apply 运行头/逐操作/历史提交）自票 #39 起挂载。
 type SyncService struct {
 	app syncapp.Application
+	// quickUpdateResult 订阅手动快速更新收口（票 #92：watch 面订阅其结果即
+	// 手动成功——paused 复位 active 的接线点；不改 QuickUpdate 用例编排）。
+	// bootstrap 装配监听引擎时注入；nil=无监听面（headless 工具）。
+	quickUpdateResult func(relationID string, chainErr error)
 }
 
 // NewSyncService 构造服务。
 func NewSyncService(app syncapp.Application) *SyncService { return &SyncService{app: app} }
+
+// AttachQuickUpdateResult 订阅手动快速更新收口（bootstrap 装配监听引擎时调用
+// 一次；自动链直接调应用用例、不经本服务，天然只有手动入口抵达）。
+func (s *SyncService) AttachQuickUpdateResult(notify func(relationID string, chainErr error)) {
+	s.quickUpdateResult = notify
+}
 
 // ServiceName 返回服务注册名（Wails v3 生命周期可选接口）。
 func (s *SyncService) ServiceName() string { return "packgradle.core.SyncService" }
@@ -262,6 +272,35 @@ func (s *SyncService) ConfirmPlan(input ConfirmPlanDTO) (TaskDTO, error) {
 		return TaskDTO{}, err
 	}
 	return taskDTO(v), nil
+}
+
+// QuickUpdate 统一快速更新（契约 07 §2/§3.1，票 #86）：阻塞到链收口再返回
+//（对 wire 是一次 Promise），同步三态 no_diff|apply_started|awaiting_confirmation；
+// 链内失败 AppError 透传零新码。
+func (s *SyncService) QuickUpdate(relationID string) (QuickUpdateResultDTO, error) {
+	v, err := s.app.QuickUpdate(context.Background(), view.QuickUpdateInput{RelationID: relationID})
+	// 手动快速更新收口订阅（契约 07 §3.2：paused 由手动快速更新成功复位）；
+	// 失败也通知（自动面只在成功时复位，失败是 no-op），通知不影响返回值。
+	if s.quickUpdateResult != nil {
+		s.quickUpdateResult(relationID, err)
+	}
+	if err != nil {
+		return QuickUpdateResultDTO{}, err
+	}
+	return quickUpdateResultDTO(v), nil
+}
+
+// GetMergedPreview 合并预览（契约 07 §2/§3.4，票 #94）：merged_clean 行实时
+// 计算两段全文（合并后 + 基线），不落库；stale/expired 计划仍可预览（只读）；
+// 非 merged_clean 行 → err.merge.not_mergeable（{0}=resource_id）。
+func (s *SyncService) GetMergedPreview(planID, resourceID string) (MergedPreviewDTO, error) {
+	v, err := s.app.GetMergedPreview(context.Background(), view.GetMergedPreviewInput{
+		PlanID: planID, ResourceID: resourceID,
+	})
+	if err != nil {
+		return MergedPreviewDTO{}, err
+	}
+	return mergedPreviewDTO(v), nil
 }
 
 // GetApplyRun 返回该工作区当前/最近一次 Apply 运行头投影（契约 05 §3.2；票 #39）。

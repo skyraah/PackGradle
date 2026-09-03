@@ -90,6 +90,13 @@ type WorkspaceStateDTO struct {
 	RelationHealth   string `json:"relation_health"`
 	ActiveTaskID     string `json:"active_task_id,omitempty"`
 	RelationRevision int    `json:"relation_revision"`
+	// PendingPlanID 是最新一张待人工计划（契约 07 §3.2，票 #86；只增不删）：
+	// status ∈ {draft, resolved} 且非 stale/expired/applied 的最新计划，无则空。
+	// 系统通知去重依据与前端「有待确认计划」角标数据源。
+	PendingPlanID string `json:"pending_plan_id,omitempty"`
+	// WatchStatus 是监听状态投影（契约 07 §3.2，票 #92；只增不删）：
+	// active|unavailable|paused，空串=未挂载；会话内存态，零持久化零 schema。
+	WatchStatus string `json:"watch_status,omitempty"`
 }
 
 // SnapshotSummaryDTO 是快照摘要。
@@ -281,6 +288,9 @@ type PlanSummaryDTO struct {
 	ModifyCount     int `json:"modify_count"`
 	DeleteCount     int `json:"delete_count"`
 	ConflictCount   int `json:"conflict_count"`
+	// MergedCleanCount 是干净合并行数（ADR-0009 §4，票 #87；契约 07 §3.3）：
+	// 不并入 modify 计数，DTO 只增不删。
+	MergedCleanCount int `json:"merged_clean_count"`
 }
 
 // SyncPlanDTO 是计划投影（Status 反映读取时计算的 stale/expired）。
@@ -411,15 +421,16 @@ type ChangeDTO struct {
 
 // ChangesSummaryDTO 是全量分组计数（不受筛选影响），供筛选条与页脚展示。
 type ChangesSummaryDTO struct {
-	Total           int `json:"total"`
-	NoopCount       int `json:"noop_count"`
-	ConvergedCount  int `json:"converged_count"`
-	AdoptEqualCount int `json:"adopt_equal_count"`
-	InitChoiceCount int `json:"init_choice_count"`
-	CreateCount     int `json:"create_count"`
-	ModifyCount     int `json:"modify_count"`
-	DeleteCount     int `json:"delete_count"`
-	ConflictCount   int `json:"conflict_count"`
+	Total            int `json:"total"`
+	NoopCount        int `json:"noop_count"`
+	ConvergedCount   int `json:"converged_count"`
+	AdoptEqualCount  int `json:"adopt_equal_count"`
+	InitChoiceCount  int `json:"init_choice_count"`
+	CreateCount      int `json:"create_count"`
+	ModifyCount      int `json:"modify_count"`
+	DeleteCount      int `json:"delete_count"`
+	ConflictCount    int `json:"conflict_count"`
+	MergedCleanCount int `json:"merged_clean_count"` // 干净合并行数（ADR-0009 §4，票 #87；契约 07 §3.3）
 }
 
 // ChangesPageDTO 是资源级 Diff 分页。
@@ -436,6 +447,28 @@ type ChangesPageDTO struct {
 // （kind=apply，status=queued，PlanID 字段回填）；幂等重入返回既有任务。
 type ConfirmPlanDTO struct {
 	PlanID string `json:"plan_id"`
+}
+
+// QuickUpdateResultDTO 是一次快速更新链的收口结果（契约 07 §3.1，票 #86：Q1
+// 同步三态）。阻塞到链收口再返回，对 wire 是一次 Promise。
+type QuickUpdateResultDTO struct {
+	SchemaVersion int    `json:"schema_version"`
+	RelationID    string `json:"relation_id"`
+	Outcome       string `json:"outcome"` // no_diff|apply_started|awaiting_confirmation
+	PlanID        string `json:"plan_id,omitempty"`       // apply_started/awaiting_confirmation 回填
+	ApplyTaskID   string `json:"apply_task_id,omitempty"` // 仅 apply_started 回填
+}
+
+// MergedPreviewDTO 是 merged_clean 行的合并结果预览（契约 07 §3.4，票 #94：
+// 实时计算不落库）。行级绿红黄标注与语法高亮由前端对两段全文计算——标注与
+// 高亮是渲染层职责，后端只供两段全文。
+type MergedPreviewDTO struct {
+	SchemaVersion int    `json:"schema_version"`
+	PlanID        string `json:"plan_id"`
+	ResourceID    string `json:"resource_id"`
+	RelativePath  string `json:"relative_path"`
+	Content       string `json:"content"`      // 合并后全文（与暂存期重算同一确定性逻辑，所见即所写）
+	BaseContent   string `json:"base_content"` // 基线全文（增删改标注的比对锚点）
 }
 
 // ---- Apply 运行与历史读 DTO（契约 05 §3 定稿，票 #39；schema_version/slice 归一沿契约 03 §0 硬约束）----
@@ -544,6 +577,19 @@ type UpdateRetentionSettingsDTO struct {
 	TrashDays             int   `json:"trash_days"`
 }
 
+// StorageStatsDTO 是存储占用概览投影（ADR-0011 §8 勘误兑现，票 #90；只读
+// 数据面）。cas_total_bytes + free_disk_bytes 为容量红线双指标承载；staging
+// 侧指标不占位（ADR-0011 §5 雾区，待 #69 决议后补）；阈值与告警 UI 后置。
+type StorageStatsDTO struct {
+	SchemaVersion   int   `json:"schema_version"`
+	CasTotalBytes   int64 `json:"cas_total_bytes"`   // CAS ready 对象字节总量
+	CasObjectCount  int64 `json:"cas_object_count"`  // CAS ready 对象数
+	CasTmpLeftovers int64 `json:"cas_tmp_leftovers"` // objectsRoot 根下 .tmp-* 残留文件数
+	TaskEventsCount int64 `json:"task_events_count"` // task_events 行数
+	DBSizeBytes     int64 `json:"db_size_bytes"`     // packgradle.db（含 -wal）字节数
+	FreeDiskBytes   int64 `json:"free_disk_bytes"`   // 用户数据根所在卷剩余字节数
+}
+
 // ---- 回滚计划面 DTO（契约 06 §3；票 #59；独立族不复用 SyncPlanDTO，Q2）----
 
 // RestorePrepareDTO 是准备回滚输入（Q4：目标 baseline 后端由 commit 推导，
@@ -586,9 +632,12 @@ type RestoreBlockedItemDTO struct {
 // RestorePlanItemDTO 是回滚计划单资源行。Marker 枚举
 // restorable_from_cas|redownload_required|user_object_required|unrecoverable
 //（delete 行不占四标记）；MarkerReason 仅 user_object_required 行
-//（no_redownload_info|cf_unavailable|hash_format_unsupported）；Skipped/Staged
+//（no_redownload_info|cf_unavailable|hash_format_unsupported|no_project_content
+// ——末值为 ADR-0012 §4 存量宽判降级：目标基线项目侧无实测 Content，补全通道
+// 关闭，skip 或项目端改回目标语义后重新 prepare 是仅有的出口）；Skipped/Staged
 // 为读取时实时投影；Availability 仅 redownload_required 行（ok|unknown）；
-// ExpectedDigest 仅 user_object_required 行（验收入库的目标摘要）。
+// ExpectedDigest 仅 user_object_required 行（验收入库的目标摘要；
+// no_project_content 行恒空——该行永不就绪）。
 type RestorePlanItemDTO struct {
 	ResourceID     string `json:"resource_id"`
 	RelativePath   string `json:"relative_path"`

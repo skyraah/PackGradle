@@ -137,6 +137,31 @@ func Generate(ctx context.Context, opts Options) (Result, error) {
 		}
 		res.Files++
 	}
+
+	// ---- 双侧样本文件（票 #87，验收规格 §3.3）----
+	// 手工注释 toml 与二进制资源双侧同字节落盘：初次同步后进基线，
+	// 配合 -dual-edit 构造双侧同改的合并/冲突场景。
+	sampleSeeds := []struct {
+		rel     string // 相对端点根的 slash 路径
+		isBin   bool
+		seedIdx uint64
+	}{
+		{rel: HandmadeTomlRel, isBin: false},
+		{rel: BinarySampleRel, isBin: true, seedIdx: 3_000_000},
+	}
+	for _, s := range sampleSeeds {
+		for _, root := range []string{res.ProjectRoot, gameDir} {
+			abs := filepath.Join(root, filepath.FromSlash(s.rel))
+			if s.isBin {
+				if err := writeBinarySample(ctx, abs, fileSeed(opts.Seed, s.seedIdx)); err != nil {
+					return res, err
+				}
+			} else if _, err := writeFile(ctx, abs, HandmadeToml); err != nil {
+				return res, err
+			}
+			res.Files++
+		}
+	}
 	_ = filepath.WalkDir(opts.OutDir, func(path string, d os.DirEntry, err error) error {
 		if err == nil && !d.IsDir() {
 			if info, ierr := d.Info(); ierr == nil {

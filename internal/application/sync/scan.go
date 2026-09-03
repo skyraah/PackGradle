@@ -4,7 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -49,15 +49,18 @@ func (a *App) StartScan(ctx context.Context, relationID string) (view.TaskView, 
 	}
 
 	// 端点绑定验证：指纹不匹配 → rebind_required，不把新目录当作旧端点
+	// R1（ADR-0011 §7）：指纹采集错误内嵌端点绝对路径，detail 别名化。
 	fpProj, err := a.deps.Fingerprinter.Fingerprint(proj.RootPath)
 	if err != nil {
 		_ = a.deps.Relations.UpdateHealth(ctx, relationID, model.HealthEndpointMissing)
-		return view.TaskView{}, errs.NewDetail(CodeScanEndpointMissing, "项目端点不可达: "+err.Error(), relationID)
+		return view.TaskView{}, errs.NewDetail(CodeScanEndpointMissing,
+			"项目端点不可达: "+model.AliasDetail(proj.RootPath, model.AliasProject, err.Error()), relationID)
 	}
 	fpRt, err := a.deps.Fingerprinter.Fingerprint(rt.RootPath)
 	if err != nil {
 		_ = a.deps.Relations.UpdateHealth(ctx, relationID, model.HealthEndpointMissing)
-		return view.TaskView{}, errs.NewDetail(CodeScanEndpointMissing, "运行时端点不可达: "+err.Error(), relationID)
+		return view.TaskView{}, errs.NewDetail(CodeScanEndpointMissing,
+			"运行时端点不可达: "+model.AliasDetail(rt.RootPath, model.AliasRuntime, err.Error()), relationID)
 	}
 	if fpProj != proj.BindingFingerprint || fpRt != rt.BindingFingerprint {
 		_ = a.deps.Relations.UpdateHealth(ctx, relationID, model.HealthRebindRequired)
@@ -134,7 +137,9 @@ func (a *App) runScan(ctx context.Context, t model.Task, rel model.Relation, pro
 	})
 	timing.ProjectScanMs = time.Since(t0).Milliseconds()
 	if err != nil {
-		fail(CodeScanAdapterFailed, err)
+		// R1（ADR-0011 §7）：适配器错误串可能内嵌端点内绝对路径，任务
+		// Problem.Detail 落库前按端点角色别名化（构造侧统一入口）
+		fail(CodeScanAdapterFailed, model.AliasError(proj.RootPath, model.AliasProject, err))
 		return
 	}
 	if errors.Is(ctx.Err(), context.Canceled) {
@@ -156,7 +161,8 @@ func (a *App) runScan(ctx context.Context, t model.Task, rel model.Relation, pro
 	})
 	timing.RuntimeScanMs = time.Since(t0).Milliseconds()
 	if err != nil {
-		fail(CodeScanAdapterFailed, err)
+		// R1（ADR-0011 §7）：同项目侧，运行时适配器错误落库前别名化
+		fail(CodeScanAdapterFailed, model.AliasError(rt.RootPath, model.AliasRuntime, err))
 		return
 	}
 	if errors.Is(ctx.Err(), context.Canceled) {
@@ -213,7 +219,7 @@ func (a *App) runScan(ctx context.Context, t model.Task, rel model.Relation, pro
 	timing.TotalMs = time.Since(scanStart).Milliseconds()
 	a.recordScanTiming(timing)
 	if _, err := a.runner.Update(commitCtx, t); err != nil {
-		log.Printf("scan: 任务 %s 成功终态落库失败: %v", t.TaskID, err)
+		slog.Warn("scan: 任务成功终态落库失败", "task", t.TaskID, "err", err)
 		return
 	}
 	_ = a.pub.PublishRelationInvalidated(commitCtx, rel.RelationID)

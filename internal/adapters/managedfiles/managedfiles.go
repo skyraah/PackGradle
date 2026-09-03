@@ -31,9 +31,12 @@ type candidate struct {
 
 // Scan 扫描指定端的受管文件；side 决定使用规则的哪一侧前缀。
 // 全部端点内路径访问经 Resolver（realpath + root containment）强制入口。
+// 诊断构造沿 R1（ADR-0011 §7）：内嵌端点内绝对路径的 detail/args 一律别名化。
 func Scan(ctx context.Context, rslv *filesystem.Resolver, compiled *policy.Compiled, side model.Side, opts ports.ScanOptions) ([]model.ResourceObservation, []model.Diagnostic, error) {
 	var diags []model.Diagnostic
 	cands := make(map[string][]candidate)
+	alias := model.AliasFor(side)
+	root := rslv.Root()
 
 	rules := compiled.FileRules()
 	for i := range rules {
@@ -58,7 +61,9 @@ func Scan(ctx context.Context, rslv *filesystem.Resolver, compiled *policy.Compi
 			if err != nil {
 				diags = append(diags, model.Diagnostic{
 					Severity: "warning", Code: "diag.scan.walk_failed",
-					Args: []string{path}, Detail: err.Error(),
+					// R1（ADR-0011 §7）：WalkDir 错误内嵌端点内绝对路径，args/detail 双别名化
+					Args: []string{model.AliasPath(root, alias, path)},
+					Detail: model.AliasDetail(root, alias, err.Error()),
 				})
 				return nil
 			}
@@ -129,7 +134,9 @@ func Scan(ctx context.Context, rslv *filesystem.Resolver, compiled *policy.Compi
 		if herr != nil {
 			diags = append(diags, model.Diagnostic{
 				Severity: "warning", Code: "diag.scan.hash_failed",
-				Args: []string{cs[0].relPath}, RelativePath: cs[0].relPath, Detail: herr.Error(),
+				Args: []string{cs[0].relPath}, RelativePath: cs[0].relPath,
+				// R1（ADR-0011 §7）：哈希错误（os.Stat/Open）内嵌端点内绝对路径
+				Detail: model.AliasDetail(root, alias, herr.Error()),
 			})
 			continue
 		}

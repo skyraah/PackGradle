@@ -87,6 +87,14 @@ type WorkspaceStateView struct {
 	RelationHealth   string `json:"relation_health"`
 	ActiveTaskID     string `json:"active_task_id,omitempty"`
 	RelationRevision int    `json:"relation_revision"`
+	// PendingPlanID 是最新一张待人工计划（契约 07 §3.2，票 #86）：status ∈
+	// {draft, resolved} 且读取时投影非 stale/expired/applied（planViewWithStatus
+	// 同判）的计划，按创建时间最新；无则空。系统通知去重依据与前端角标数据源。
+	PendingPlanID string `json:"pending_plan_id,omitempty"`
+	// WatchStatus 是监听引擎状态投影（契约 07 §3.2，票 #92）：active|
+	// unavailable|paused，空串=未挂载（非健康关系不常驻监听）；会话内存态，
+	// 零持久化零 schema。
+	WatchStatus string `json:"watch_status,omitempty"`
 }
 
 // SnapshotSummaryView 是快照摘要。
@@ -157,6 +165,8 @@ type ScanTimingView struct {
 // ApplyTimingView 是最近一次 Apply 运行的分相耗时（P2 验收规格 §3 apply 度量
 // 供数口；T09 pgheadless -metrics 消费。只在具体 *syncapp.App 上暴露，
 // 不入 transport 契约）。未走到的相为 0；失败路径记录已完成的相。
+// Merge 分相（票 #93，P4 验收规格 §6：diff3/校验/写盘）只记录不设门槛，
+// 无 write_merged 行的运行为 0。
 type ApplyTimingView struct {
 	RelationID     string `json:"relation_id"`
 	OperationCount int    `json:"operation_count"`
@@ -164,6 +174,10 @@ type ApplyTimingView struct {
 	ApplyingMs     int64  `json:"applying_ms"`
 	VerifyingMs    int64  `json:"verifying_ms"`
 	TotalMs        int64  `json:"total_ms"`
+	MergeDiff3MS   int64  `json:"merge_diff3_ms"`
+	MergeValidateMS int64 `json:"merge_validate_ms"`
+	MergeWriteMS   int64  `json:"merge_write_ms"`
+	MergeOps       int    `json:"merge_ops"`
 }
 
 // WorkspacePage 是工作区分页。
@@ -290,15 +304,16 @@ type ChangeView struct {
 
 // ChangesSummary 是全量分组计数（不受筛选影响），供筛选条与页脚展示。
 type ChangesSummary struct {
-	Total           int `json:"total"`
-	NoopCount       int `json:"noop_count"`
-	ConvergedCount  int `json:"converged_count"`
-	AdoptEqualCount int `json:"adopt_equal_count"`
-	InitChoiceCount int `json:"init_choice_count"`
-	CreateCount     int `json:"create_count"`
-	ModifyCount     int `json:"modify_count"`
-	DeleteCount     int `json:"delete_count"`
-	ConflictCount   int `json:"conflict_count"`
+	Total            int `json:"total"`
+	NoopCount        int `json:"noop_count"`
+	ConvergedCount   int `json:"converged_count"`
+	AdoptEqualCount  int `json:"adopt_equal_count"`
+	InitChoiceCount  int `json:"init_choice_count"`
+	CreateCount      int `json:"create_count"`
+	ModifyCount      int `json:"modify_count"`
+	DeleteCount      int `json:"delete_count"`
+	ConflictCount    int `json:"conflict_count"`
+	MergedCleanCount int `json:"merged_clean_count"` // 干净合并行数（ADR-0009 §4，票 #87；不并入 modify）
 }
 
 // ChangesPage 是资源级 Diff 分页。
@@ -415,10 +430,10 @@ type CommitSkippedView struct {
 // CommitView 是单提交详情（changes 全量，单 commit 不分页；契约 05 §3.5）。
 // Skipped 从提交头 summary JSON 解析（引擎定义形状；旧行无该记录为空切片）。
 type CommitView struct {
-	SchemaVersion int                `json:"schema_version"`
-	Summary       CommitSummaryView  `json:"summary"`
-	PlanID        string             `json:"plan_id"`
-	Changes       []CommitChangeView `json:"changes"`
+	SchemaVersion int                 `json:"schema_version"`
+	Summary       CommitSummaryView   `json:"summary"`
+	PlanID        string              `json:"plan_id"`
+	Changes       []CommitChangeView  `json:"changes"`
 	Skipped       []CommitSkippedView `json:"skipped"`
 }
 
@@ -453,6 +468,45 @@ type RebindPreparationView struct {
 // TaskView（kind=apply，status=queued，PlanID 回填）；幂等重入返回既有任务。
 type ConfirmPlanInput struct {
 	PlanID string `json:"plan_id"`
+}
+
+// ---- 统一快速更新用例投影（契约 07 §3.1；票 #86）----
+
+// QuickUpdateInput 是统一快速更新用例输入：只收 relation_id。requested_exactness
+// 恒 exact 不设入参（沿今天前端硬编码），PrepareSync 输入（revision/双端快照）
+// 由用例内部取最新。
+type QuickUpdateInput struct {
+	RelationID string `json:"relation_id"`
+}
+
+// QuickUpdateResultView 是一次快速更新链的收口结果（Q1：同步三态）。
+// 阻塞到链收口再返回，对 wire 是一次 Promise。
+type QuickUpdateResultView struct {
+	RelationID  string `json:"relation_id"`
+	Outcome     string `json:"outcome"` // no_diff|apply_started|awaiting_confirmation
+	PlanID      string `json:"plan_id,omitempty"`       // apply_started/awaiting_confirmation 回填
+	ApplyTaskID string `json:"apply_task_id,omitempty"` // 仅 apply_started 回填
+}
+
+// ---- 合并预览投影（契约 07 §3.4；票 #94）----
+
+// GetMergedPreviewInput 是合并预览用例输入：只收 plan_id + resource_id。
+// stale/expired 计划仍可预览（只读），不做修订/有效期拦截。
+type GetMergedPreviewInput struct {
+	PlanID     string `json:"plan_id"`
+	ResourceID string `json:"resource_id"`
+}
+
+// MergedPreviewView 是 merged_clean 行的合并预览（契约 07 §3.4 MergedPreviewDTO
+// 的应用层投影，transport 负责转 DTO）：Content=合并后全文（与暂存期重算同一
+// 确定性逻辑，所见即所写）、BaseContent=基线全文（前端行级增删改标注的比对
+// 锚点）。行级标注与语法高亮是渲染层职责，后端只供两段全文。
+type MergedPreviewView struct {
+	PlanID       string `json:"plan_id"`
+	ResourceID   string `json:"resource_id"`
+	RelativePath string `json:"relative_path"`
+	Content      string `json:"content"`
+	BaseContent  string `json:"base_content"`
 }
 
 // ---- 设置域投影（契约 06 §3.6；票 #57）----
@@ -541,4 +595,17 @@ type RestorePlanView struct {
 	ConfirmationRequirements []model.ConfirmationRequirement `json:"confirmation_requirements"`     // 恒非空（restore_acknowledge）
 	ExpiresAt                string                          `json:"expires_at"`
 	CreatedAt                string                          `json:"created_at"`
+}
+
+// StorageStatsView 是存储占用概览（ADR-0011 §8 勘误兑现，票 #90）：设置页
+// 只读数据面；cas_total_bytes + free_disk_bytes 为容量红线双指标承载。
+// staging 侧指标不占位（ADR-0011 §5 雾区，待 #69 决议后补）；阈值与告警 UI 后置。
+type StorageStatsView struct {
+	SchemaVersion   int   `json:"schema_version"`
+	CasTotalBytes   int64 `json:"cas_total_bytes"`   // objects 表 ready 对象字节总量（含未引用，GC 账面口径）
+	CasObjectCount  int64 `json:"cas_object_count"`  // ready 对象数
+	CasTmpLeftovers int64 `json:"cas_tmp_leftovers"` // objectsRoot 根下 .tmp-* 写中断残留文件数
+	TaskEventsCount int64 `json:"task_events_count"` // task_events 行数
+	DBSizeBytes     int64 `json:"db_size_bytes"`     // packgradle.db 文件字节数（含 -wal）
+	FreeDiskBytes   int64 `json:"free_disk_bytes"`   // 用户数据根所在卷剩余字节数
 }

@@ -12,8 +12,6 @@ import { bootstrapped, bootstrapError, retryBootstrap, tasks, triggerRequery, wo
 import { showSnackbar } from '../stores/ui'
 import { errText } from '../utils/errors'
 import { availabilityReasonText, canPrepareSync, canQuickUpdate, canRebind, prepareSync } from '../utils/plans'
-import { runQuickUpdate } from '../utils/quickUpdate'
-import type { QuickUpdatePhase } from '../utils/quickUpdate'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
@@ -72,6 +70,7 @@ interface WorkspaceRow {
     canHistory: boolean
     canQuickUpdate: boolean
     quickUpdateReason: string
+    pendingPlanID: string
     scanLabel: string
     healthTone: BadgeTone
     scanTone: BadgeTone
@@ -100,6 +99,9 @@ const rows = computed<WorkspaceRow[]>(() =>
             // 为 err.auth_mode.disabled，恢复期为 err.recovery.in_progress）
             canQuickUpdate: canQuickUpdate(w),
             quickUpdateReason: availabilityReasonText(w, 'quick_update'),
+            // 待确认角标数据源（契约 07 §3.2/§6，票 #86）：后端投影的最新待人工
+            // 计划，relation_invalidated 到达即经受控重查刷新（§4 新发射点收口时序）
+            pendingPlanID: w.state.pending_plan_id ?? '',
             recoveryRequired: w.relation.health === 'recovery_required',
             // 历史入口（T13 B 口径走查发现补，票 #45）：history_view feature 唯一门控，
             // 列表行承接 /workspaces/:id/history（T10 路由注释既定「入口在工作区列表行
@@ -113,6 +115,20 @@ const rows = computed<WorkspaceRow[]>(() =>
             activity: lastActivity(w),
         }
     }),
+)
+
+// watch 状态横幅（契约 07 §6，票 #92）：watch_status ∈ {paused, unavailable}
+// 渲染横幅——paused=自动物化连败暂停（手动快速更新成功即后端复位，横幅随
+// 受控重查消失）/ unavailable=监听死亡降级回手动；active 与未挂载不渲染。
+// 数据源=WorkspaceStateDTO.watch_status（会话内存态，事件到达经受控重查刷新）。
+const watchBanners = computed(() =>
+    workspaces.value
+        .filter(w => w.state.watch_status === 'paused' || w.state.watch_status === 'unavailable')
+        .map(w => ({
+            relationID: w.relation.relation_id,
+            name: w.relation.project.display_name,
+            paused: w.state.watch_status === 'paused',
+        })),
 )
 
 function taskProgress(task: TaskDTO): string {
@@ -171,40 +187,49 @@ function prepareSyncPlan(row: WorkspaceRow): void {
     })
 }
 
-// 快速更新（契约 06 §4，票 #62）：概览主操作区的一次点击编排——扫描 → 计划 →
-// （requirements 空 ∧ authorized）免确认直达，否则转待确认计划页走 P2 既有确认流
-//（编排细节与唯一口径判定收在 utils/quickUpdate，本页零入口特判）。按钮进行中
-// 显编排阶段文案；结果导航前补一轮受控重查，让承接页拿到新鲜投影。
-const updatePhases = ref<Record<string, QuickUpdatePhase>>({})
-
+// 快速更新（契约 07 §3.1/§6，票 #86）：概览主操作区的一次点击单调用——链在
+// 后端（扫描 → 计划 → 停靠判定 → 免确认执行或停待确认），前端阻塞等收口，
+// 进行中统一 busy（scan/plan/apply 三阶段文案随 utils/quickUpdate 编排退役）。
+// 三态承接：no_diff → 「已是最新」提示；apply_started → 任务中心移交（UX §7.9
+// 沿既有变化页承接）；awaiting_confirmation → 导航待确认计划页（P2 既有流）。
 function quickUpdate(row: WorkspaceRow): void {
-    const ws = row.workspace
-    const relID = ws.relation.relation_id
+    const relID = row.workspace.relation.relation_id
     void withPending('updating', relID, async () => {
         try {
-            const outcome = await runQuickUpdate(ws, phase => {
-                updatePhases.value = { ...updatePhases.value, [relID]: phase }
-            })
+            const res = await SyncService.QuickUpdate(relID)
             triggerRequery()
-            if (outcome.kind === 'committed') {
-                // ConfirmPlan 已受理：apply 任务移交任务中心（可离开页面，UX §7.9），
-                // 沿 P2 applyPlan 的承接页去变化页继续追踪
+            if (res.outcome === 'no_diff') {
+                showSnackbar(t('workspaces.quickUpdate.upToDate'), 'success')
+            } else if (res.outcome === 'apply_started') {
                 showSnackbar(t('workspaces.quickUpdate.directToast'), 'success')
                 await router.push('/workspaces/' + relID + '/changes')
             } else {
-                // 冲突决议 / 确认要求非空 → 待确认计划页（P2 既有流，绝不自动执行）
                 showSnackbar(t('workspaces.quickUpdate.manualToast'), 'warning')
-                await router.push('/workspaces/' + relID + '/plans/' + outcome.planID)
+                await router.push('/workspaces/' + relID + '/plans/' + res.plan_id)
             }
         } catch (e) {
             showSnackbar(errText(e), 'error')
             triggerRequery()
-        } finally {
-            const rest = { ...updatePhases.value }
-            delete rest[relID]
-            updatePhases.value = rest
         }
     })
+}
+
+// 待确认角标（契约 07 §6，票 #86）：点击直达计划页。pending_plan_id 投影不区分
+// 计划类别，restore 计划的承接页在 restore 路由段（router/index.ts），先 GetPlan
+// 读 kind 分派；读取失败退同步计划路由（GetPlan 为 kind 无关读投影）。
+async function openPendingPlan(row: WorkspaceRow): Promise<void> {
+    const relID = row.workspace.relation.relation_id
+    const planID = row.pendingPlanID
+    try {
+        const plan = await SyncService.GetPlan(planID)
+        if (plan.kind === 'restore') {
+            await router.push('/workspaces/' + relID + '/plans/restore/' + planID)
+        } else {
+            await router.push('/workspaces/' + relID + '/plans/' + planID)
+        }
+    } catch {
+        await router.push('/workspaces/' + relID + '/plans/' + planID)
+    }
 }
 
 // 处理恢复（契约 05 §5 列表行入口，与任务中心同款双入口）：导航恢复详情页
@@ -270,6 +295,19 @@ const cols: { key: string; alignRight?: boolean }[] = [
             <Button @click="router.push('/workspaces/new')">{{ t('workspaces.new') }}</Button>
         </div>
 
+        <!-- watch 状态横幅（契约 07 §6，票 #92）：paused/unavailable 才渲染，
+             active 不渲染；横幅在 bootstrap 错误卡与工作区表之间常驻展示 -->
+        <Card v-for="b in watchBanners" :key="b.relationID">
+            <CardContent class="flex items-center gap-3 py-3">
+                <span
+                    :class="b.paused ? 'text-amber-600 dark:text-amber-400' : 'text-destructive'"
+                    class="text-sm"
+                >
+                    {{ b.name }}：{{ t(b.paused ? 'workspaces.watchPausedBanner' : 'workspaces.watchUnavailableBanner') }}
+                </span>
+            </CardContent>
+        </Card>
+
         <!-- bootstrap 失败：统一错误态 + 重试（走同一管线） -->
         <Card v-if="bootstrapError">
             <CardContent class="flex items-center justify-between gap-3 py-4">
@@ -313,10 +351,25 @@ const cols: { key: string; alignRight?: boolean }[] = [
                         <template v-else>
                             <TableRow v-for="row in rows" :key="row.workspace.relation.relation_id">
                                 <TableCell>
-                                    <div class="font-medium">
-                                        {{ row.workspace.relation.project.display_name }}
-                                        <span class="text-muted-foreground">↔</span>
-                                        {{ row.workspace.relation.runtime.display_name }}
+                                    <div class="flex items-center gap-2">
+                                        <div class="font-medium">
+                                            {{ row.workspace.relation.project.display_name }}
+                                            <span class="text-muted-foreground">↔</span>
+                                            {{ row.workspace.relation.runtime.display_name }}
+                                        </div>
+                                        <!-- 待确认角标（契约 07 §6，票 #86）：pending_plan_id
+                                             数据源，「有待确认计划」直达计划页 -->
+                                        <button
+                                            v-if="row.pendingPlanID"
+                                            type="button"
+                                            class="cursor-pointer"
+                                            :title="t('workspaces.pendingPlanBadge')"
+                                            @click="openPendingPlan(row)"
+                                        >
+                                            <Badge variant="outline" class="text-amber-600 dark:text-amber-400">
+                                                {{ t('workspaces.pendingPlanBadge') }}
+                                            </Badge>
+                                        </button>
                                     </div>
                                     <div
                                         class="text-muted-foreground max-w-96 truncate text-xs"
@@ -358,11 +411,11 @@ const cols: { key: string; alignRight?: boolean }[] = [
                                 <TableCell class="text-muted-foreground text-xs">{{ row.activity }}</TableCell>
                                 <TableCell>
                                     <div class="flex justify-end gap-2">
-                                        <!-- 快速更新主操作（契约 06 §9，票 #62）：quick_update
-                                             availability 唯一门控——点亮一次点击编排直达 committed；
+                                        <!-- 快速更新主操作（契约 07 §3.1/§6，票 #86）：quick_update
+                                             availability 唯一门控——点亮一次点击单调用直达三态；
                                              未开授权（err.auth_mode.disabled）/活跃任务/恢复门/
                                              扫描未就绪灰置保留位置并显后端原因码（UX §4.3）；
-                                             进行中显编排阶段文案（扫描→计划→应用） -->
+                                             进行中统一 busy（链在后端，阶段前端不可感知） -->
                                         <Button
                                             size="xs"
                                             :variant="row.canQuickUpdate ? 'default' : 'outline'"
@@ -372,7 +425,7 @@ const cols: { key: string; alignRight?: boolean }[] = [
                                         >
                                             {{
                                                 isPending('updating', row.workspace.relation.relation_id)
-                                                    ? t('workspaces.quickUpdate.phase.' + (updatePhases[row.workspace.relation.relation_id] ?? 'scan'))
+                                                    ? t('workspaces.quickUpdate.busy')
                                                     : t('workspaces.quickUpdateAction')
                                             }}
                                         </Button>

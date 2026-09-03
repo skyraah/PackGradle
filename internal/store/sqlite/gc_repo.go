@@ -257,6 +257,37 @@ WHERE b.relation_id IN `+inList(len(relationIDs)), anySlice(relationIDs)...)
 	return scanStrings(rows)
 }
 
+// BaselineContentDigestHits 存活基线的表示 JSON 内 content.digest 命中
+// objects 表的部分（ADR-0012 §3/§8.6）：baseline_resources 的
+// project/runtime_representation_json 携带表示 Content 指针（#88 起项目侧
+// mod 清单的实测摘要），JSON1 提取后与账目对账——gc.Audit 可达闭包的
+// baseline Content 引用形态（对账输入侧扩展；对象保护本体走提交 object_refs）。
+func (r *GCRepository) BaselineContentDigestHits(ctx context.Context, relationIDs []string) ([]string, error) {
+	if len(relationIDs) == 0 {
+		return nil, nil
+	}
+	args := append(anySlice(relationIDs), anySlice(relationIDs)...)
+	rows, err := r.db.QueryContext(ctx, `
+SELECT DISTINCT d.digest FROM (
+	SELECT json_extract(br.project_representation_json, '$.content.digest') AS digest
+	FROM baseline_resources br
+	JOIN sync_baselines b ON b.id = br.baseline_id
+	WHERE br.project_representation_json IS NOT NULL AND b.relation_id IN `+inList(len(relationIDs))+`
+	UNION
+	SELECT json_extract(br.runtime_representation_json, '$.content.digest') AS digest
+	FROM baseline_resources br
+	JOIN sync_baselines b ON b.id = br.baseline_id
+	WHERE br.runtime_representation_json IS NOT NULL AND b.relation_id IN `+inList(len(relationIDs))+`
+) d
+JOIN objects o ON o.algorithm = 'sha256' AND o.digest = d.digest
+WHERE d.digest IS NOT NULL`, args...)
+	if err != nil {
+		return nil, fmt.Errorf("sqlite: 查基线内容 digest 命中: %w", err)
+	}
+	defer rows.Close()
+	return scanStrings(rows)
+}
+
 // PlanBaseDigestHits 活跃计划 base 基线的资源对象（ADR-0007 §4 计划引用通道
 // 的对象面；活跃口径同 ProtectedBaselineIDs 的单活跃推导）。
 func (r *GCRepository) PlanBaseDigestHits(ctx context.Context, relationIDs []string) ([]string, error) {
@@ -436,6 +467,71 @@ WHERE state IN ('prepared','staged','applying','verifying')
 		return false, fmt.Errorf("sqlite: 统计未收口运行: %w", err)
 	}
 	return n > 0, nil
+}
+
+// SnapshotRefFacts 采集孤儿快照判定的引用图事实（ADR-0011 §4，票 #89）：
+// 全部快照、存活提交验证快照、现存计划输入快照、各 relation 每端最新一份。
+// 「最新」序与 SnapshotRepository.LatestByRelationSide 同款（captured_at
+// DESC, id DESC 取 1），此处以反证式子查询逐行判定（不存在更新者即最新）。
+func (r *GCRepository) SnapshotRefFacts(ctx context.Context) (ports.SnapshotGCFacts, error) {
+	facts := ports.SnapshotGCFacts{}
+	collect := func(dest *[]string, query string, what string) error {
+		rows, err := r.db.QueryContext(ctx, query)
+		if err != nil {
+			return fmt.Errorf("sqlite: 采集%s: %w", what, err)
+		}
+		defer rows.Close()
+		*dest, err = scanStrings(rows)
+		if err != nil {
+			return fmt.Errorf("sqlite: 采集%s: %w", what, err)
+		}
+		return nil
+	}
+	if err := collect(&facts.All, "SELECT id FROM observed_snapshots", "快照全集"); err != nil {
+		return facts, err
+	}
+	if err := collect(&facts.CommitVerified, `
+SELECT verified_project_snapshot_id FROM sync_commits
+UNION
+SELECT verified_runtime_snapshot_id FROM sync_commits`, "提交验证快照"); err != nil {
+		return facts, err
+	}
+	if err := collect(&facts.PlanInput, `
+SELECT input_project_snapshot_id FROM sync_plans
+UNION
+SELECT input_runtime_snapshot_id FROM sync_plans`, "计划输入快照"); err != nil {
+		return facts, err
+	}
+	if err := collect(&facts.Latest, `
+SELECT s.id FROM observed_snapshots s WHERE NOT EXISTS(
+	SELECT 1 FROM observed_snapshots newer
+	WHERE newer.relation_id = s.relation_id AND newer.side = s.side
+	  AND (newer.captured_at > s.captured_at
+	       OR (newer.captured_at = s.captured_at AND newer.id > s.id)))`, "各端最新快照"); err != nil {
+		return facts, err
+	}
+	return facts, nil
+}
+
+// DeleteSnapshots 单事务物理删除快照行并随行级联删资源表示行（ADR-0011 §4：
+// resource_representations PK 前缀即 snapshot_id；先子后父满足立即外键）。
+func (r *GCRepository) DeleteSnapshots(ctx context.Context, snapshotIDs []string) error {
+	if len(snapshotIDs) == 0 {
+		return nil
+	}
+	return beginOrJoin(ctx, r.db, "清扫孤儿快照", func(tx DBTX) error {
+		if _, err := tx.ExecContext(ctx,
+			"DELETE FROM resource_representations WHERE snapshot_id IN "+inList(len(snapshotIDs)),
+			anySlice(snapshotIDs)...); err != nil {
+			return fmt.Errorf("sqlite: 删快照资源表示行: %w", err)
+		}
+		if _, err := tx.ExecContext(ctx,
+			"DELETE FROM observed_snapshots WHERE id IN "+inList(len(snapshotIDs)),
+			anySlice(snapshotIDs)...); err != nil {
+			return fmt.Errorf("sqlite: 删快照行: %w", err)
+		}
+		return nil
+	})
 }
 
 // ---- SQL 拼接小工具（占位符个数有限、参数全走 ?，无注入面）----

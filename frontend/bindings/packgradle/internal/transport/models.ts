@@ -125,6 +125,11 @@ export interface ChangesSummaryDTO {
     "modify_count": number;
     "delete_count": number;
     "conflict_count": number;
+
+    /**
+     * 干净合并行数（ADR-0009 §4，票 #87；契约 07 §3.3）
+     */
+    "merged_clean_count": number;
 }
 
 /**
@@ -332,6 +337,28 @@ export interface MappingRuleDTO {
     "runtime_local": string;
 }
 
+/**
+ * MergedPreviewDTO 是 merged_clean 行的合并结果预览（契约 07 §3.4，票 #94：
+ * 实时计算不落库）。行级绿红黄标注与语法高亮由前端对两段全文计算——标注与
+ * 高亮是渲染层职责，后端只供两段全文。
+ */
+export interface MergedPreviewDTO {
+    "schema_version": number;
+    "plan_id": string;
+    "resource_id": string;
+    "relative_path": string;
+
+    /**
+     * 合并后全文（与暂存期重算同一确定性逻辑，所见即所写）
+     */
+    "content": string;
+
+    /**
+     * 基线全文（增删改标注的比对锚点）
+     */
+    "base_content": string;
+}
+
 export interface OperationDTO {
     "id": string;
     "kind": string;
@@ -361,6 +388,12 @@ export interface PlanSummaryDTO {
     "modify_count": number;
     "delete_count": number;
     "conflict_count": number;
+
+    /**
+     * MergedCleanCount 是干净合并行数（ADR-0009 §4，票 #87；契约 07 §3.3）：
+     * 不并入 modify 计数，DTO 只增不删。
+     */
+    "merged_clean_count": number;
 }
 
 /**
@@ -463,6 +496,30 @@ export interface ProjectCandidateDTO {
     "modloader"?: string;
     "registered": boolean;
     "endpoint_id"?: string;
+}
+
+/**
+ * QuickUpdateResultDTO 是一次快速更新链的收口结果（契约 07 §3.1，票 #86：Q1
+ * 同步三态）。阻塞到链收口再返回，对 wire 是一次 Promise。
+ */
+export interface QuickUpdateResultDTO {
+    "schema_version": number;
+    "relation_id": string;
+
+    /**
+     * no_diff|apply_started|awaiting_confirmation
+     */
+    "outcome": string;
+
+    /**
+     * apply_started/awaiting_confirmation 回填
+     */
+    "plan_id"?: string;
+
+    /**
+     * 仅 apply_started 回填
+     */
+    "apply_task_id"?: string;
 }
 
 /**
@@ -743,6 +800,45 @@ export interface StageUserObjectDTO {
 }
 
 /**
+ * StorageStatsDTO 是存储占用概览投影（ADR-0011 §8 勘误兑现，票 #90；只读
+ * 数据面）。cas_total_bytes + free_disk_bytes 为容量红线双指标承载；staging
+ * 侧指标不占位（ADR-0011 §5 雾区，待 #69 决议后补）；阈值与告警 UI 后置。
+ */
+export interface StorageStatsDTO {
+    "schema_version": number;
+
+    /**
+     * CAS ready 对象字节总量
+     */
+    "cas_total_bytes": number;
+
+    /**
+     * CAS ready 对象数
+     */
+    "cas_object_count": number;
+
+    /**
+     * objectsRoot 根下 .tmp-* 残留文件数
+     */
+    "cas_tmp_leftovers": number;
+
+    /**
+     * task_events 行数
+     */
+    "task_events_count": number;
+
+    /**
+     * packgradle.db（含 -wal）字节数
+     */
+    "db_size_bytes": number;
+
+    /**
+     * 用户数据根所在卷剩余字节数
+     */
+    "free_disk_bytes": number;
+}
+
+/**
  * SyncPlanDTO 是计划投影（Status 反映读取时计算的 stale/expired）。
  */
 export interface SyncPlanDTO {
@@ -896,4 +992,17 @@ export interface WorkspaceStateDTO {
     "relation_health": string;
     "active_task_id"?: string;
     "relation_revision": number;
+
+    /**
+     * PendingPlanID 是最新一张待人工计划（契约 07 §3.2，票 #86；只增不删）：
+     * status ∈ {draft, resolved} 且非 stale/expired/applied 的最新计划，无则空。
+     * 系统通知去重依据与前端「有待确认计划」角标数据源。
+     */
+    "pending_plan_id"?: string;
+
+    /**
+     * WatchStatus 是监听状态投影（契约 07 §3.2，票 #92；只增不删）：
+     * active|unavailable|paused，空串=未挂载；会话内存态，零持久化零 schema。
+     */
+    "watch_status"?: string;
 }

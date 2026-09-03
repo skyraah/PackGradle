@@ -68,7 +68,9 @@ func runApplyChain(ctx context.Context, app syncapp.Application, rel view.Relati
 
 	// 3) 轮询 GetTask 至终态（事件不是事实源，以查询 API 为准）；轮询节奏
 	//    顺带承担峰值内存采样（约 100ms 一个样本）。
-	final, err := waitApplyTask(ctx, app, tv.TaskID, mem, pollTimeout)
+	final, err := waitTask(ctx, app, tv.TaskID, taskWait{
+		interval: applyPollInterval, timeout: pollTimeout, mem: mem, onPhase: applyPollProgress,
+	})
 	if err != nil {
 		return nil, err
 	}
@@ -296,32 +298,10 @@ func applyResolutions(conflicts []model.Conflict) []model.Resolution {
 	return res
 }
 
-// waitApplyTask 轮询 GetTask 至任一终态（recovery_required/failed/cancelled 是
-// 合法终态，交由调用方按非成功收口，不给假绿）。相位变化即打印一行进度。
-// 轮询节奏顺带承担峰值内存采样（T09：mem 非 nil 时每个周期一个样本）。
-func waitApplyTask(ctx context.Context, app syncapp.Application, taskID string, mem *memPeakSampler, timeout time.Duration) (view.TaskView, error) {
-	deadline := time.Now().Add(timeout)
-	lastPhase := ""
-	for {
-		tv, err := app.GetTask(ctx, taskID)
-		if err != nil {
-			return view.TaskView{}, fmt.Errorf("GetTask: %w", err)
-		}
-		mem.sample()
-		if tv.Phase != lastPhase {
-			fmt.Printf("  [poll] status=%s phase=%s progress=%d/%d\n", tv.Status, tv.Phase, tv.Completed, tv.Total)
-			lastPhase = tv.Phase
-		}
-		switch tv.Status {
-		case model.TaskStatusSucceeded, model.TaskStatusFailed,
-			model.TaskStatusCancelled, model.TaskStatusRecoveryRequired:
-			return tv, nil
-		}
-		if time.Now().After(deadline) {
-			return view.TaskView{}, fmt.Errorf("apply 任务超时未至终态（task=%s，超时 %v）", taskID, timeout)
-		}
-		time.Sleep(applyPollInterval)
-	}
+// applyPollProgress 是 apply 面的相位进度行（stdout 形态沿既有 waitApplyTask，
+// 验收依赖的输出形态不动；轮询循环本体收敛到 wait.go waitTask）。
+func applyPollProgress(tv view.TaskView) {
+	fmt.Printf("  [poll] status=%s phase=%s progress=%d/%d\n", tv.Status, tv.Phase, tv.Completed, tv.Total)
 }
 
 // dumpApplyFailure 打印失败收口证据：运行头状态 + 逐操作结果码摘要。

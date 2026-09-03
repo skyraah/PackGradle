@@ -6,7 +6,7 @@ package sync
 import (
 	"context"
 	"fmt"
-	"log"
+	"log/slog"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -74,6 +74,15 @@ type Application interface {
 	// 任务与 apply_runs(prepared) 运行，引擎协程接管执行；幂等口径对齐
 	// ConfirmPlan，failed 终局可重入，committed 后 err.plan.apply_not_reentrant。
 	ConfirmRestorePlan(ctx context.Context, input view.ConfirmRestorePlanInput) (view.TaskView, error)
+	// QuickUpdate 统一快速更新（契约 07 §3.1；票 #86）：扫描 → 无差异短路
+	// no_diff（不建计划）→ PrepareSync（exact，双端快照内部取最新）→ ResolvePlan
+	// （空决议，默认推荐生效）→ 停靠判定 → ConfirmPlan 或停待确认。阻塞到链收口
+	// 再返回（对 wire 是一次 Promise）；同 relation 链进行中并发调用 join 同一结果。
+	QuickUpdate(ctx context.Context, input view.QuickUpdateInput) (view.QuickUpdateResultView, error)
+	// GetMergedPreview 合并预览（契约 07 §3.4；票 #94）：merged_clean 行实时计算
+	// 两段全文（合并后 + 基线），不落库；stale/expired 计划仍可预览（只读）；
+	// 非 merged_clean 行 → err.merge.not_mergeable。
+	GetMergedPreview(ctx context.Context, input view.GetMergedPreviewInput) (view.MergedPreviewView, error)
 }
 
 var _ Application = (*App)(nil)
@@ -115,6 +124,10 @@ type AppDeps struct {
 	// GCTrash 是回收站与盘面对象操作（objectstore.CAS 实现，票 #64）。可选：
 	// 与 GC 同生（bootstrap 成对装配）。
 	GCTrash ports.GCTrash
+	// Cleanup 是惰性清理通道存储面（task_events 条数窗口 + 旧数据行物理删除，
+	// ADR-0011 §2/§3，票 #89）。可选：nil 时清理通道整体禁用（RunLazyCleanup
+	// 零操作、任务终态钩子不装配），未接清理面的测试栈零波及。
+	Cleanup ports.CleanupRepository
 	// Tx 是多步元数据写入的单事务边界（ADR-0003）；CreateRelation 走 RunInTx。
 	Tx            ports.UnitOfWork
 	Publisher     ports.EventPublisher // 事件出口（transport 桥），可为 nil
@@ -152,12 +165,83 @@ type App struct {
 	applyTimingMu   sync.Mutex
 	lastApplyTiming view.ApplyTimingView
 
+	// merge 分相累计（票 #93，-metrics merge 分相 diff3/校验/写盘供数）：
+	// staging worker 并发累加（applyTimingMu 同锁保护），runApply 收口时
+	// mergePhasesSnapshot 取走并入 ApplyTimingView。
+	mergeDiff3MS    int64
+	mergeValidateMS int64
+	mergeWriteMS    int64
+	mergeOps        int
+
 	// gcMu 串行化 GC 任务创建段（RequestGC 的单飞检查+创建非原子，进程内
 	// 双保险；跨通道并发触发的后到请求复用首个任务）。gcKick 是安全窗口的
 	// 唤醒通道（任务终态/恢复处置 kick，ADR-0007 §3；带缓冲单槽，无等待者
 	// 时丢弃——轮询兜底）。New 初始化。
 	gcMu   sync.Mutex
 	gcKick chan struct{}
+
+	// cleanupMu 串行化惰性清理通道（ADR-0011 §2/§3，票 #89：启动时 + 任务
+	// 终态后两通道可能并发触发；各删除步骤幂等，互斥只为日志与测试确定性）。
+	cleanupMu sync.Mutex
+
+	// quInflight 是 QuickUpdate 的同 relation 单飞 join（契约 07 §3.1.5，票 #86）：
+	// 同 relation 链进行中时并发调用等待并返回同一结果（双击/双窗口安全）。
+	// relationID → 进行中调用；由 quMu 保护，收口时关闭 done 释放等待者。
+	quMu       sync.Mutex
+	quInflight map[string]*quickUpdateCall
+
+	// watch 是监听引擎状态投影缝（ADR-0010，票 #92）：bootstrap 装配
+	//（AttachWatch）；nil=无监听面（headless 工具/未启动 watcher），投影空值。
+	watch WatchStatusProvider
+	// watchKick 是监听引擎的重挂 kick（relation 建立/重绑/policy 修改/恢复
+	// 收口后动态挂卸）；nil=无监听面。watchMu 保护装配与读取（装配先于任何
+	// 用例并发发生，仍保守加锁）。
+	watchMu   sync.Mutex
+	watchKick func()
+}
+
+// WatchStatusProvider 是监听引擎的状态投影缝（application/watch.Engine 满足；
+// GetWorkspace 投影 watch_status 用，nil=无监听面投影空值）。
+type WatchStatusProvider interface {
+	WatchStatus(relationID string) string
+}
+
+// AttachWatch 装配监听引擎（bootstrap 专用，调用一次）：status 供 GetWorkspace
+// 投影 watch_status；kick 供 relation 建立/重绑/policy 修改/恢复收口/任务终态
+// 后触发监听面动态挂卸（异步非阻塞）。
+func (a *App) AttachWatch(status WatchStatusProvider, kick func()) {
+	a.watchMu.Lock()
+	defer a.watchMu.Unlock()
+	a.watch = status
+	a.watchKick = kick
+}
+
+// watchStatusFor 投影单关系 watch_status（无监听面返回空串=未挂载）。
+func (a *App) watchStatusFor(relationID string) string {
+	a.watchMu.Lock()
+	w := a.watch
+	a.watchMu.Unlock()
+	if w == nil {
+		return ""
+	}
+	return w.WatchStatus(relationID)
+}
+
+// kickWatch 异步通知监听引擎重挂（失败/未装配静默——重挂是机会主义维护面）。
+func (a *App) kickWatch() {
+	a.watchMu.Lock()
+	kick := a.watchKick
+	a.watchMu.Unlock()
+	if kick != nil {
+		kick()
+	}
+}
+
+// PublishWatchFailed 经事件出口发布 watch_failed（契约 04 §2.5 预留形状启用，
+// 票 #92）：bootstrap 把它注入监听引擎的 PublishWatchFailed 依赖——发布链
+// 与任务/失效事件同一出口（先持久化分配 stream_sequence 再转发 sink）。
+func (a *App) PublishWatchFailed(ctx context.Context, relationID string) error {
+	return a.pub.PublishWatchFailed(ctx, relationID)
 }
 
 // LastScanTiming 返回最近一次完成的扫描分相耗时（进程生命周期内最后一次；
@@ -227,12 +311,21 @@ func New(deps AppDeps) (*App, error) {
 		}
 	}
 	pub := task.NewPublisher(deps.Events, deps.Publisher, deps.IDs, deps.Now)
-	return &App{
-		deps:   deps,
-		pub:    pub,
-		runner: task.NewRunner(deps.Tasks, pub, deps.IDs, deps.Now),
-		gcKick: make(chan struct{}, 1),
-	}, nil
+	app := &App{
+		deps:       deps,
+		pub:        pub,
+		runner:     task.NewRunner(deps.Tasks, pub, deps.IDs, deps.Now),
+		gcKick:     make(chan struct{}, 1),
+		quInflight: make(map[string]*quickUpdateCall),
+	}
+	// 任务终态钩子 = 惰性清理通道的任务终态触发（ADR-0011 §2/§3，票 #89）
+	// + 监听面动态挂卸（任务终态后关系健康/绑定可能漂移，票 #92）；
+	// 清理面未装配时钩子内部零操作，装配调用保持无条件（runner 装配一次）。
+	app.runner.SetTerminalHook(func(ctx context.Context, t model.Task) {
+		app.lazyCleanupAfterTask(ctx, t)
+		app.kickWatch()
+	})
+	return app, nil
 }
 
 // runner 暴露给包内用例。
@@ -249,7 +342,7 @@ func (a *App) retentionSettings() model.RetentionSettings {
 	}
 	s, err := a.deps.Retention.Retention()
 	if err != nil {
-		log.Printf("gc: 读取保留设置失败（退默认值）: %v", err)
+		slog.Warn("gc: 读取保留设置失败（退默认值）", "err", err)
 		return model.DefaultRetention()
 	}
 	return s

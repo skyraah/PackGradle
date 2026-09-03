@@ -109,7 +109,9 @@ func (a *App) DiscoverRuntimes(ctx context.Context) ([]view.RuntimeCandidateView
 func (a *App) RegisterRuntime(ctx context.Context, input view.RegisterEndpointInput) (view.EndpointView, error) {
 	instanceDir, err := a.deps.Paths.NormalizeEndpointPath(input.RootPath)
 	if err != nil {
-		return view.EndpointView{}, errs.NewDetail(endpoint.CodeInvalidPath, err.Error(), input.RootPath)
+		// R1（ADR-0011 §7）：规范化错误串内嵌绝对路径，detail 别名化
+		return view.EndpointView{}, errs.NewDetail(endpoint.CodeInvalidPath,
+			model.AliasDetail(input.RootPath, model.AliasRuntime, err.Error()), input.RootPath)
 	}
 	if _, err := os.Stat(filepath.Join(instanceDir, "instance.cfg")); err != nil {
 		return view.EndpointView{}, errs.New(endpoint.CodeInvalidPath, instanceDir)
@@ -117,11 +119,12 @@ func (a *App) RegisterRuntime(ctx context.Context, input view.RegisterEndpointIn
 	gameDir, err := a.deps.Paths.NormalizeEndpointPath(filepath.Join(instanceDir, "minecraft"))
 	if err != nil {
 		return view.EndpointView{}, errs.NewDetail(endpoint.CodeInvalidPath,
-			"游戏目录 minecraft/ 不可达: "+err.Error(), instanceDir)
+			"游戏目录 minecraft/ 不可达: "+model.AliasDetail(input.RootPath, model.AliasRuntime, err.Error()), instanceDir)
 	}
 	fp, err := a.deps.Fingerprinter.Fingerprint(gameDir)
 	if err != nil {
-		return view.EndpointView{}, errs.NewDetail(endpoint.CodeInvalidPath, "计算绑定指纹失败: "+err.Error(), gameDir)
+		return view.EndpointView{}, errs.NewDetail(endpoint.CodeInvalidPath,
+			"计算绑定指纹失败: "+model.AliasDetail(gameDir, model.AliasRuntime, err.Error()), gameDir)
 	}
 
 	identity := strings.ToLower(filepath.Base(instanceDir))
@@ -165,8 +168,10 @@ func (a *App) RegisterRuntime(ctx context.Context, input view.RegisterEndpointIn
 // 否则会把新登记静默绑到另一个启动器安装的同名实例上。
 func requireSamePath(existing model.Runtime, gameDir string) error {
 	if !strings.EqualFold(filepath.Clean(existing.RootPath), filepath.Clean(gameDir)) {
+		// R1（ADR-0011 §7）：已登记端点根为绝对路径，detail 别名化
 		return errs.NewDetail(endpoint.CodeIdentityMismatch,
-			"同名实例目录已登记为不同路径: "+existing.RootPath, existing.RuntimeID)
+			"同名实例目录已登记为不同路径: "+model.AliasPath(existing.RootPath, model.AliasRuntime, existing.RootPath),
+			existing.RuntimeID)
 	}
 	return nil
 }

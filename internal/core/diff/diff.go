@@ -4,9 +4,14 @@
 package diff
 
 import (
+	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"sort"
+	"strings"
 
+	"packgradle/internal/core/merge"
 	"packgradle/internal/core/model"
 	"packgradle/internal/core/normalize"
 )
@@ -17,6 +22,19 @@ type Input struct {
 	Base       *model.SyncBaseline // nil => 初始化 diff
 	Project    model.ObservedSnapshot
 	Runtime    model.ObservedSnapshot
+	// Merge 是合并判定的三侧全文读取缝（票 #87，ADR-0009 §1）：由
+	// application 层装配（CAS 与端点活文件），本包不做 I/O。nil = 合并面
+	// 整体禁用，双侧同改维持 conflict_modify 现状；注入后任一取数/复核
+	// 失败按「合并面不可用」逐资源降级，不上抛错误。
+	Merge *MergeSources
+}
+
+// MergeSources 按需提供合并判定所需的三侧全文。Base 按内容摘要取基线字节
+// （CAS）；Project/Runtime 按表示相对路径取端点活文件字节。
+type MergeSources struct {
+	Base    func(digest string) ([]byte, error)
+	Project func(relPath string) ([]byte, error)
+	Runtime func(relPath string) ([]byte, error)
 }
 
 // Classification 是单资源相对三方的差异分类。
@@ -38,6 +56,9 @@ const (
 	ClassConverged Classification = "converged"
 	// ClassConflictModify 双端均存在但以不同方式修改（modify_modify）。
 	ClassConflictModify Classification = "conflict_modify"
+	// ClassMergedClean 双侧同改、diff3 零冲突块且类型校验通过（ADR-0009 §4，
+	// 票 #87）：非冲突操作，随授权模式免确认执行。
+	ClassMergedClean Classification = "merged_clean"
 	// ClassConflictDeleteModify 一侧删除、另一侧修改或新增。
 	ClassConflictDeleteModify Classification = "conflict_delete_modify"
 	// ClassAdoptEqual 无 baseline 时双端语义相同的资源可直接采纳。
@@ -165,13 +186,13 @@ func classifyResource(in Input, id model.ResourceID) (ResourceDiff, *model.Confl
 		d, conflict := classifyInit(d, projObs, rtObs)
 		return d, conflict, nil
 	}
-	d, conflict := classifyWithBase(d, baseRes, baseProjSem, baseRtSem, projObs, rtObs)
+	d, conflict := classifyWithBase(in, d, baseRes, baseProjSem, baseRtSem, projObs, rtObs)
 	return d, conflict, nil
 }
 
 // classifyWithBase 按架构文档 §6.3 真值表分类（有 baseline）。
 func classifyWithBase(
-	d ResourceDiff, baseRes *model.BaselineResource, baseProjSem, baseRtSem string,
+	in Input, d ResourceDiff, baseRes *model.BaselineResource, baseProjSem, baseRtSem string,
 	projObs, rtObs model.ResourceObservation,
 ) (ResourceDiff, *model.Conflict) {
 	projChanged := changed(d.ProjectPresent, d.ProjectSemantic, d.BaseProjectPresent, baseProjSem)
@@ -206,9 +227,28 @@ func classifyWithBase(
 	switch {
 	case d.ProjectPresent && d.RuntimePresent:
 		if d.ProjectSemantic == d.RuntimeSemantic {
-			// 同样变为相同指纹
+			// 同样变为相同指纹（converged 在 diff 层先行拦截，不走合并）
 			d.Classification = ClassConverged
 			return d, nil
+		}
+		// 双侧同改 digest 不同 → 三方文本合并判定（票 #87，ADR-0009 §4）：
+		// 零冲突块 ∧ 类型校验通过 → merged_clean；含冲突块或校验失败 →
+		// 既有 conflict_modify（块证据保留，校验失败非错误）。合并面不可用
+		//（未注入/黑名单/取数失败）→ 维持整文件冲突现状。
+		if v := in.mergeVerdict(d, baseRes, projObs, rtObs); v != nil {
+			if v.clean {
+				d.Classification = ClassMergedClean
+				return d, nil
+			}
+			d.Classification = ClassConflictModify
+			return d, &model.Conflict{
+				ResourceID: d.ResourceID,
+				Kind:       model.ConflictModifyModify,
+				Base:       baseEvidence(baseRes),
+				Project:    representationCopy(d.ProjectPresent, projObs),
+				Runtime:    representationCopy(d.RuntimePresent, rtObs),
+				Detail:     v.detail,
+			}
 		}
 		d.Classification = ClassConflictModify
 		return d, &model.Conflict{
@@ -326,4 +366,82 @@ func baseEvidence(baseRes *model.BaselineResource) *model.Representation {
 		return &rep
 	}
 	return nil
+}
+
+// mergeVerdict 是合并判定（票 #87，ADR-0009 §2/§4/§5）：三侧全文 diff3 合并
+// + 合并产物类型校验。返回 nil 表示合并面不可用（未注入/黑名单/无内容指纹/
+// 取数或摘要复核失败/疑似二进制内容），调用方维持 conflict_modify 现状；
+// 非 nil 时 clean=false 即「含冲突块或校验失败」的降级路径，detail 承载块证据。
+func (in Input) mergeVerdict(
+	d ResourceDiff, baseRes *model.BaselineResource, projObs, rtObs model.ResourceObservation,
+) *mergeOutcome {
+	if in.Merge == nil || in.Merge.Base == nil || in.Merge.Project == nil || in.Merge.Runtime == nil {
+		return nil
+	}
+	relPath := projObs.Representation.RelativePath
+	if relPath == "" {
+		relPath = rtObs.Representation.RelativePath
+	}
+	if !merge.Mergeable(d.Kind, relPath) {
+		return nil
+	}
+	baseRep := baseEvidence(baseRes)
+	if baseRep == nil || baseRep.Content == nil ||
+		projObs.Representation.Content == nil || rtObs.Representation.Content == nil {
+		return nil
+	}
+	baseText, ok := fetchVerified(func() ([]byte, error) { return in.Merge.Base(baseRep.Content.Digest) }, *baseRep.Content)
+	projText, okP := fetchVerified(func() ([]byte, error) { return in.Merge.Project(relPath) }, *projObs.Representation.Content)
+	rtText, okR := fetchVerified(func() ([]byte, error) { return in.Merge.Runtime(relPath) }, *rtObs.Representation.Content)
+	if !ok || !okP || !okR {
+		return nil
+	}
+	if isBinaryContent(baseText) || isBinaryContent(projText) || isBinaryContent(rtText) {
+		// 疑似二进制内容（text_file 误标/随机字节）：按行合并无意义，不进合并。
+		return nil
+	}
+
+	res := merge.Texts(baseText, projText, rtText)
+	if len(res.Hunks) > 0 {
+		detail, err := merge.DetailJSON(res.Hunks)
+		if err != nil {
+			return nil
+		}
+		return &mergeOutcome{detail: detail}
+	}
+	// 校验失败 = 合并提议不成立，降级 conflict_modify（非错误，ADR-0009 §5）。
+	if err := merge.ValidateMerged(relPath, res.Merged); err != nil {
+		return &mergeOutcome{}
+	}
+	return &mergeOutcome{clean: true}
+}
+
+// mergeOutcome 是 mergeVerdict 的结论：clean=merged_clean；非 clean 时 detail
+// 承载冲突块 JSON 证据（可为空——校验失败时零冲突块无块证据）。
+type mergeOutcome struct {
+	clean  bool
+	detail string
+}
+
+// fetchVerified 调用取数闭包并复核 sha256 与期望指纹一致；不一致或取数失败
+// 一律 ok=false（执行期与计划期之间的外部写者竞态不产出错误合并提议）。
+func fetchVerified(fetch func() ([]byte, error), ref model.ContentRef) ([]byte, bool) {
+	if !strings.EqualFold(ref.Algorithm, "sha256") {
+		return nil, false
+	}
+	data, err := fetch()
+	if err != nil || data == nil {
+		return nil, false
+	}
+	sum := sha256.Sum256(data)
+	if !strings.EqualFold(hex.EncodeToString(sum[:]), ref.Digest) {
+		return nil, false
+	}
+	return data, true
+}
+
+// isBinaryContent 报告字节串是否疑似二进制（含 NUL，与 diff3 库自身的
+// 二进制防线同口径）：按行合并无意义。
+func isBinaryContent(data []byte) bool {
+	return bytes.IndexByte(data, 0) >= 0
 }

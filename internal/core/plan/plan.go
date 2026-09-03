@@ -4,6 +4,7 @@
 package plan
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"sort"
@@ -36,6 +37,9 @@ type BuildInput struct {
 	//（「旧版本不留存」警示 + 引擎跳过 before 保全）。判定口径共享
 	// model.ShouldSkipPreserve；未设置（负值）按 0=不限处理。
 	PreserveMaxBytes int64
+	// Merge 是合并判定的三侧全文读取缝（票 #87，ADR-0009 §1）：原样透传给
+	// diff.ThreeWay；nil = 合并面禁用（双侧同改维持 conflict_modify 现状）。
+	Merge *diff.MergeSources
 }
 
 // 校验错误。Resolve 拒绝的输入以 error 返回，不 panic。
@@ -91,6 +95,7 @@ func BuildDraft(in BuildInput) (model.SyncPlan, error) {
 		Base:       in.Base,
 		Project:    in.Project,
 		Runtime:    in.Runtime,
+		Merge:      in.Merge,
 	})
 	if err != nil {
 		return model.SyncPlan{}, fmt.Errorf("plan: 三方差异计算失败: %w", err)
@@ -133,14 +138,23 @@ func BuildDraft(in BuildInput) (model.SyncPlan, error) {
 				removePreconditions(d.ResourceID, sideProject, projObs))
 		case diff.ClassAdoptEqual:
 			summary.AdoptEqualCount++
+		case diff.ClassMergedClean:
+			// 干净合并行（ADR-0009 §4/§8，票 #93）：非冲突操作——draft 即以
+			// write_merged 操作承载「将自动合并」默认推荐（一资源一操作=双端
+			// 写合并产物；内容源=暂存期按计划锁定的三侧快照确定性重算），
+			// 前置条件断言双端字节与计划快照相符；计数不并入 modify（契约 07 §3.3）。
+			op = newOperation(model.OpWriteMerged, d.ResourceID,
+				mergedPreconditions(d.ResourceID, projObs, rtObs))
+			summary.MergedCleanCount++
 		}
 		if op != nil && opAllowed(direction, op.Kind) {
 			ops = append(ops, *op)
 		}
 		if c, ok := conflictByResource[d.ResourceID]; ok {
 			// 方向写入 Detail（PlanDigest 只取 resource_id+kind，不受影响），
-			// 供 Resolve 在没有 Policy 的情况下过滤 resolution 生成的操作。
-			c.Detail = directionDetail(direction)
+			// 供 Resolve 在没有 Policy 的情况下过滤 resolution 生成的操作；
+			// detail 已携带 hunk JSON 证据时（票 #87）以兄弟键并入，不覆盖证据。
+			c.Detail = withDirectionDetail(c.Detail, direction)
 			conflicts = append(conflicts, c)
 		}
 	}
@@ -183,6 +197,9 @@ func BuildDraft(in BuildInput) (model.SyncPlan, error) {
 }
 
 // Resolve 校验 resolutions 恰好覆盖 draft 的全部冲突后应用选择，生成 resolved plan。
+// 干净合并行（write_merged，票 #93）不是冲突：无需决议（空决议即含默认推荐），
+// 显式 take_merged 决议照常接受并记录；take_merged 作用于其他行 →
+// ErrResolutionInvalidChoice。
 // project/runtime 快照用于生成 resolution 操作的前置条件；Resolve 不修改 draft，
 // 也不假设快照仍与 draft 一致（不一致时前置条件会在 Apply 阶段拦截）。
 // preserveMaxBytes 是大文件保全阈值（与 BuildDraft.PreserveMaxBytes 同源，ADR-0007
@@ -199,10 +216,32 @@ func Resolve(draft model.SyncPlan, project, runtime model.ObservedSnapshot, reso
 	for _, c := range draft.Conflicts {
 		conflictByResource[c.ResourceID] = c
 	}
+	// mergedByResource 是 draft 中 write_merged 行（干净合并，票 #93）：显式
+	// take_merged 决议只能指向这些行；操作在 draft 即已生成，决议只记录选择。
+	mergedByResource := make(map[model.ResourceID]bool)
+	for _, op := range draft.Operations {
+		if op.Kind == model.OpWriteMerged {
+			mergedByResource[op.ResourceID] = true
+		}
+	}
 
 	covered := make(map[model.ResourceID]bool, len(resolutions))
 	sorted := make([]model.Resolution, 0, len(resolutions))
 	for _, r := range resolutions {
+		// take_merged 专用校验（票 #93，契约 07 §3.3）：只对 merged_clean 行
+		// 合法；作用于冲突行或任何其他行 → 既有 ErrResolutionInvalidChoice
+		//（应用层透传 err.plan.resolution_invalid）。
+		if r.Choice == model.ChoiceTakeMerged {
+			if !mergedByResource[r.ResourceID] {
+				return model.SyncPlan{}, fmt.Errorf("%w: %s 不接受 %s（非干净合并行）", ErrResolutionInvalidChoice, r.ResourceID, r.Choice)
+			}
+			if covered[r.ResourceID] {
+				return model.SyncPlan{}, fmt.Errorf("%w: %s 重复", ErrResolutionIncomplete, r.ResourceID)
+			}
+			covered[r.ResourceID] = true
+			sorted = append(sorted, r)
+			continue
+		}
 		conflict, ok := conflictByResource[r.ResourceID]
 		if !ok {
 			return model.SyncPlan{}, fmt.Errorf("%w: %s", ErrResolutionUnknown, r.ResourceID)
@@ -299,9 +338,10 @@ func Resolve(draft model.SyncPlan, project, runtime model.ObservedSnapshot, reso
 		Resolutions:        sorted,
 		Diagnostics:        draft.Diagnostics,
 		Summary: model.PlanSummary{
-			ResourceTotal:   draft.Summary.ResourceTotal,
-			AdoptEqualCount: draft.Summary.AdoptEqualCount,
-			ConflictCount:   len(draft.Conflicts),
+			ResourceTotal:    draft.Summary.ResourceTotal,
+			AdoptEqualCount:  draft.Summary.AdoptEqualCount,
+			MergedCleanCount: draft.Summary.MergedCleanCount,
+			ConflictCount:    len(draft.Conflicts),
 		},
 	}
 	out.Summary.CreateCount, out.Summary.ModifyCount, out.Summary.DeleteCount =
@@ -480,6 +520,32 @@ func writePreconditions(id model.ResourceID, sourceSide string, source, target *
 	return []model.Precondition{src, tgt}
 }
 
+// mergedPreconditions 生成 write_merged 操作前置条件（票 #93，契约 07 §3.3
+// 「前置条件=双端字节与计划快照相符」）：双侧都必须 present 且指纹匹配——
+// 干净合并以双侧同改为前提，任一侧在确认后漂移即前置拦截，不部分提交。
+func mergedPreconditions(id model.ResourceID, project, runtime *model.ResourceObservation) []model.Precondition {
+	pcs := make([]model.Precondition, 0, 2)
+	for _, side := range []struct {
+		name string
+		obs  *model.ResourceObservation
+	}{
+		{sideProject, project}, {sideRuntime, runtime},
+	} {
+		pc := model.Precondition{ResourceID: id, Side: side.name}
+		if side.obs != nil {
+			pc.Existence = existencePresent
+			if c := side.obs.Representation.Content; c != nil {
+				expected := *c
+				pc.Expected = &expected
+			}
+		} else {
+			pc.Existence = existenceAbsent
+		}
+		pcs = append(pcs, pc)
+	}
+	return pcs
+}
+
 // removePreconditions 生成 remove 操作前置条件：被删除侧当前必须 present
 // 且指纹匹配（有 Content 则填期望值）。
 func removePreconditions(id model.ResourceID, side string, target *model.ResourceObservation) []model.Precondition {
@@ -514,6 +580,8 @@ func kindRank(k model.OperationKind) int {
 		return 3
 	case model.OpMaterialize:
 		return 4
+	case model.OpWriteMerged:
+		return 5 // 双端写合并产物（票 #93）；新类别追加新权重，既有排序不变
 	default:
 		return 99 // 未知类别排最后，保证确定性
 	}
@@ -629,11 +697,46 @@ func directionDetail(direction string) string {
 	return "direction=" + direction
 }
 
-// detailDirection 反解 Conflict.Detail 中的方向；缺失视为 bidirectional
+// withDirectionDetail 在保留既有 Detail 证据的前提下写入方向（票 #87）：
+// detail 为空走既有纯文本形态（directionDetail）；detail 已是 hunk JSON
+// （契约 07 §3.3）时以 direction 兄弟键并入，不覆盖块证据；非 JSON 形态
+// 原样保留（防御，方向仍可由 Policy 重推导）。
+func withDirectionDetail(detail, direction string) string {
+	if detail == "" {
+		return directionDetail(direction)
+	}
+	if direction == directionBidirectional {
+		return detail
+	}
+	if !json.Valid([]byte(detail)) {
+		return detail
+	}
+	var obj map[string]any
+	if err := json.Unmarshal([]byte(detail), &obj); err != nil {
+		return detail
+	}
+	obj["direction"] = direction
+	b, err := json.Marshal(obj)
+	if err != nil {
+		return detail
+	}
+	return string(b)
+}
+
+// detailDirection 反解 Conflict.Detail 中的方向；兼容纯文本（direction= 前缀）
+// 与 hunk JSON（direction 兄弟键）两种形态，缺失视为 bidirectional
 // （兼容非本包构建的 draft）。
 func detailDirection(detail string) string {
 	if strings.HasPrefix(detail, "direction=") {
 		return strings.TrimPrefix(detail, "direction=")
+	}
+	if json.Valid([]byte(detail)) {
+		var obj struct {
+			Direction string `json:"direction"`
+		}
+		if err := json.Unmarshal([]byte(detail), &obj); err == nil && obj.Direction != "" {
+			return obj.Direction
+		}
 	}
 	return directionBidirectional
 }

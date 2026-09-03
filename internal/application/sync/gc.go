@@ -17,13 +17,16 @@ package sync
 //     隔离行；Put 幂等复活由 CAS.Put 的 UPSERT 天然承担；GC 全程可重入。
 //   - 孤儿三向清扫（§6，GC 末位）：file-without-row 入回收站走时钟 / .tmp-* 直删 /
 //     row-without-file 删行对账（被引用行保留——Has() 已不可见，restore 走降级）。
+//   - 孤儿快照清扫（ADR-0011 §4，票 #89，同位清扫阶段）：不被存活提交
+//     （verified_*）/现存计划（input_*）引用、且非任一端最新一份的扫描快照
+//     随轮删除，resource_representations 随行级联删（sweepOrphanSnapshots）。
 
 import (
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"log"
+	"log/slog"
 	"os"
 	"strings"
 	"time"
@@ -84,7 +87,7 @@ func (a *App) maybeScheduleGCAfterCommit(ctx context.Context, relationID string)
 	}
 	usage, err := a.deps.GC.RelationUsageBytes(ctx, relationID)
 	if err != nil {
-		log.Printf("gc: 收口后占用检查失败（跳过本轮触发）: %v", err)
+		slog.Warn("gc: 收口后占用检查失败（跳过本轮触发）", "err", err)
 		return
 	}
 	if usage <= ret.RelationCapacityBytes {
@@ -95,7 +98,7 @@ func (a *App) maybeScheduleGCAfterCommit(ctx context.Context, relationID string)
 	}
 	go func() {
 		if _, err := a.RequestGC(ctxWithoutCancel(ctx)); err != nil {
-			log.Printf("gc: 容量超限触发建任务失败: %v", err)
+			slog.Warn("gc: 容量超限触发建任务失败", "err", err)
 		}
 	}()
 }
@@ -106,7 +109,7 @@ func (a *App) maybeScheduleGCAfterCommit(ctx context.Context, relationID string)
 func (a *App) StartGC() {
 	go func() {
 		if _, err := a.RequestGC(ctxWithoutCancel(context.Background())); err != nil {
-			log.Printf("gc: 启动触发失败: %v", err)
+			slog.Warn("gc: 启动触发失败", "err", err)
 		}
 	}()
 }
@@ -138,7 +141,7 @@ func (a *App) runGC(ctx context.Context, queued model.Task) {
 	// 收口，引擎不推进）。
 	t, err := a.deps.Tasks.Get(ctx, queued.TaskID)
 	if err != nil {
-		log.Printf("gc: 读取任务 %s 失败，放弃接管: %v", queued.TaskID, err)
+		slog.Warn("gc: 读取任务失败，放弃接管", "task", queued.TaskID, "err", err)
 		return
 	}
 	if t.Status != model.TaskStatusQueued {
@@ -153,7 +156,7 @@ func (a *App) runGC(ctx context.Context, queued model.Task) {
 		// 首个 Update 必然乐观锁冲突。
 		updated, err := a.runner.Update(ctx, t)
 		if err != nil {
-			log.Printf("gc: 任务 %s 排队文案落库失败: %v", t.TaskID, err)
+			slog.Warn("gc: 任务排队文案落库失败", "task", t.TaskID, "err", err)
 			return
 		}
 		t = updated
@@ -169,7 +172,7 @@ func (a *App) runGC(ctx context.Context, queued model.Task) {
 	t.MessageKey = msgGCPruning
 	t, err = a.runner.Update(ctx, t)
 	if err != nil {
-		log.Printf("gc: 任务 %s 推进失败: %v", t.TaskID, err)
+		slog.Warn("gc: 任务推进失败", "task", t.TaskID, "err", err)
 		return
 	}
 	retention := a.retentionSettings()
@@ -198,7 +201,7 @@ func (a *App) runGC(ctx context.Context, queued model.Task) {
 	t.MessageKey = msgGCCollecting
 	t, err = a.runner.Update(ctx, t)
 	if err != nil {
-		log.Printf("gc: 任务 %s 推进失败: %v", t.TaskID, err)
+		slog.Warn("gc: 任务推进失败", "task", t.TaskID, "err", err)
 		return
 	}
 	if err := a.collectObjects(ctx, relationIDs); err != nil {
@@ -206,16 +209,21 @@ func (a *App) runGC(ctx context.Context, queued model.Task) {
 		return
 	}
 
-	// ---- 阶段 3：回收站老化 + 孤儿三向清扫（GC 末位，ADR-0007 §5 步骤 3/§6）----
+	// ---- 阶段 3：回收站老化 + 孤儿三向清扫 + 孤儿快照清扫（GC 末位，
+	// ADR-0007 §5 步骤 3/§6 + ADR-0011 §4）----
 	t.Phase = "sweeping"
 	t.MessageKey = msgGCSweeping
 	t, err = a.runner.Update(ctx, t)
 	if err != nil {
-		log.Printf("gc: 任务 %s 推进失败: %v", t.TaskID, err)
+		slog.Warn("gc: 任务推进失败", "task", t.TaskID, "err", err)
 		return
 	}
 	if err := a.sweepOrphans(ctx, retention); err != nil {
 		a.runner.MarkFailed(ctx, t, "", fmt.Sprintf("gc: 清扫失败: %v", err))
+		return
+	}
+	if err := a.sweepOrphanSnapshots(ctx); err != nil {
+		a.runner.MarkFailed(ctx, t, "", fmt.Sprintf("gc: 孤儿快照清扫失败: %v", err))
 		return
 	}
 
@@ -223,7 +231,7 @@ func (a *App) runGC(ctx context.Context, queued model.Task) {
 	t.Phase = "done"
 	t.MessageKey = msgGCSucceeded
 	if _, err := a.runner.Update(ctx, t); err != nil {
-		log.Printf("gc: 任务 %s 成功终态落库失败: %v", t.TaskID, err)
+		slog.Warn("gc: 任务成功终态落库失败", "task", t.TaskID, "err", err)
 	}
 }
 
@@ -470,12 +478,37 @@ func (a *App) sweepOrphans(ctx context.Context, retention model.RetentionSetting
 	return a.deps.GC.PurgeQuarantinedRows(ctx, orphans)
 }
 
+// sweepOrphanSnapshots 执行孤儿快照清扫（ADR-0011 §4，票 #89）：判定归
+// core/gc.OrphanSnapshots 纯函数（引用图三通道——存活提交 verified_*、现存
+// 计划 input_*、任一端最新——皆无引用即孤儿），执行归 GCRepository.DeleteSnapshots
+// 单事务级联删。挂在既有 GC 清扫阶段（与 .tmp-* 写中断残渣同位的账面孤儿清扫）：
+// 提交被修剪后其验证快照自然转孤儿一并删；从未进提交的中间扫描快照除最新外
+// 同删。零新保留参数——判定无时间入参，快照窗口 = 提交保留窗口（KeepCommits/
+// KeepDays 经提交存亡传递），无独立快照策略。
+func (a *App) sweepOrphanSnapshots(ctx context.Context) error {
+	facts, err := a.deps.GC.SnapshotRefFacts(ctx)
+	if err != nil {
+		return err
+	}
+	orphans := gc.OrphanSnapshots(gc.SnapshotFacts{
+		All:            facts.All,
+		CommitVerified: facts.CommitVerified,
+		PlanInput:      facts.PlanInput,
+		Latest:         facts.Latest,
+	})
+	if len(orphans) == 0 {
+		return nil
+	}
+	slog.Info("gc: 孤儿快照清扫", "count", len(orphans), "total", len(facts.All))
+	return a.deps.GC.DeleteSnapshots(ctx, orphans)
+}
+
 // gcWindowOpen 判定安全窗口（ADR-0007 §3）：无活跃/未处置 run ∧ 无任何
 // relation 处于 recovery_required。存储读失败保守按窗口关闭处理（下轮重查）。
 func (a *App) gcWindowOpen(ctx context.Context) bool {
 	unresolved, err := a.deps.GC.HasUnresolvedRuns(ctx)
 	if err != nil {
-		log.Printf("gc: 查未收口运行失败（保守视为窗口未开）: %v", err)
+		slog.Warn("gc: 查未收口运行失败（保守视为窗口未开）", "err", err)
 		return false
 	}
 	if unresolved {
@@ -483,7 +516,7 @@ func (a *App) gcWindowOpen(ctx context.Context) bool {
 	}
 	rels, _, err := a.deps.Relations.List(ctx, ports.PageRequest{Limit: ports.MaxPageLimit})
 	if err != nil {
-		log.Printf("gc: 列关系失败（保守视为窗口未开）: %v", err)
+		slog.Warn("gc: 列关系失败（保守视为窗口未开）", "err", err)
 		return false
 	}
 	for _, rel := range rels {

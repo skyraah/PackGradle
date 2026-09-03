@@ -142,6 +142,7 @@ export type {
     ResolutionDTO,
     RepresentationDTO,
     ConflictDTO,
+    MergedPreviewDTO,
     DiagnosticDTO,
     ApplyRunDTO,
     ApplyOperationDTO,

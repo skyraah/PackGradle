@@ -344,3 +344,56 @@ FROM sync_plans WHERE id='plan_gc'`)
 		t.Fatalf("已消费计划的 base 不应保护，got %v", hits)
 	}
 }
+
+// TestGCBaselineContentDigestHits 覆盖基线表示 Content 引用形态（ADR-0012
+// §3/§8.6，票 #88）：project/runtime 两侧表示 JSON 内 content.digest 命中
+// objects 的部分进入对账可达闭包；无 Content 的表示与未落账目的 digest 不返回。
+func TestGCBaselineContentDigestHits(t *testing.T) {
+	fx, db, closeDB := newGCFixture(t, 2)
+	defer closeDB()
+	ctx := context.Background()
+	repo := NewGCRepository(db)
+	now := time.Now().UTC().Format(time.RFC3339)
+
+	// fixture 基线（gc_ba/gc_bb）的项目侧表示带 Content digest "aa11"；
+	// 落账目行后通道应返回它。表示无 Content 的资源与未落账目 digest 不返回。
+	if _, err := db.ExecContext(ctx,
+		"INSERT INTO objects(algorithm, digest, size, state, created_at) VALUES('sha256','aa11',296,'ready',?)", now); err != nil {
+		t.Fatal(err)
+	}
+	hits, err := repo.BaselineContentDigestHits(ctx, []string{fx.relationID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(hits) != 1 || hits[0] != "aa11" {
+		t.Fatalf("基线内容通道 = %v，期望 [aa11]", hits)
+	}
+
+	// runtime 侧表示的 Content 引用同样入闭包：给 gc_bb 补 runtime 表示 JSON。
+	if _, err := db.ExecContext(ctx, `
+UPDATE baseline_resources SET runtime_representation_json =
+'{"relative_path":"mods/x-1.2.2.jar","format":"jar","content":{"algorithm":"sha256","digest":"bb22","size":10}}'
+WHERE baseline_id='gc_bb'`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.ExecContext(ctx,
+		"INSERT INTO objects(algorithm, digest, size, state, created_at) VALUES('sha256','bb22',10,'ready',?)", now); err != nil {
+		t.Fatal(err)
+	}
+	hits, err = repo.BaselineContentDigestHits(ctx, []string{fx.relationID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(hits) != 2 {
+		t.Fatalf("基线内容通道 = %v，期望 [aa11 bb22] 双侧命中", hits)
+	}
+
+	// 其他关系的基线不进闭包。
+	hits, err = repo.BaselineContentDigestHits(ctx, []string{"rel_other"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(hits) != 0 {
+		t.Fatalf("其他关系基线不应入闭包，got %v", hits)
+	}
+}

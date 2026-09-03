@@ -98,15 +98,54 @@ type applyFilePlan struct {
 	dlFailCode  string
 	dlFailArgs  []string
 	dlFailCause string
+	// mergeProduct 标记 write_merged 的按侧展开行（票 #93）：after 内容=
+	// 暂存期按计划锁定的三侧快照确定性重算（mergeBaseDigest=基线内容 CAS
+	// 摘要；sourceRel=双端同路径的合并资源路径；sourceRoot=另一侧端点根）。
+	// afterDigest 在重算后回填（计划不锁定产物摘要——同算法同输入同输出）。
+	mergeProduct   bool
+	mergeBaseDigest string
 }
 
 // skipReasonContentUnavailable 是 copy 取数失败的跳过原因码（与既有操作终局
 // 结果码同字面：本地数据源无目标字节）。
 const skipReasonContentUnavailable = resultContentUnavailable
 
+// mergedExpansionSuffix 是 write_merged 操作在运行期按侧展开的 journal/证明
+// 行 ID 后缀（票 #93）：计划面一资源一操作（契约 07 §3.3），执行面 journal、
+// 所有权证明与恢复裁决逐侧成行——计划操作 ID 加后缀派生行 ID（op_0001_p /
+// op_0001_r，syncstage.validateID 字符集内）。恢复路径凭后缀反解目标侧。
+const (
+	mergedExpansionProject = "_p"
+	mergedExpansionRuntime = "_r"
+)
+
+// mergedExpansionSide 从展开行 ID 反解 write_merged 的目标侧；非展开行返回
+// false。引擎自身生成的 op_%04d ID 不以 _p/_r 结尾，后缀空间无碰撞。
+func mergedExpansionSide(operationID string) (model.Side, bool) {
+	switch {
+	case strings.HasSuffix(operationID, mergedExpansionProject):
+		return model.SideProject, true
+	case strings.HasSuffix(operationID, mergedExpansionRuntime):
+		return model.SideRuntime, true
+	default:
+		return "", false
+	}
+}
+
+// mergedExpansionID 为 write_merged 的指定侧派生展开行 ID。
+func mergedExpansionID(operationID string, side model.Side) string {
+	if side == model.SideRuntime {
+		return operationID + mergedExpansionRuntime
+	}
+	return operationID + mergedExpansionProject
+}
+
 // applySideForOp 返回操作的源侧与目标侧（写操作源侧=内容来源，删除只有目标侧）。
-func applySideForOp(kind model.OperationKind) (src, tgt model.Side, ok bool) {
-	switch kind {
+// write_merged（票 #93）无单一内容源侧（内容=暂存期确定性重算的合并产物），
+// 目标侧由展开行 ID 后缀反解；计划原行（无后缀）不可执行——执行前必经
+// deriveApplyFilePlans 按侧展开。
+func applySideForOp(op model.PlannedOperation) (src, tgt model.Side, ok bool) {
+	switch op.Kind {
 	case model.OpWriteRuntime:
 		return model.SideProject, model.SideRuntime, true
 	case model.OpWriteProject:
@@ -115,6 +154,11 @@ func applySideForOp(kind model.OperationKind) (src, tgt model.Side, ok bool) {
 		return "", model.SideRuntime, true
 	case model.OpRemoveProject:
 		return "", model.SideProject, true
+	case model.OpWriteMerged:
+		if side, expanded := mergedExpansionSide(op.ID); expanded {
+			return "", side, true
+		}
+		return "", "", false
 	default:
 		return "", "", false // materialize（junction）属 Phase 4
 	}
@@ -169,6 +213,7 @@ func deriveApplyFilePlans(plan model.SyncPlan, snapP, snapR model.ObservedSnapsh
 	for _, op := range plan.Operations {
 		fp := applyFilePlan{op: op, recoverability: defaultRecoverability(op.ResourceID)}
 		// 物化模式（票 #63）：计划行推导值直传；空串（P2 旧行）按 copy 兼容。
+		// write_merged 不设物化——内容源是本运行确定性重算（Kind 即内容源分派）。
 		if op.Materialization == model.MaterializationDownload {
 			fp.materialization = model.MaterializationDownload
 		} else {
@@ -177,7 +222,14 @@ func deriveApplyFilePlans(plan model.SyncPlan, snapP, snapR model.ObservedSnapsh
 		if rec, ok := baseRec[op.ResourceID]; ok {
 			fp.recoverability = rec
 		}
-		srcSide, tgtSide, known := applySideForOp(op.Kind)
+		if op.Kind == model.OpWriteMerged {
+			// 双端写合并产物（票 #93）：一资源一操作按侧展开为两份文件执行
+			// 计划（journal/证明/恢复逐侧成行，行 ID 加侧后缀）。内容源在
+			// staging 期重算，此处不推导 afterDigest。
+			out = append(out, deriveMergedFilePlans(op, base, rootBySide, snaps)...)
+			continue
+		}
+		srcSide, tgtSide, known := applySideForOp(op)
 		if !known {
 			fp.blockedCode = resultUnsupportedOp
 			out = append(out, fp)
@@ -219,7 +271,12 @@ func deriveApplyFilePlans(plan model.SyncPlan, snapP, snapR model.ObservedSnapsh
 			continue
 		}
 		// after digest：计划源侧前置条件期望值优先；mod 无内容指纹回退声明 hash。
-		if pre, ok := preBySide[string(srcSide)]; ok && pre.Expected != nil {
+		// ADR-0012 §2 捕获后项目侧 metafile 表示自带实测 Content——但 sync 写往
+		// 运行端的载体是 jar（声明 hash 所指对象），metafile 自身字节的摘要绝不
+		// 可作写盘内容源（否则会把 .pw.toml 字节当 jar 落盘）：项目侧源前置条件
+		// 对 mod 行跳过（捕获前该值恒空，行为与捕获前逐点一致）。
+		if pre, ok := preBySide[string(srcSide)]; ok && pre.Expected != nil &&
+			!(normalize.KindOfResourceID(op.ResourceID) == model.ResourceMod && srcSide == model.SideProject) {
 			fp.afterDigest = pre.Expected.Digest
 		}
 		if fp.afterDigest == "" && normalize.KindOfResourceID(op.ResourceID) == model.ResourceMod {
@@ -282,6 +339,98 @@ func deriveApplyFilePlans(plan model.SyncPlan, snapP, snapR model.ObservedSnapsh
 	return out
 }
 
+// deriveMergedFilePlans 把 write_merged 计划操作按侧展开为两份文件执行计划
+//（票 #93，ADR-0009 §8）：双端各一份 modify/create 行（journal、所有权证明、
+// 恢复裁决逐侧成行，行 ID 由计划操作 ID 加侧后缀派生）。内容源不在此推导——
+// staging 期按计划锁定的三侧快照确定性重算（mergeProduct 标记）；基线内容
+// 摘要取计划基线该资源 project 侧表示的 Content（与计划期合并判定同一取数
+// 口径），缺失即计划不可执行（合并判定依赖基线内容，正常不可达）。
+func deriveMergedFilePlans(op model.PlannedOperation, base *model.SyncBaseline,
+	rootBySide map[model.Side]string, snaps map[model.Side]model.ObservedSnapshot) []applyFilePlan {
+
+	// 双端同路径（合并资源是文件资源，mod 永不进合并面）：路径取任一侧观察，
+	// 观察缺失属防御分支（前置条件 present 必有观察）。
+	relPath := ""
+	for _, side := range []model.Side{model.SideProject, model.SideRuntime} {
+		if obs := snapshotObs(snaps[side], op.ResourceID); obs != nil {
+			relPath = obs.Representation.RelativePath
+			break
+		}
+	}
+	baseDigest := ""
+	if base != nil {
+		if res, ok := base.Resources[op.ResourceID]; ok && res.ProjectRepresentation != nil &&
+			res.ProjectRepresentation.Content != nil {
+			baseDigest = res.ProjectRepresentation.Content.Digest
+		}
+	}
+	preBySide := map[string]model.Precondition{}
+	for _, pre := range op.Preconditions {
+		preBySide[pre.Side] = pre
+	}
+
+	out := make([]applyFilePlan, 0, 2)
+	for _, side := range []model.Side{model.SideProject, model.SideRuntime} {
+		expanded := op
+		expanded.ID = mergedExpansionID(op.ID, side)
+		fp := applyFilePlan{
+			op:              expanded,
+			recoverability:  defaultRecoverability(op.ResourceID),
+			materialization: model.MaterializationCopy,
+			mergeProduct:    true,
+			mergeBaseDigest: baseDigest,
+			targetSide:      side,
+			root:            rootBySide[side],
+			sourceRoot:      rootBySide[oppositeModelSide(side)],
+			sourceRel:       relPath,
+			targetRel:       relPath,
+		}
+		if rec, ok := baseRecOf(base, op.ResourceID); ok {
+			fp.recoverability = rec
+		}
+		if baseDigest == "" || relPath == "" {
+			// 基线内容/路径不可得：合并产物无法重算，staging 期整场失败
+			//（合并判定的前置事实，正常不可达）。
+			fp.blockedCode = resultPreconditionViolated
+			out = append(out, fp)
+			continue
+		}
+		// before/after 与动作类别：目标侧前置条件 present+期望摘要 → modify
+		//（干净合并以双侧同改为前提，present 为常态）；absent → create。
+		if pre, ok := preBySide[string(side)]; ok && pre.Existence == "present" {
+			if pre.Expected != nil {
+				fp.beforeDigest = pre.Expected.Digest
+			}
+			fp.action = applyActionModify
+		} else {
+			fp.action = applyActionCreate
+		}
+		out = append(out, fp)
+	}
+	return out
+}
+
+// baseRecOf 取旧基线记录的恢复途径（deriveApplyFilePlans 的 baseRec 装配在
+// 展开路径复用）。
+func baseRecOf(base *model.SyncBaseline, id model.ResourceID) (model.Recoverability, bool) {
+	if base == nil {
+		return "", false
+	}
+	res, ok := base.Resources[id]
+	if !ok || res.Recoverability == "" {
+		return "", false
+	}
+	return res.Recoverability, true
+}
+
+// oppositeModelSide 返回另一端侧。
+func oppositeModelSide(side model.Side) model.Side {
+	if side == model.SideProject {
+		return model.SideRuntime
+	}
+	return model.SideProject
+}
+
 // downloadRequestFor 从源侧 mod 表示元数据构造 CF 直链取数请求（file-id +
 // filename + 声明 hash；票 #58 引擎输入契约）。要素缺失或 file-id 非法返回 nil
 //（调用方按取数失败处理）。
@@ -307,7 +456,7 @@ func downloadRequestFor(src *model.ResourceObservation) *download.Request {
 func verifyApplyPreconditions(op model.PlannedOperation, snaps map[model.Side]model.ObservedSnapshot,
 	rootBySide map[model.Side]string) (code string, srcFailed bool) {
 
-	srcSide, _, known := applySideForOp(op.Kind)
+	srcSide, _, known := applySideForOp(op)
 	for _, pre := range op.Preconditions {
 		obs := snapshotObs(snaps[model.Side(pre.Side)], pre.ResourceID)
 		rel := prePathOf(pre, obs, snaps)
@@ -399,12 +548,16 @@ func applyResultCode(err error) string {
 // afterContentReader 打开 after 内容流：目标已达成（幂等重放）返回空读器
 // （syncstage 动作先查目标 digest，already_applied 路径不会消费内容；若目标
 // 在 staging 与 applying 之间被外部改动，StageContent 的 hash 复核令空内容
-// 落地前即失败，目标不受影响）；download 行读下载相位的引擎成品（运行暂存
-// downloads/ 下已过声明 hash 校验的字节）；源侧文件/CAS 对象按需重开（动作
-// 可能重放）。
+// 落地前即失败，目标不受影响）；write_merged 展开（票 #93）同样返回空读器
+// ——内容源是 staging 期已复核的暂存副本（双端同路径共享同一暂存文件），
+// StageContent 复用短路不会消费该读器，副本缺失时空内容必被自身 digest
+// 复核拒绝；download 行读下载相位的引擎成品（运行暂存 downloads/ 下已过
+// 声明 hash 校验的字节）；源侧文件/CAS 对象按需重开（动作可能重放）。
 func (a *App) afterContentReader(ctx context.Context, fp applyFilePlan) (io.Reader, func(), error) {
 	switch {
 	case fp.targetReady:
+		return strings.NewReader(""), func() {}, nil
+	case fp.mergeProduct:
 		return strings.NewReader(""), func() {}, nil
 	case fp.dlDone && fp.dlPath != "":
 		f, err := os.Open(fp.dlPath)

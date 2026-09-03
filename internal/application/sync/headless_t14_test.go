@@ -33,9 +33,10 @@ func TestHeadlessScanTimingAndHashCacheDelta(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// 冷扫描：3 个 jar 全部真实哈希（项目侧 metafile 不产生 Content，无哈希查询）
-	if afterCold.Hits != 0 || afterCold.Misses != 3 {
-		t.Fatalf("冷扫描 delta 应为 0 hit/3 miss: %+v", afterCold)
+	// 冷扫描：3 个 jar 全部真实哈希；3 个项目侧 metafile 自 #88 起同闭包实测
+	// 捕获 Content（hash cache 顺路复用，零新扫描成本维度）→ 6 miss。
+	if afterCold.Hits != 0 || afterCold.Misses != 6 {
+		t.Fatalf("冷扫描 delta 应为 0 hit/6 miss: %+v", afterCold)
 	}
 	if afterCold.HitRatio != 0 {
 		t.Fatalf("冷扫描命中率应为 0: %+v", afterCold)
@@ -74,8 +75,8 @@ func TestHeadlessScanTimingAndHashCacheDelta(t *testing.T) {
 	}
 	warmHits := afterWarm.Hits - afterCold.Hits
 	warmMisses := afterWarm.Misses - afterCold.Misses
-	if warmHits != 3 || warmMisses != 0 {
-		t.Fatalf("热扫描 delta 应为 3 hit/0 miss: hits=%d misses=%d", warmHits, warmMisses)
+	if warmHits != 6 || warmMisses != 0 {
+		t.Fatalf("热扫描 delta 应为 6 hit/0 miss: hits=%d misses=%d", warmHits, warmMisses)
 	}
 
 	timing2 := app.LastScanTiming()

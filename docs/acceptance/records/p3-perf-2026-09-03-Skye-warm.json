@@ -1,0 +1,26 @@
+{
+  "schema": "p3-perf-run/1",
+  "captured_at": "2026-09-03T05:19:49Z",
+  "project_root": "C:\\project\\wt-p4\\t98\\build\\perf\\fixture\\project",
+  "instance_dir": "C:\\project\\wt-p4\\t98\\build\\perf\\fixture\\instance",
+  "data_root": "build/perf/data",
+  "machine": {
+    "os": "windows",
+    "arch": "amd64",
+    "go_version": "go1.26.5",
+    "cpus": 16
+  },
+  "scan_phases_ms": {
+    "project_scan": 86,
+    "runtime_scan": 401,
+    "normalize": 10,
+    "persist": 23
+  },
+  "scan_total_ms": 538,
+  "run_total_ms": 721,
+  "hash_cache": {
+    "hits": 3002,
+    "misses": 0,
+    "hit_ratio": 1
+  }
+}

@@ -73,13 +73,15 @@ func (s *Scanner) Scan(ctx context.Context, root string, opts ports.ScanOptions)
 
 	rslv, err := filesystem.NewResolver(root)
 	if err != nil {
-		return report, fmt.Errorf("prism: 端点根不可达: %w", err)
+		// R1（ADR-0011 §7）：端点根不可达错误串含用户输入的绝对路径，别名化后再透出
+		return report, model.AliasError(root, model.AliasRuntime, fmt.Errorf("prism: 端点根不可达: %w", err))
 	}
 
 	// ---- A. mods 扫描 ----
 	modsDir, rerr := rslv.Resolve("mods")
 	if rerr != nil {
-		// mods/ 解析后越出端点根目录：跳过 mods 段并诊断（受管文件规则照常）
+		// mods/ 解析后越出端点根目录：跳过 mods 段并诊断（受管文件规则照常）；
+		// 错误串只含 root-relative 证据（R1：端点根外绝对路径不进诊断面）
 		report.Diagnostics = append(report.Diagnostics, model.Diagnostic{
 			Severity: "warning", Code: "diag.scan.path_escape",
 			Args:   []string{"mods"},
@@ -91,7 +93,9 @@ func (s *Scanner) Scan(ctx context.Context, root string, opts ports.ScanOptions)
 	if modsDir != "" {
 		entries, err = os.ReadDir(modsDir)
 		if err != nil && !errors.Is(err, fs.ErrNotExist) {
-			return report, fmt.Errorf("prism: 读取 mods 目录 %s: %w", modsDir, err)
+			// R1：ReadDir 错误内嵌端点内绝对路径，别名化后再透出
+			return report, model.AliasError(rslv.Root(), model.AliasRuntime,
+				fmt.Errorf("prism: 读取 mods 目录 %s: %w", modsDir, err))
 		}
 	}
 	// mods/ 不存在 → 空，不算错误（entries 为 nil，循环不执行）
@@ -162,7 +166,9 @@ func (s *Scanner) Scan(ctx context.Context, root string, opts ports.ScanOptions)
 		if herr != nil {
 			report.Diagnostics = append(report.Diagnostics, model.Diagnostic{
 				Severity: "warning", Code: "diag.scan.hash_failed",
-				Args: []string{relPath}, RelativePath: relPath, Detail: herr.Error(),
+				Args: []string{relPath}, RelativePath: relPath,
+				// R1（ADR-0011 §7）：哈希错误（os.Stat/Open）内嵌端点内绝对路径
+				Detail: model.AliasDetail(rslv.Root(), model.AliasRuntime, herr.Error()),
 			})
 			continue
 		}
@@ -245,7 +251,8 @@ func readIndexMetadata(rslv *filesystem.Resolver, jarName string, diags *[]model
 		*diags = append(*diags, model.Diagnostic{
 			Severity: "warning", Code: "diag.scan.index_meta_unreadable",
 			Args: []string{"mods/.index/" + jarName + ".pw.toml"}, RelativePath: "mods/" + jarName,
-			Detail: err.Error(),
+			// R1（ADR-0011 §7）：解析错误内嵌端点内绝对路径，新写 detail 即别名
+			Detail: model.AliasDetail(rslv.Root(), model.AliasRuntime, err.Error()),
 		})
 		return nil
 	}

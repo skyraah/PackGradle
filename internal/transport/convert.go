@@ -130,6 +130,8 @@ func workspaceDTO(v view.WorkspaceView) WorkspaceDTO {
 			ScanState: v.State.ScanState, BaselineState: v.State.BaselineState,
 			DiffState: v.State.DiffState, RelationHealth: v.State.RelationHealth,
 			ActiveTaskID: v.State.ActiveTaskID, RelationRevision: v.State.RelationRevision,
+			PendingPlanID: v.State.PendingPlanID,
+			WatchStatus:   v.State.WatchStatus,
 		},
 		Features:     featuresDTO(v.Features),
 		Availability: availabilityDTO(v.Availability),
@@ -194,6 +196,30 @@ func taskDTO(v view.TaskView) TaskDTO {
 		out.Problem = &ProblemDTO{Code: v.Problem.Code, Args: strs(v.Problem.Args), Detail: v.Problem.Detail}
 	}
 	return out
+}
+
+// quickUpdateResultDTO 投影统一快速更新收口结果（契约 07 §3.1，票 #86）。
+func quickUpdateResultDTO(v view.QuickUpdateResultView) QuickUpdateResultDTO {
+	return QuickUpdateResultDTO{
+		SchemaVersion: model.CurrentSchemaVersion,
+		RelationID:    v.RelationID,
+		Outcome:       v.Outcome,
+		PlanID:        v.PlanID,
+		ApplyTaskID:   v.ApplyTaskID,
+	}
+}
+
+// mergedPreviewDTO 投影合并预览（契约 07 §3.4，票 #94）：两段全文直映，
+// schema_version 由投影补齐（应用层 view 不携带）。
+func mergedPreviewDTO(v view.MergedPreviewView) MergedPreviewDTO {
+	return MergedPreviewDTO{
+		SchemaVersion: model.CurrentSchemaVersion,
+		PlanID:        v.PlanID,
+		ResourceID:    v.ResourceID,
+		RelativePath:  v.RelativePath,
+		Content:       v.Content,
+		BaseContent:   v.BaseContent,
+	}
 }
 
 func representationDTO(r *model.Representation) *RepresentationDTO {
@@ -262,7 +288,7 @@ func changesDTO(v view.ChangesPage) ChangesPageDTO {
 			ConvergedCount: v.Summary.ConvergedCount, AdoptEqualCount: v.Summary.AdoptEqualCount,
 			InitChoiceCount: v.Summary.InitChoiceCount, CreateCount: v.Summary.CreateCount,
 			ModifyCount: v.Summary.ModifyCount, DeleteCount: v.Summary.DeleteCount,
-			ConflictCount: v.Summary.ConflictCount,
+			ConflictCount: v.Summary.ConflictCount, MergedCleanCount: v.Summary.MergedCleanCount,
 		},
 		NextCursor: v.NextCursor,
 	}
@@ -316,6 +342,7 @@ func planDTO(v view.SyncPlanView) SyncPlanDTO {
 			ResourceTotal: v.Summary.ResourceTotal, AdoptEqualCount: v.Summary.AdoptEqualCount,
 			CreateCount: v.Summary.CreateCount, ModifyCount: v.Summary.ModifyCount,
 			DeleteCount: v.Summary.DeleteCount, ConflictCount: v.Summary.ConflictCount,
+			MergedCleanCount: v.Summary.MergedCleanCount,
 		},
 	}
 }
@@ -395,6 +422,19 @@ func retentionSettingsDTO(v view.RetentionSettingsView) RetentionSettingsDTO {
 		RelationCapacityBytes: v.RelationCapacityBytes,
 		PreserveMaxBytes:      v.PreserveMaxBytes,
 		TrashDays:             v.TrashDays,
+	}
+}
+
+// storageStatsDTO 投影存储占用概览（ADR-0011 §8，票 #90；只读数据面直投影）。
+func storageStatsDTO(v view.StorageStatsView) StorageStatsDTO {
+	return StorageStatsDTO{
+		SchemaVersion:   v.SchemaVersion,
+		CasTotalBytes:   v.CasTotalBytes,
+		CasObjectCount:  v.CasObjectCount,
+		CasTmpLeftovers: v.CasTmpLeftovers,
+		TaskEventsCount: v.TaskEventsCount,
+		DBSizeBytes:     v.DBSizeBytes,
+		FreeDiskBytes:   v.FreeDiskBytes,
 	}
 }
 

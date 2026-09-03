@@ -3,7 +3,7 @@ package sync
 import (
 	"context"
 	"encoding/json"
-	"log"
+	"log/slog"
 	"time"
 
 	"packgradle/internal/application/ports"
@@ -168,7 +168,7 @@ func (a *App) ConfirmRestorePlan(ctx context.Context, input view.ConfirmRestoreP
 	if created.TaskID != "" {
 		// 事件发布恒在事务提交之后（ADR-0004 §6）；发布失败不影响已提交事实
 		if err := a.pub.PublishTask(ctx, created); err != nil {
-			log.Printf("confirm_restore: 发布 task_updated 失败（任务 %s 已创建）: %v", created.TaskID, err)
+			slog.Warn("confirm_restore: 发布 task_updated 失败（任务已创建）", "task", created.TaskID, "err", err)
 		}
 		a.startRestore(created)
 		return TaskView(created), nil

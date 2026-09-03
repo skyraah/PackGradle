@@ -21,6 +21,9 @@ type Application interface {
 	// UpdateRetentionSettings 整体替换保留设置；单键越界整体拒绝
 	// （err.settings.retention_invalid，{0}=字段名）。
 	UpdateRetentionSettings(ctx context.Context, input view.UpdateRetentionSettingsInput) (view.RetentionSettingsView, error)
+	// GetStorageStats 返回存储占用概览（ADR-0011 §8，票 #90；只读数据面，
+	// 阈值与告警 UI 后置）。
+	GetStorageStats(ctx context.Context) (view.StorageStatsView, error)
 }
 
 var _ Application = (*App)(nil)
@@ -29,6 +32,8 @@ var _ Application = (*App)(nil)
 type Deps struct {
 	// Retention 是保留设置存取端口（config.toml [retention]，appconfig 实现）。
 	Retention ports.RetentionSettingsStore
+	// Storage 是存储占用概览采集端口（ADR-0011 §8，票 #90；sqlite 仓库实现）。
+	Storage ports.StorageStatsSource
 }
 
 // App 是设置域用例实现。
@@ -40,6 +45,9 @@ type App struct {
 func New(deps Deps) (*App, error) {
 	if deps.Retention == nil {
 		return nil, fmt.Errorf("settings: 缺少依赖 Retention")
+	}
+	if deps.Storage == nil {
+		return nil, fmt.Errorf("settings: 缺少依赖 Storage")
 	}
 	return &App{deps: deps}, nil
 }
@@ -66,6 +74,13 @@ func (a *App) UpdateRetentionSettings(ctx context.Context, input view.UpdateRete
 		return view.RetentionSettingsView{}, err
 	}
 	return retentionView(s), nil
+}
+
+// GetStorageStats 返回存储占用概览（ADR-0011 §8 勘误兑现，票 #90）：
+// cas_total_bytes + free_disk_bytes 为容量红线双指标承载；只读数据面，
+// 阈值与告警 UI 后置，staging 侧指标待 #69 决议后补。
+func (a *App) GetStorageStats(ctx context.Context) (view.StorageStatsView, error) {
+	return a.deps.Storage.StorageStats(ctx)
 }
 
 // retentionView 投影保留设置（schema_version 随 DTO 顶层约定）。

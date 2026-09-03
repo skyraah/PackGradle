@@ -7,7 +7,7 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
-	"log"
+	"log/slog"
 	"os"
 	"path/filepath"
 
@@ -109,7 +109,7 @@ func (a *App) recoveryPipeline(ctx context.Context, active model.Task, run model
 		verdicts[i] = a.probeOperation(run, stgRun, ops[i], rootBySide, snaps)
 		if verdicts[i].kind == opVerdictAmbiguous {
 			ambiguous++
-			log.Printf("recovery: 运行 %s 操作 %s 判含糊: %s", run.TaskID, ops[i].OperationID, verdicts[i].reason)
+			slog.Warn("recovery: 操作判含糊", "run", run.TaskID, "op", ops[i].OperationID, "reason", verdicts[i].reason)
 		}
 	}
 
@@ -203,7 +203,7 @@ func (a *App) probeOperation(run model.ApplyRun, stgRun *syncstage.Run, op model
 			return amb(fmt.Sprintf("计划操作解析失败: %v", err))
 		}
 	}
-	_, tgtSide, known := applySideForOp(planned.Kind)
+	_, tgtSide, known := applySideForOp(planned)
 	if !known {
 		return amb(fmt.Sprintf("操作类别 %q 不可恢复裁决", planned.Kind))
 	}
@@ -381,7 +381,7 @@ func (a *App) redoOperation(ctx context.Context, stgRun *syncstage.Run, run mode
 		defer spill.Close()
 		content = spill
 	}
-	_, tgtSide, _ := applySideForOp(v.planned.Kind)
+	_, tgtSide, _ := applySideForOp(v.planned)
 	res, execErr := applyActionRunner(actionsBySide[tgtSide], v.action, v.proof, content)
 	if execErr != nil {
 		return execErr
@@ -414,7 +414,7 @@ func (a *App) compensateProvableWrites(ctx context.Context, run model.ApplyRun,
 		if code == "" {
 			continue
 		}
-		log.Printf("recovery: 运行 %s 操作 %s 补偿未完成（%s），保留现状交人工", run.TaskID, op.OperationID, code)
+		slog.Warn("recovery: 操作补偿未完成，保留现状交人工", "run", run.TaskID, "op", op.OperationID, "code", code)
 	}
 }
 
@@ -579,7 +579,7 @@ func (a *App) completeRecoveredRun(ctx context.Context, active model.Task, run m
 	plans := make([]applyFilePlan, len(verdicts))
 	for i := range verdicts {
 		v := verdicts[i]
-		_, tgtSide, _ := applySideForOp(v.planned.Kind)
+		_, tgtSide, _ := applySideForOp(v.planned)
 		plans[i] = applyFilePlan{op: v.planned, action: v.action, targetSide: tgtSide}
 	}
 	violations, remaining, err := verifyRescan(plan, plans, rescanP, rescanR, base, nil)
@@ -620,12 +620,15 @@ func (a *App) completeRecoveredRun(ctx context.Context, active model.Task, run m
 	rescanP.CapturedAt = nowStr
 	rescanR.SnapshotID = a.deps.IDs("snap_")
 	rescanR.CapturedAt = nowStr
+	// 基线内容摄取（ADR-0012 §2/规格 §F2）：恢复收口的提交与引擎提交同款通道。
+	contentRefs, ingestDiags := a.ingestBaselineProjectContent(ctx, proj.RootPath, &newBaseline)
 	commit := buildSyncCommit(rel, plan, commitID, baselineID, nowStr, completeness, remaining,
-		rescanP.SnapshotID, rescanR.SnapshotID, buildCommitChanges(plans, snapP, snapR, rescanP, rescanR), nil)
+		rescanP.SnapshotID, rescanR.SnapshotID, buildCommitChanges(plans, snapP, snapR, rescanP, rescanR), nil, ingestDiags)
 
 	// object_refs：运行级恢复引用中的 CAS before 保全引用（恢复完成的运行重建
-	// 引用行；引擎路径的 size 事实在恢复引用中不携带，此处按缺省 0 落库）。
-	casRefs := casRefRows(run)
+	// 引用行；引擎路径的 size 事实在恢复引用中不携带，此处按缺省 0 落库）
+	// ∪ 基线内容摄取引用。
+	casRefs := append(casRefRows(run), contentRefs...)
 
 	err = a.deps.Tx.RunInTx(ctx, func(repos ports.Repos) error {
 		if err := repos.Snapshots.Insert(ctx, rescanP); err != nil {
@@ -676,9 +679,9 @@ func (a *App) completeRecoveredRun(ctx context.Context, active model.Task, run m
 
 	// staging 仅在提交事务成功后清理（ADR-0004 §5）；失败保留证据可重试。
 	if err := syncstage.CleanupRun(a.deps.StagingRoot, run.TaskID); err != nil {
-		log.Printf("recovery: 清理暂存失败（staging_cleared 保持未清理，可重试）: %v", err)
+		slog.Warn("recovery: 清理暂存失败（staging_cleared 保持未清理，可重试）", "err", err)
 	} else if err := a.deps.ApplyRuns.MarkStagingCleared(ctx, run.TaskID, a.nowStr()); err != nil {
-		log.Printf("recovery: 记录 staging_cleared 失败: %v", err)
+		slog.Warn("recovery: 记录 staging_cleared 失败", "err", err)
 	}
 
 	active.Status = model.TaskStatusSucceeded
@@ -689,11 +692,11 @@ func (a *App) completeRecoveredRun(ctx context.Context, active model.Task, run m
 	active.CommitID = commitID
 	active.Outcome = completeness
 	if _, err := a.runner.Update(ctx, active); err != nil {
-		log.Printf("recovery: 任务 %s 成功终态落库失败: %v", active.TaskID, err)
+		slog.Warn("recovery: 任务成功终态落库失败", "task", active.TaskID, "err", err)
 		return
 	}
 	_ = a.pub.PublishRelationInvalidated(ctx, rel.RelationID)
-	log.Printf("recovery: 运行 %s probe 裁决完成，已 committed（%s）", run.TaskID, commitID)
+	slog.Info("recovery: 运行 probe 裁决完成，已 committed", "run", run.TaskID, "commit", commitID)
 }
 
 // blockRecoveredRun 把不可自动完成的运行收口到 recovery_required（终态）：
@@ -702,21 +705,21 @@ func (a *App) completeRecoveredRun(ctx context.Context, active model.Task, run m
 func (a *App) blockRecoveredRun(ctx context.Context, active model.Task, run model.ApplyRun, code string, cause error) {
 	if !applyRunTerminal(run.State) {
 		if err := a.deps.ApplyRuns.AdvanceState(ctx, run.TaskID, model.ApplyRunRecoveryRequired, a.nowStr()); err != nil {
-			log.Printf("recovery: 运行 %s 推进 recovery_required 失败: %v", run.TaskID, err)
+			slog.Warn("recovery: 运行推进 recovery_required 失败", "run", run.TaskID, "err", err)
 		}
 	}
 	if err := a.deps.Relations.UpdateHealth(ctx, run.RelationID, model.HealthRecoveryRequired); err != nil {
-		log.Printf("recovery: 关系 %s 标记恢复态失败: %v", run.RelationID, err)
+		slog.Warn("recovery: 关系标记恢复态失败", "relation", run.RelationID, "err", err)
 	}
 	if active.Status == model.TaskStatusQueued || active.Status == model.TaskStatusRunning {
 		active.Status = model.TaskStatusRecoveryRequired
 		active.MessageKey = taskProgressKey(active.Kind, "recovery_required")
 		active.Problem = &model.Problem{Code: CodeRecoveryInProgress, Detail: cause.Error()}
 		if _, err := a.runner.Update(ctx, active); err != nil {
-			log.Printf("recovery: 任务 %s 恢复终态落库失败: %v", active.TaskID, err)
+			slog.Warn("recovery: 任务恢复终态落库失败", "task", active.TaskID, "err", err)
 		}
 	}
-	log.Printf("recovery: 运行 %s 保持 recovery_required（code=%s）: %v", run.TaskID, code, cause)
+	slog.Warn("recovery: 运行保持 recovery_required", "run", run.TaskID, "code", code, "cause", cause)
 }
 
 // advanceRunToApplying 把运行沿成功链步进到 applying（prepared→staged→applying；

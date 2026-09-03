@@ -8,7 +8,7 @@ package sync
 import (
 	"context"
 	"encoding/json"
-	"log"
+	"log/slog"
 	"sort"
 	"strconv"
 	"strings"
@@ -140,7 +140,7 @@ func (a *App) ListCommits(ctx context.Context, relationID string, page ports.Pag
 	if a.deps.GC != nil {
 		n, err := a.deps.GC.PrunedBeforeCount(ctx, relationID)
 		if err != nil {
-			log.Printf("gc: 墓碑计数读取失败（按 0 投影）: %v", err)
+			slog.Warn("gc: 墓碑计数读取失败（按 0 投影）", "err", err)
 		} else {
 			out.PrunedBeforeCount = n
 		}

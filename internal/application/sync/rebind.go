@@ -64,7 +64,8 @@ func (a *App) PrepareRebind(ctx context.Context, input view.PrepareRebindInput) 
 		real, nerr := a.deps.EndpointPaths.NormalizeEndpointPath(input.RootPath)
 		switch {
 		case nerr != nil:
-			readableDetail = "项目源根目录不可达: " + nerr.Error()
+			// R1（ADR-0011 §7）：不可达错误串内嵌绝对路径，检查 detail 新写即别名
+			readableDetail = "项目源根目录不可达: " + model.AliasDetail(input.RootPath, model.AliasProject, nerr.Error())
 		case !pathExists(filepath.Join(real, "pack.toml")):
 			readableDetail = "pack.toml 不存在（不是 Packwiz 项目根目录）"
 		default:
@@ -75,7 +76,8 @@ func (a *App) PrepareRebind(ctx context.Context, input view.PrepareRebindInput) 
 		if readable {
 			newDisplay = filepath.Base(newRoot)
 			if newFp, err = a.deps.Fingerprinter.Fingerprint(newRoot); err != nil {
-				return view.RebindPreparationView{}, errs.NewDetail(CodeRelationInvalidEndpoint, "计算项目端点指纹失败: "+err.Error(), newRoot)
+				return view.RebindPreparationView{}, errs.NewDetail(CodeRelationInvalidEndpoint,
+					"计算项目端点指纹失败: "+model.AliasDetail(newRoot, model.AliasProject, err.Error()), newRoot)
 			}
 			// 绑定草稿携带旧端点 ID：ApplyRebind 原位更新该行（不新建端点）。
 			newProj = &model.Project{
@@ -92,12 +94,12 @@ func (a *App) PrepareRebind(ctx context.Context, input view.PrepareRebindInput) 
 		real, nerr := a.deps.EndpointPaths.NormalizeEndpointPath(input.RootPath)
 		switch {
 		case nerr != nil:
-			readableDetail = "运行实例目录不可达: " + nerr.Error()
+			readableDetail = "运行实例目录不可达: " + model.AliasDetail(input.RootPath, model.AliasRuntime, nerr.Error())
 		default:
 			realGame, gerr := a.deps.EndpointPaths.NormalizeEndpointPath(filepath.Join(real, "minecraft"))
 			switch {
 			case gerr != nil:
-				readableDetail = "游戏目录 minecraft/ 不可达: " + gerr.Error()
+				readableDetail = "游戏目录 minecraft/ 不可达: " + model.AliasDetail(input.RootPath, model.AliasRuntime, gerr.Error())
 			case !pathExists(filepath.Join(real, "instance.cfg")):
 				readableDetail = "Prism 实例目录缺少 instance.cfg 或 minecraft/ 游戏目录"
 			default:
@@ -111,7 +113,8 @@ func (a *App) PrepareRebind(ctx context.Context, input view.PrepareRebindInput) 
 			newDisplay = filepath.Base(newInstanceDir)
 			newIdentity = strings.ToLower(newDisplay)
 			if newFp, err = a.deps.Fingerprinter.Fingerprint(newRoot); err != nil {
-				return view.RebindPreparationView{}, errs.NewDetail(CodeRelationInvalidEndpoint, "计算运行时端点指纹失败: "+err.Error(), newInstanceDir)
+				return view.RebindPreparationView{}, errs.NewDetail(CodeRelationInvalidEndpoint,
+					"计算运行时端点指纹失败: "+model.AliasDetail(newRoot, model.AliasRuntime, err.Error()), newInstanceDir)
 			}
 			newRt = &model.Runtime{
 				SchemaVersion:      model.CurrentSchemaVersion,
@@ -293,6 +296,8 @@ func (a *App) ApplyRebind(ctx context.Context, preparationID string) (view.Relat
 	}
 	// 事务已提交；发布 relation_invalidated（事件恒在提交之后，发布失败不影响提交）
 	_ = a.pub.PublishRelationInvalidated(ctxWithoutCancel(ctx), prep.RelationID)
+	// 监听面动态挂卸（票 #92，ADR-0010 §4）：重绑后端点根路径变化，重挂监听。
+	a.kickWatch()
 	return result, nil
 }
 
@@ -336,7 +341,8 @@ func runtimeOccupiedDetail(ctx context.Context, endpoints ports.EndpointReposito
 		return "", err
 	}
 	if found && existing.RuntimeID != selfRuntimeID {
-		return "同名实例目录已登记为其他运行实例: " + existing.RootPath, nil
+		// R1（ADR-0011 §7）：已登记端点根为绝对路径，占用证据别名化
+		return "同名实例目录已登记为其他运行实例: " + model.AliasPath(existing.RootPath, model.AliasRuntime, existing.RootPath), nil
 	}
 	return "", nil
 }

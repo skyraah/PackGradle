@@ -277,3 +277,45 @@ func TestCommitDTOSerialization(t *testing.T) {
 		t.Errorf("空页应序列化 items:[]: %s", emptyPage)
 	}
 }
+
+// TestStorageStatsDTO 投影存储占用概览（ADR-0011 §8，票 #90）：六键口径全投影，
+// snake_case JSON 键与契约口径一致（容量红线双指标 cas_total_bytes/free_disk_bytes）。
+func TestStorageStatsDTO(t *testing.T) {
+	v := view.StorageStatsView{
+		SchemaVersion:   model.CurrentSchemaVersion,
+		CasTotalBytes:   123456,
+		CasObjectCount:  42,
+		CasTmpLeftovers: 3,
+		TaskEventsCount: 7777,
+		DBSizeBytes:     8910,
+		FreeDiskBytes:   1122334455,
+	}
+	dto := storageStatsDTO(v)
+	if dto.CasTotalBytes != 123456 || dto.CasObjectCount != 42 || dto.CasTmpLeftovers != 3 ||
+		dto.TaskEventsCount != 7777 || dto.DBSizeBytes != 8910 || dto.FreeDiskBytes != 1122334455 {
+		t.Fatalf("六键投影不一致: %+v", dto)
+	}
+	if dto.SchemaVersion != model.CurrentSchemaVersion {
+		t.Fatalf("schema_version 不一致: %d", dto.SchemaVersion)
+	}
+
+	b, err := json.Marshal(dto)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc map[string]any
+	if err := json.Unmarshal(b, &doc); err != nil {
+		t.Fatal(err)
+	}
+	for _, key := range []string{
+		"schema_version", "cas_total_bytes", "cas_object_count", "cas_tmp_leftovers",
+		"task_events_count", "db_size_bytes", "free_disk_bytes",
+	} {
+		if _, present := doc[key]; !present {
+			t.Errorf("JSON 缺少口径键 %s: %s", key, b)
+		}
+	}
+	if len(doc) != 7 {
+		t.Errorf("DTO 应恰有七键（无 staging 占位）: %s", b)
+	}
+}

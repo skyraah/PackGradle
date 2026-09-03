@@ -36,7 +36,10 @@ func (s *Scanner) Name() string { return "packwiz" }
 // 1.1.0（票 #63/#59）：mod 观察新增 cf_file_id 元数据（CF 免钥匙直链取数的
 // 文件编号，供 sync 计划物化模式推导与 restore 重取判定消费；不进语义摘要
 // 与快照 digest）。
-func (s *Scanner) Version() string { return "1.1.0" }
+// 1.2.0（票 #88）：mod 观察新增 metafile 自身实测 Content（sha256+size，
+// HashFile 闭包实测；对象本体在提交收口期统一入 CAS，扫描期零对象——
+// ADR-0012 §2）。
+func (s *Scanner) Version() string { return "1.2.0" }
 
 // Scan 扫描项目端点：index.toml 权威 mod 列表 + MappingPolicy 受管文件规则。
 // 全部端点内路径访问经 Resolver（realpath + root containment）强制入口；
@@ -51,25 +54,26 @@ func (s *Scanner) Scan(ctx context.Context, root string, opts ports.ScanOptions)
 
 	rslv, err := filesystem.NewResolver(root)
 	if err != nil {
-		return report, fmt.Errorf("packwiz: 端点根不可达: %w", err)
+		// R1（ADR-0011 §7）：端点根不可达错误串含用户输入的绝对路径，别名化后再透出
+		return report, model.AliasError(root, model.AliasProject, fmt.Errorf("packwiz: 端点根不可达: %w", err))
 	}
 	packPath, err := rslv.Resolve("pack.toml")
 	if err != nil {
-		return report, fmt.Errorf("packwiz: pack.toml 解析失败: %w", err)
+		return report, model.AliasError(root, model.AliasProject, fmt.Errorf("packwiz: pack.toml 解析失败: %w", err))
 	}
 	if _, err := os.Stat(packPath); err != nil {
 		return report, ErrNotPackwizProject
 	}
 	idxPath, err := rslv.Resolve("index.toml")
 	if err != nil {
-		return report, fmt.Errorf("packwiz: index.toml 解析失败: %w", err)
+		return report, model.AliasError(root, model.AliasProject, fmt.Errorf("packwiz: index.toml 解析失败: %w", err))
 	}
 	idx, err := parseIndex(idxPath)
 	if err != nil {
 		if errors.Is(err, fs.ErrNotExist) {
 			return report, ErrIndexMissing
 		}
-		return report, fmt.Errorf("packwiz: index.toml 解析失败: %w", err)
+		return report, model.AliasError(root, model.AliasProject, fmt.Errorf("packwiz: index.toml 解析失败: %w", err))
 	}
 
 	obs := make([]model.ResourceObservation, 0, len(idx.Files))
@@ -105,9 +109,32 @@ func (s *Scanner) Scan(ctx context.Context, root string, opts ports.ScanOptions)
 			})
 			continue
 		}
+		// metafile 实测摘要捕获（ADR-0012 §2）：Content 由 application 注入的
+		// HashFile 闭包（含 hash cache）实测 sha256+size，落表示 Content；对象
+		// 本体在提交收口期按 digest 统一从工作树读字节入 CAS，扫描期零 CAS
+		// 对象。缺 hasher/哈希失败按 managedfiles 同款诊断语义落警告诊断：
+		// 观察保留（metafile 的语义身份是同步面权威），表示退无 Content（回滚
+		// 面按无源行自然落降级语义）。
+		var metaContent *model.ContentRef
+		if opts.HashFile == nil {
+			report.Diagnostics = append(report.Diagnostics, model.Diagnostic{
+				Severity: "warning", Code: "diag.scan.hasher_missing",
+				Args: []string{entry.File}, RelativePath: entry.File,
+				Detail: "扫描选项未注入哈希函数，metafile 未捕获内容摘要",
+			})
+		} else if c, _, herr := opts.HashFile(ctx, absMeta); herr != nil {
+			report.Diagnostics = append(report.Diagnostics, model.Diagnostic{
+				Severity: "warning", Code: "diag.scan.hash_failed",
+				Args: []string{entry.File}, RelativePath: entry.File, Detail: herr.Error(),
+			})
+		} else {
+			c := c
+			metaContent = &c
+		}
 		meta, metaErr := parseModMeta(absMeta)
 		if metaErr != nil {
-			// 容错哲学：条目保留（低置信度路径身份），错误落诊断
+			// 容错哲学：条目保留（低置信度路径身份），错误落诊断。
+			// R1（ADR-0011 §7）：metaErr 内嵌端点内绝对路径，新写 detail 即别名
 			obs = append(obs, model.ResourceObservation{
 				ResourceID: model.ResourceID("mod:path:" + relLower),
 				Kind:       model.ResourceMod,
@@ -115,13 +142,14 @@ func (s *Scanner) Scan(ctx context.Context, root string, opts ports.ScanOptions)
 				Representation: model.Representation{
 					RelativePath: entry.File,
 					Format:       "packwiz-mod-toml",
+					Content:      metaContent,
 				},
 				PolicyID: modPolicyID,
 			})
 			report.Diagnostics = append(report.Diagnostics, model.Diagnostic{
 				Severity: "warning", Code: "diag.scan.modmeta_unreadable",
 				Args: []string{entry.File}, RelativePath: entry.File,
-				Detail: metaErr.Error(),
+				Detail: model.AliasDetail(rslv.Root(), model.AliasProject, metaErr.Error()),
 			})
 			continue
 		}
@@ -160,6 +188,7 @@ func (s *Scanner) Scan(ctx context.Context, root string, opts ports.ScanOptions)
 			Representation: model.Representation{
 				RelativePath: entry.File,
 				Format:       "packwiz-mod-toml",
+				Content:      metaContent,
 				Metadata:     metadata,
 			},
 			PolicyID: modPolicyID,

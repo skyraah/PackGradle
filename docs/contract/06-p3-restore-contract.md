@@ -273,6 +273,7 @@ type RetentionSettingsDTO struct {
 | `err.restore.skip_invalid` | {0}=resource_id | skip 决议作用于非阻塞行 |
 | `err.userobject.hash_mismatch` | {0}=期望摘要 | StageUserObject：文件内容与目标摘要不符 |
 | `err.userobject.not_required` | {0}=resource_id | StageUserObject 作用于非 user_object_required 行 |
+| `err.userobject.no_project_content` | {0}=resource_id | StageUserObject 作用于 `no_project_content` 降标行（ADR-0012 §4 存量降级：目标基线项目侧无实测 Content，补全通道关闭——skip 或项目端改回目标语义后重新 prepare） |
 | `err.download.unavailable` | {0}=文件名 | staging 期下载：CF 资源不可获取（404/下架） |
 | `err.download.rate_limited` | — | staging 期下载：CF 频控（403 体嗅探，#50 笔记） |
 | `err.download.hash_mismatch` | {0}=文件名 | staging 期下载：字节校验失败 |

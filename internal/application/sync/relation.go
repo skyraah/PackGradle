@@ -81,11 +81,12 @@ func (a *App) PrepareRelation(ctx context.Context, input model.PrepareRelationIn
 
 	// 端点路径规范化管线（P0-4 强制入口）：相对输入绝对化 → realpath →
 	// 目录校验；登记与指纹一律使用 canonical 路径。不可达落到对应 readable 检查。
+	// R1（ADR-0011 §7）：不可达错误串内嵌绝对路径，检查 detail 新写即别名。
 	projectRoot := input.ProjectRoot
 	projectReadable := false
 	projectDetail := "pack.toml 不存在（不是 Packwiz 项目根目录）"
 	if real, nerr := a.deps.EndpointPaths.NormalizeEndpointPath(input.ProjectRoot); nerr != nil {
-		projectDetail = "项目源根目录不可达: " + nerr.Error()
+		projectDetail = "项目源根目录不可达: " + model.AliasDetail(input.ProjectRoot, model.AliasProject, nerr.Error())
 	} else {
 		projectRoot = real
 		projectReadable = pathExists(filepath.Join(real, "pack.toml"))
@@ -96,9 +97,9 @@ func (a *App) PrepareRelation(ctx context.Context, input model.PrepareRelationIn
 	runtimeReadable := false
 	runtimeDetail := "Prism 实例目录缺少 instance.cfg 或 minecraft/ 游戏目录"
 	if real, nerr := a.deps.EndpointPaths.NormalizeEndpointPath(input.RuntimeInstanceDir); nerr != nil {
-		runtimeDetail = "运行实例目录不可达: " + nerr.Error()
+		runtimeDetail = "运行实例目录不可达: " + model.AliasDetail(input.RuntimeInstanceDir, model.AliasRuntime, nerr.Error())
 	} else if realGame, gerr := a.deps.EndpointPaths.NormalizeEndpointPath(filepath.Join(real, "minecraft")); gerr != nil {
-		runtimeDetail = "游戏目录 minecraft/ 不可达: " + gerr.Error()
+		runtimeDetail = "游戏目录 minecraft/ 不可达: " + model.AliasDetail(input.RuntimeInstanceDir, model.AliasRuntime, gerr.Error())
 	} else {
 		instanceDir = real
 		gameDir = realGame
@@ -116,12 +117,15 @@ func (a *App) PrepareRelation(ctx context.Context, input model.PrepareRelationIn
 	var fpProject, fpRuntime string
 	if projectReadable {
 		if fpProject, err = a.deps.Fingerprinter.Fingerprint(projectRoot); err != nil {
-			return view.RelationPreparationView{}, errs.NewDetail(CodeRelationInvalidEndpoint, "计算项目端点指纹失败: "+err.Error(), projectRoot)
+			// R1（ADR-0011 §7）：指纹错误内嵌端点内绝对路径，detail 别名化
+			return view.RelationPreparationView{}, errs.NewDetail(CodeRelationInvalidEndpoint,
+				"计算项目端点指纹失败: "+model.AliasDetail(projectRoot, model.AliasProject, err.Error()), projectRoot)
 		}
 	}
 	if runtimeReadable {
 		if fpRuntime, err = a.deps.Fingerprinter.Fingerprint(gameDir); err != nil {
-			return view.RelationPreparationView{}, errs.NewDetail(CodeRelationInvalidEndpoint, "计算运行时端点指纹失败: "+err.Error(), instanceDir)
+			return view.RelationPreparationView{}, errs.NewDetail(CodeRelationInvalidEndpoint,
+				"计算运行时端点指纹失败: "+model.AliasDetail(gameDir, model.AliasRuntime, err.Error()), instanceDir)
 		}
 	}
 
@@ -255,10 +259,12 @@ func (a *App) CreateRelation(ctx context.Context, preparationID string) (view.Re
 			return err
 		} else if found {
 			// 同名实例目录（UNIQUE(adapter, adapter_identity) 命中）必须指向同一路径，
-			// 否则会把新 Relation 静默绑到另一个启动器安装的同名实例上（违反 §5.2 端点身份原则）
+			// 否则会把新 Relation 静默绑到另一个启动器安装的同名实例上（违反 §5.2 端点身份原则）。
+			// R1（ADR-0011 §7）：已登记端点根为绝对路径，detail 别名化。
 			if !strings.EqualFold(filepath.Clean(existing.RootPath), filepath.Clean(runtime.RootPath)) {
 				return errs.NewDetail(CodeRelationInvalidEndpoint,
-					"同名实例目录已登记为不同路径: "+existing.RootPath, runtime.AdapterIdentity, runtime.RootPath)
+					"同名实例目录已登记为不同路径: "+model.AliasPath(existing.RootPath, model.AliasRuntime, existing.RootPath),
+					runtime.AdapterIdentity, runtime.RootPath)
 			}
 			runtime = existing
 		} else if err := repos.Endpoints.CreateRuntime(ctx, runtime); err != nil {
@@ -266,7 +272,8 @@ func (a *App) CreateRelation(ctx context.Context, preparationID string) (view.Re
 				if existing, found, _ := repos.Endpoints.FindRuntimeByIdentity(ctx, runtime.Adapter, runtime.AdapterIdentity); found {
 					if !strings.EqualFold(filepath.Clean(existing.RootPath), filepath.Clean(runtime.RootPath)) {
 						return errs.NewDetail(CodeRelationInvalidEndpoint,
-							"同名实例目录已登记为不同路径: "+existing.RootPath, runtime.AdapterIdentity, runtime.RootPath)
+							"同名实例目录已登记为不同路径: "+model.AliasPath(existing.RootPath, model.AliasRuntime, existing.RootPath),
+							runtime.AdapterIdentity, runtime.RootPath)
 					}
 					runtime = existing
 				}
@@ -308,6 +315,8 @@ func (a *App) CreateRelation(ctx context.Context, preparationID string) (view.Re
 	}
 	// 事务已提交（事件发布恒在提交之后；创建流当前无事件，规则在此落锚——
 	// 后续在本流程加事件必须保持在 RunInTx 返回成功之后）。
+	// 监听面动态挂卸（票 #92，ADR-0010 §4）：新关系常驻监听，机会主义 kick。
+	a.kickWatch()
 	return result, nil
 }
 

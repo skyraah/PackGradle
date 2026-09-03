@@ -290,6 +290,11 @@ const (
 	OpRemoveRuntime OperationKind = "remove_runtime"
 	OpRemoveProject OperationKind = "remove_project"
 	OpMaterialize   OperationKind = "materialize"
+	// OpWriteMerged 是干净合并行的操作类别（ADR-0009 §4/§8，票 #93；契约 07
+	// §3.3）：一资源一操作 = 双端写合并产物（reversible=true，产物一律入 CAS）。
+	// Kind 即内容源分派（materialize 先例）：本类别的内容源是暂存期按计划锁定
+	// 的三侧快照确定性重算（同算法同输入同输出），非源侧文件/下载/CAS。
+	OpWriteMerged OperationKind = "write_merged"
 )
 
 // Precondition 是 Apply 前必须仍成立的资源前置条件。
@@ -358,6 +363,11 @@ const (
 	ChoiceTakeRuntime           ResolutionChoice = "take_runtime"
 	ChoiceSkip                  ResolutionChoice = "skip"
 	ChoiceManual                ResolutionChoice = "manual"
+	// ChoiceTakeMerged 是干净合并行的选择（ADR-0009 §4/§7，票 #93；契约 07
+	// §3.3）：merged_clean 行的默认推荐——计划面在 draft 即以 write_merged
+	// 操作承载该默认（非冲突操作无需决议入口），显式决议照常接受并对非
+	// merged 行拒绝（err.plan.resolution_invalid）。
+	ChoiceTakeMerged ResolutionChoice = "take_merged"
 )
 
 // Resolution 是单个冲突的用户选择。
@@ -404,6 +414,10 @@ type PlanSummary struct {
 	ModifyCount     int `json:"modify_count"`
 	DeleteCount     int `json:"delete_count"`
 	ConflictCount   int `json:"conflict_count"`
+	// MergedCleanCount 是干净合并行数（ADR-0009 §4，票 #87）：双侧同改经
+	// diff3 零冲突块且类型校验通过的非冲突操作数；不并入 modify 计数
+	//（「这次合并了 N 处」是用户可读信息，契约 07 §3.3）。
+	MergedCleanCount int `json:"merged_clean_count"`
 }
 
 // ExpectedBindings 是计划建立时锁定的两端 binding fingerprint。

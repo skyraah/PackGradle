@@ -22,6 +22,8 @@ package main
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -40,6 +42,7 @@ import (
 	"packgradle/internal/cdnproc"
 	"packgradle/internal/core/model"
 	"packgradle/internal/download"
+	"packgradle/internal/sessionlog"
 	"packgradle/internal/store"
 )
 
@@ -58,15 +61,22 @@ func main() {
 	gcRun := flag.Bool("gc", false, "RequestGC → 等终态 → 墓碑/存活/引用图不变式断言链（票 #64 acceptance:gc 主链）")
 	revive := flag.String("revive", "", "从回收站人工复活指定 digest（票 #64 CLI 形态；解压回 objects 并置回 ready）")
 	keepCommits := flag.Int("keep-commits", 0, "写入 config.toml [retention] keep_commits 后继续（0=不动配置；验收 K=3 保底用）")
-	restore := flag.Bool("restore", false, "回滚四场景断言链（P3 票 #60：exact 经 CAS / 补全就绪面 / partial+dirty / 重做语义；需 -plain-mods 夹具）")
+	restore := flag.Bool("restore", false, "回滚六场景断言链（P3 票 #60 四场景 + 票 #88 metafile 捕获回滚：ADR-0012 出口① + 票 #95 存量降级 skip 链：ADR-0012 出口③；需 -plain-mods 夹具；假 CDN 进程自动拉起供探测端点）")
+	mergeChain := flag.Bool("merge", false, "合并执行面三场景断言链（票 #93 acceptance:merge：merged_clean 全链/回滚零网络/授权模式；需含手工样本的 -dual-edit 型夹具；零 CDN 配置）")
 	cdnURL := flag.String("cdn", "", "假 CDN BaseURL（票 #66 验收缝，如 http://127.0.0.1:PORT/files）：下载引擎与 CF 探测指向假 CDN 进程（pgfixture -serve），零真网；空 = 生产 CDN 前缀")
 	downloadChain := flag.Bool("download", false, "假 CDN 五场景断言链（票 #66 acceptance:download：成功链/探测降标/failed 可重入/剔除语义/续传；零真网。独立 fixture 与数据目录；-cdn 为空时自动拉起 pgfixture -serve）")
 	restoreTarget := flag.Bool("restore-target", false, "restore 强杀目标进程（票 #66 acceptance:recovery:restore）：建夹具历史（c1/c2）→ PrepareRestore(最老提交) → ConfirmRestorePlan → 轮询至 committed；stdout 相位标记供 pgrecovery killwindow 观察（-cdn 为空时自动拉起假 CDN 进程）")
 	restoreCold := flag.Bool("restore-cold", false, "3000 fixture restore 冷链路度量（票 #66 acceptance:perf：漂移删全部受管文本 → restore c1 → committed exact；-metrics 记 restore 段，pgfixture -eval 评 restore 冷 ≤30s/内存 <256MiB）")
 	setAuthorized := flag.Int("set-authorized", -1, "设置工作区授权开关后退出（票 #66 L1 数据准备：1=开启快速更新授权，0=关闭；需 -data 与 -project/-instance 指向既有关系）")
+	watch := flag.Bool("watch", false, "常驻监听模式（票 #96 acceptance:watcher，ADR-0010）：挂 watcher+自动链常驻不退出；-record 写事件/扫描轮数时间线（p4-watcher-run/1）；退出=哨兵文件或 -watch-timeout（超时退出码 3）")
+	watchTimeout := flag.Duration("watch-timeout", 10*time.Minute, "-watch 安全超时（超时强制收敛）")
+	watchExitSentinel := flag.String("watch-exit-sentinel", "", "-watch 退出哨兵文件路径（存在即收敛退出；空=只由超时收敛）")
+	watchControl := flag.String("watch-control", "", "-watch 手动快速更新命令目录（出现 quickupdate 命令文件即经 transport 服务执行后删除；空=无控制面）")
+	crosscutChain := flag.Bool("crosscut", false, "横切真重启清理链三段（票 #98 acceptance:crosscut，验收规格 §5.2）：①超量造数（>20 会话日志/100MB、>10k task_events、>200 终态 tasks、过期 plans/preparations）→ 新起 pgheadless 子进程走生产启动通道 → 断言清理生效 ②驱动任务收口断言终态后惰性清理 ③R1/R2 脱敏断言；-record 归档 p4-crosscut 记录（空=自动 docs/acceptance/records 命名）")
+	crosscutRestart := flag.String("crosscut-restart", "", "启动通道探测模式（票 #98 -crosscut 链的「真重启」子进程）：只走生产启动通道（会话日志保留清理 + bootstrap 启动惰性清理）后写计数报告 JSON 到指定路径并退出；不建关系不扫描")
 	pgfixtureBin := flag.String("pgfixture", filepath.Join("bin", "pgfixture.exe"), "pgfixture 可执行文件（-download 自动拉起假 CDN 进程用）")
 	dlWork := flag.String("download-work", filepath.Join("build", "download"), "-download 链工作目录（夹具）")
-	dlRecord := flag.String("record", "", "-download 记录 JSON 路径（空=自动 docs/acceptance/records/p3-download-<date>-<host>.json；\"-\"=不落盘）")
+	dlRecord := flag.String("record", "", "记录 JSON 输出路径（-download=p3-download 记录 / -watch=p4-watcher-run 时间线记录；\"-\"=不落盘）")
 	flag.Parse()
 
 	// -revive 只需数据根，不需 fixture 端点。
@@ -77,6 +87,12 @@ func main() {
 	// 票 #66：-set-authorized L1 数据准备面（BuildWithRetention 装配 Settings）。
 	if *setAuthorized >= 0 {
 		runSetAuthorized(*dataRoot, *projectRoot, *instanceDir, *setAuthorized == 1)
+		return
+	}
+	// 票 #98：-crosscut-restart 启动通道探测子进程（无需 -project/-instance，
+	// 只走生产启动通道后写报告退出）。
+	if *crosscutRestart != "" {
+		runCrosscutRestart(*dataRoot, *crosscutRestart)
 		return
 	}
 	if *projectRoot == "" || *instanceDir == "" {
@@ -107,6 +123,17 @@ func main() {
 			log.Fatalf("定位用户数据目录失败: %v", err)
 		}
 	}
+	// 会话日志启动通道（ADR-0011 §1 形态票 #91；pgheadless 接线票 #98）：与
+	// GUI main 同一启动语义——logs/<启动时间戳>/session.log + 启动双轴保留
+	// 清理（保 20 会话 × 100MB 硬顶优先）。不做 slog.SetDefault：stderr 输出
+	// 形态不变（#91 验收约定，headless 断言依赖），会话文件只承载启动通道
+	// 语义与清理账面（-crosscut 真重启链 §5.2 的清理观测即建立在同一通道上）。
+	// 失败不阻断启动（退回无会话文件状态）。
+	if sess, serr := sessionlog.Open(filepath.Join(root, "logs"), sessionlog.Options{}); serr != nil {
+		log.Printf("会话日志初始化失败（不阻断启动）: %v", serr)
+	} else {
+		defer sess.Close()
+	}
 	// -keep-commits 在装配前写入（config.toml [retention]，票 #64）：装配读
 	// 同一文件，GC 引擎经 Retention 端口取到新值；装配后写只落另一实例内存。
 	if *keepCommits > 0 {
@@ -129,7 +156,7 @@ func main() {
 		dlOpts.Backoff = func(int) time.Duration { return time.Millisecond }
 		dlOpts.Sleep = func(context.Context, time.Duration) error { return nil }
 		fmt.Printf("== -cdn == 下载引擎/CF 探测 → %s（快退避验收缝）\n", *cdnURL)
-	} else if *downloadChain || *restoreTarget {
+	} else if *downloadChain || *restoreTarget || *restore {
 		s, err := cdnproc.StartServe(*pgfixtureBin, "127.0.0.1:0")
 		fatalOn(err, "拉起假 CDN 进程（验收链自动管理）")
 		defer s.Close()
@@ -148,6 +175,29 @@ func main() {
 
 	ctx := context.Background()
 	app := stack.App
+
+	// 票 #96：-watch 常驻监听模式（关系先于引擎启动建立——引擎只在 kick/链尾
+	// resync，启动初挂依赖既有 relation）。授权开/关态变体由编排进程先用
+	// -set-authorized 准备，本模式只投影事实。
+	if *watch {
+		rel := ensureRelation(ctx, app, projectAbs, instanceAbs)
+		ws, err := app.GetWorkspace(ctx, rel.RelationID)
+		fatalOn(err, "GetWorkspace（-watch 授权投影）")
+		if *watchControl != "" {
+			if err := os.MkdirAll(*watchControl, 0o755); err != nil {
+				log.Fatalf("创建 -watch 控制目录失败: %v", err)
+			}
+		}
+		runWatchMode(watchEnv{
+			stack: stack, app: app, svc: stack.Service, db: stack.DB,
+			relationID: rel.RelationID, authorized: ws.AuthorizedApply,
+			projectRoot: projectAbs, instanceDir: instanceAbs, dataRoot: root,
+			recordPath: *dlRecord, metricsPath: *metricsPath,
+			exitSentinel: *watchExitSentinel, controlDir: *watchControl,
+			timeout: *watchTimeout,
+		})
+		return
+	}
 
 	// 票 #64：-commits（历史夹具）与 -gc（验收链）独立成模，不走单计划链路。
 	if *commits > 0 {
@@ -198,6 +248,48 @@ func main() {
 		if err := runRestoreTarget(ctx, app, projectAbs, instanceAbs, cdn); err != nil {
 			log.Fatalf("-restore-target 链路失败: %v", err)
 		}
+		return
+	}
+
+	// 票 #93：-merge 合并执行面三场景链（独立模；合并 Base 侧与回滚实存判定
+	// 依赖提交收口期摄取通道，零 CDN 配置即零网络证据）。
+	if *mergeChain {
+		rel0 := ensureRelation(ctx, app, projectAbs, instanceAbs)
+		stats, err := runMergeChain(ctx, stack, app, rel0, projectAbs, instanceAbs)
+		if err != nil {
+			log.Fatalf("-merge 链路失败: %v", err)
+		}
+		if *metricsPath != "" {
+			writeMetrics(*metricsPath, metricsRecord{
+				Schema: "p3-perf-run/1", CapturedAt: time.Now().UTC().Format(time.RFC3339),
+				ProjectRoot: projectAbs, InstanceDir: instanceAbs, DataRoot: root,
+				Machine: newMachineInfo(), Merge: stats,
+			})
+		}
+		fmt.Println("headless -merge 链路完成（四场景断言全过）")
+		return
+	}
+
+	// 票 #98：-crosscut 横切真重启清理链三段（验收规格 §5.2；链内自起新
+	// pgheadless 子进程走生产启动通道，records 归档沿 -download 自动命名）。
+	if *crosscutChain {
+		rel0 := ensureRelation(ctx, app, projectAbs, instanceAbs)
+		recordPath := *dlRecord
+		if recordPath == "" {
+			recordPath = defaultCrosscutRecordPath()
+		}
+		stats, err := runCrosscutChain(ctx, stack, app, rel0, projectAbs, root, recordPath, *metricsPath)
+		if err != nil {
+			log.Fatalf("-crosscut 链路失败: %v", err)
+		}
+		if *metricsPath != "" {
+			writeMetrics(*metricsPath, metricsRecord{
+				Schema: "p4-perf-run/1", CapturedAt: time.Now().UTC().Format(time.RFC3339),
+				ProjectRoot: projectAbs, InstanceDir: instanceAbs, DataRoot: root,
+				Machine: newMachineInfo(), Crosscut: stats,
+			})
+		}
+		fmt.Println("headless -crosscut 链路完成（三段断言全过）")
 		return
 	}
 
@@ -262,7 +354,13 @@ func main() {
 		applyStats = stats
 		fmt.Println("headless -apply 链路完成（ConfirmPlan → committed 断言全过）")
 	} else if *restore {
-		if err := runRestoreChain(ctx, app, rel, projectAbs, instanceAbs, root); err != nil {
+		// 场景⑤（票 #88）的 redownload 候选行探测需要确定性 CDN 端点：自动拉起
+		// 的假 CDN 优先；外部 -cdn 指定时附着同一进程面。
+		cdn := dnlManagedCDN
+		if cdn == nil && *cdnURL != "" {
+			cdn = cdnproc.Attach(*cdnURL)
+		}
+		if err := runRestoreChain(ctx, stack, cdn, app, rel, projectAbs, instanceAbs, root); err != nil {
 			log.Fatalf("-restore 链路失败: %v", err)
 		}
 	} else if *resolve {
@@ -289,7 +387,7 @@ func main() {
 			InstanceDir: instanceAbs,
 			DataRoot:    root,
 			Machine: machineInfo{
-				Host: hostName(), OS: runtime.GOOS, Arch: runtime.GOARCH,
+				OS: runtime.GOOS, Arch: runtime.GOARCH,
 				GoVersion: runtime.Version(), CPUs: runtime.NumCPU(),
 			},
 			ScanPhasesMS: scanPhasesMS{
@@ -393,8 +491,9 @@ func deltaRatio(after, before view.HashCacheStatsView) float64 {
 // ---- metrics 记录形态（p2-perf-run/1；pgfixture -eval 读取 ScanTotalMS/
 // HashCache 与 apply 段。apply 段形态定义在 apply.go，-apply 链路产出）----
 
+// machineInfo 是机器规格（R2 脱敏，ADR-0011 §7：不再采集 os.Hostname——
+// 性能记录不暴露设备身份；OS/Arch/GoVersion/CPUs 属通用环境信息保留）。
 type machineInfo struct {
-	Host      string `json:"host"`
 	OS        string `json:"os"`
 	Arch      string `json:"arch"`
 	GoVersion string `json:"go_version"`
@@ -428,6 +527,10 @@ type metricsRecord struct {
 	Apply        *applyChainStats   `json:"apply,omitempty"`   // 仅 -apply 链路成功时非空
 	Restore      *restoreChainStats `json:"restore,omitempty"` // 仅 -restore-cold 链路（票 #66）
 	GC           *gcChainStats      `json:"gc,omitempty"`      // 仅 -gc 链路（票 #66）
+	Merge        *mergeChainStats   `json:"merge,omitempty"`   // 仅 -merge 链路（票 #93：merge 分相只记录不设门槛）
+	Crosscut     *crosscutChainStats `json:"crosscut,omitempty"` // 仅 -crosscut 链路（票 #98：段耗时只记录不设门槛）
+
+	Watcher      *watcherMetrics    `json:"watcher,omitempty"` // 仅 -watch 常驻模式（票 #96）
 }
 
 func writeMetrics(path string, rec metricsRecord) {
@@ -485,14 +588,6 @@ func mustAbs(p string) string {
 	return a
 }
 
-func hostName() string {
-	h, err := os.Hostname()
-	if err != nil {
-		return "unknown"
-	}
-	return h
-}
-
 // waitScan 轮询直到无活动任务（事件不是事实源，以查询 API 为准）。
 func waitScan(ctx context.Context, app syncapp.Application, relationID string) {
 	for i := 0; i < 300; i++ {
@@ -517,4 +612,11 @@ func fatalOn(err error, stage string) {
 	if err != nil {
 		log.Fatalf("%s 失败: %v", stage, err)
 	}
+}
+
+// sha256Hex 字节内容 sha256（hex；包内唯一摘要助手——merge/restore/download
+// 各链原先各持一份，评审 T3 收敛于此）。
+func sha256Hex(b []byte) string {
+	sum := sha256.Sum256(b)
+	return hex.EncodeToString(sum[:])
 }

@@ -2,7 +2,7 @@ package sync
 
 import (
 	"context"
-	"log"
+	"log/slog"
 
 	"packgradle/internal/core/model"
 	"packgradle/internal/download"
@@ -54,7 +54,7 @@ func (a *App) fetchDownloadOperations(ctx context.Context, run *syncstage.Run,
 				fp.blockedCode = resultContentUnavailable
 			}
 		}
-		log.Printf("apply: 下载引擎未装配，%d 个 download 行按取数失败剔除", len(reqs))
+		slog.Warn("apply: 下载引擎未装配，download 行按取数失败剔除", "count", len(reqs))
 		return nil
 	}
 
@@ -137,13 +137,13 @@ type skippedEntry struct {
 // 重新 Confirm（failed 终局可重入）。
 func (a *App) failApplyFailed(ctx context.Context, t model.Task, run model.ApplyRun, skips []stagedOp) {
 	if err := a.deps.ApplyRuns.AdvanceState(ctx, run.TaskID, model.ApplyRunFailed, a.nowStr()); err != nil {
-		log.Printf("apply: 运行 %s 推进 failed 失败: %v", run.TaskID, err)
+		slog.Warn("apply: 运行推进 failed 失败", "run", run.TaskID, "err", err)
 	}
 	// 暂存证据无恢复价值：failed 不进恢复矩阵，随终局清理（幂等可重试）。
 	if err := syncstage.CleanupRun(a.deps.StagingRoot, run.TaskID); err != nil {
-		log.Printf("apply: 清理 failed 运行暂存失败（可重试）: %v", err)
+		slog.Warn("apply: 清理 failed 运行暂存失败（可重试）", "err", err)
 	} else if err := a.deps.ApplyRuns.MarkStagingCleared(ctx, run.TaskID, a.nowStr()); err != nil {
-		log.Printf("apply: 记录 staging_cleared 失败: %v", err)
+		slog.Warn("apply: 记录 staging_cleared 失败", "err", err)
 	}
 
 	first := skips[0]
@@ -154,9 +154,9 @@ func (a *App) failApplyFailed(ctx context.Context, t model.Task, run model.Apply
 	t.CanCancel = false
 	t.Problem = &model.Problem{Code: first.skipCode, Args: first.skipArgs, Detail: first.skipCause}
 	if _, err := a.runner.Update(ctx, t); err != nil {
-		log.Printf("apply: 任务 %s failed 终态落库失败: %v", t.TaskID, err)
+		slog.Warn("apply: 任务 failed 终态落库失败", "task", t.TaskID, "err", err)
 		return
 	}
-	log.Printf("apply: 运行 %s 全部操作取数失败（%d 项跳过，首因 %s），failed 终局",
-		run.TaskID, len(skips), first.skipCode)
+	slog.Warn("apply: 运行全部操作取数失败，failed 终局",
+		"run", run.TaskID, "skipped", len(skips), "first_code", first.skipCode)
 }

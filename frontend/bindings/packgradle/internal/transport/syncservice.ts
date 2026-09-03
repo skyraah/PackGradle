@@ -105,6 +105,15 @@ export function GetMappingPolicy(relationID: string): $CancellablePromise<$model
 }
 
 /**
+ * GetMergedPreview 合并预览（契约 07 §2/§3.4，票 #94）：merged_clean 行实时
+ * 计算两段全文（合并后 + 基线），不落库；stale/expired 计划仍可预览（只读）；
+ * 非 merged_clean 行 → err.merge.not_mergeable（{0}=resource_id）。
+ */
+export function GetMergedPreview(planID: string, resourceID: string): $CancellablePromise<$models.MergedPreviewDTO> {
+    return $Call.ByID(2112856375, planID, resourceID);
+}
+
+/**
  * GetPlan 查询计划（stale/expired 为读取时投影）。
  */
 export function GetPlan(planID: string): $CancellablePromise<$models.SyncPlanDTO> {
@@ -209,6 +218,15 @@ export function PrepareRestore(input: $models.RestorePrepareDTO): $CancellablePr
  */
 export function PrepareSync(input: $models.PrepareSyncDTO): $CancellablePromise<$models.SyncPlanDTO> {
     return $Call.ByID(1825923937, input);
+}
+
+/**
+ * QuickUpdate 统一快速更新（契约 07 §2/§3.1，票 #86）：阻塞到链收口再返回
+ * （对 wire 是一次 Promise），同步三态 no_diff|apply_started|awaiting_confirmation；
+ * 链内失败 AppError 透传零新码。
+ */
+export function QuickUpdate(relationID: string): $CancellablePromise<$models.QuickUpdateResultDTO> {
+    return $Call.ByID(3969617035, relationID);
 }
 
 /**
