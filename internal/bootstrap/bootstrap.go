@@ -22,6 +22,7 @@ import (
 	"packgradle/internal/application/watch"
 	"packgradle/internal/core/ids"
 	"packgradle/internal/download"
+	"packgradle/internal/notify"
 	"packgradle/internal/store"
 	"packgradle/internal/store/objectstore"
 	"packgradle/internal/store/sqlite"
@@ -51,6 +52,11 @@ type Stack struct {
 	// SettingsService 是设置/开关域出口（契约 06 §2；票 #57）：保留设置 +
 	// 授权开关。仅 BuildWithRetention 装配（headless 工具无设置面）。
 	Settings *transport.SettingsService
+	// Notify 是系统通知 gate（票 #97，契约 07 §3.5）：事件源=自动链停靠
+	// awaiting_confirmation（build 的 Chain 缝喂入）。GUI main 经
+	// notify.AttachWails 装配 Windows 平台面后生效；headless 工具不装配，
+	// gate 恒惰（全部入口 no-op）。
+	Notify *notify.Gate
 }
 
 // StartGC 启动触发通道①（票 #64，ADR-0007 §3）：异步建 GC 任务（幂等单飞）。
@@ -257,6 +263,9 @@ func build(root string, retention ports.RetentionSettingsStore, dl download.Opti
 	// QuickUpdate 同一用例（不复制编排、不绕任务互斥）。事件源构造失败只记
 	// 日志——监听面整体禁用降级回手动，不阻断启动（watch_status 投影空值）。
 	// 启动归 StartWatcher（GUI main 显式调用）；Close 收敛 Stop。
+	// 系统通知 gate（票 #97，契约 07 §3.5）在链缝前方构造：headless 不装配
+	// 平台面（恒惰），GUI main 经 Stack.Notify 由 notify.AttachWails 接线。
+	notifyG := notify.NewGate()
 	var watchEng *watch.Engine
 	wsrc, werr := fsnotifywatch.New()
 	if werr != nil {
@@ -275,6 +284,15 @@ func build(root string, retention ports.RetentionSettingsStore, dl download.Opti
 				res, err := app.QuickUpdate(ctx, view.QuickUpdateInput{RelationID: relationID})
 				if err != nil {
 					return "", "", err
+				}
+				// 系统通知事件源（票 #97，契约 07 §3.5）：仅自动链停于
+				// awaiting_confirmation 进通知判定（触发条件①）——手动入口经
+				// transport SyncService.QuickUpdate（#92 的 paused 复位缝），
+				// 不经本缝，人就在界面天然不弹。res.PlanID 即此刻
+				// WorkspaceStateDTO.pending_plan_id 投影（刚停靠的计划是最新
+				// 待人工计划）；三条件②③与降级判定在 gate 内完成。
+				if res.Outcome == syncapp.QuickUpdateAwaitingConfirmation {
+					notifyG.AutoChainDocked(relationID, res.PlanID)
 				}
 				return res.Outcome, res.ApplyTaskID, nil
 			},
@@ -307,6 +325,7 @@ func build(root string, retention ports.RetentionSettingsStore, dl download.Opti
 		GCTrash:        cas,
 		CAS:            cas,
 		Watch:          watchEng,
+		Notify:         notifyG,
 		Service:        svc,
 		ProjectService: transport.NewProjectService(projectSvc),
 		RuntimeService: transport.NewRuntimeService(runtimeSvc),

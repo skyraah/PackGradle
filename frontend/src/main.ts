@@ -6,6 +6,7 @@ import App from './App.vue'
 import i18n from './i18n'
 import router from './router'
 import { subscribeCoreEvents } from './api/events'
+import { subscribeNotificationNav } from './api/notificationNav'
 import { bootstrapSyncCache, markTaskDirty, notifyWatchFailed, triggerRequery } from './stores/syncCache'
 import { initTheme } from './stores/theme'
 
@@ -20,6 +21,9 @@ subscribeCoreEvents({
     onWatchFailed: notifyWatchFailed,
 })
 bootstrapSyncCache()
+
+// 系统通知点击直达（票 #97）：同样 mount 前订阅（独立 topic，非核心事件流）
+subscribeNotificationNav()
 
 // 主题先于 mount 落 html.dark，避免首帧闪烁
 initTheme()
