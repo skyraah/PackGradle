@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"log"
 
+	"packgradle/internal/adapters/fsnotifywatch"
 	"packgradle/internal/adapters/filesystem"
 	"packgradle/internal/adapters/packwiz"
 	"packgradle/internal/adapters/prism"
@@ -17,6 +18,8 @@ import (
 	runtimeapp "packgradle/internal/application/runtime"
 	settingsapp "packgradle/internal/application/settings"
 	syncapp "packgradle/internal/application/sync"
+	"packgradle/internal/application/view"
+	"packgradle/internal/application/watch"
 	"packgradle/internal/core/ids"
 	"packgradle/internal/download"
 	"packgradle/internal/store"
@@ -34,6 +37,9 @@ type Stack struct {
 	// SyncApp 是具体应用类型（headless 工具消费非接口面：GC 触发/复活，
 	// 票 #64——Application 接口保持 transport 契约面不膨胀）。
 	SyncApp *syncapp.App
+	// Watch 是监听引擎（ADR-0010，票 #92）：StartWatcher 启动常驻 goroutine，
+	// Close 收敛。事件源构造失败时为 nil（监听面禁用，降级回手动）。
+	Watch *watch.Engine
 	// GCRepo / GCTrash / CAS 是验收对账与复活面的采集出口（票 #64；
 	// headless 链经它们组装 core/gc.Audit 的四侧事实）。
 	GCRepo  ports.GCRepository
@@ -52,6 +58,16 @@ type Stack struct {
 func (s *Stack) StartGC() {
 	if s.SyncApp != nil {
 		s.SyncApp.StartGC()
+	}
+}
+
+// StartWatcher 启动监听引擎常驻 goroutine（票 #92，ADR-0010 §4）：应用运行期
+// 对全部健康 relation 常驻监听（窗口开闭无关）。引擎未装配（事件源构造失败，
+// 见 build）时为 no-op——失败仅日志+降级回手动，不阻断启动；快速更新可用性
+// 不受监听死活影响。产品入口（GUI main）显式调用；测试装配不自动启动。
+func (s *Stack) StartWatcher() {
+	if s.Watch != nil {
+		s.Watch.Go()
 	}
 }
 
@@ -121,6 +137,10 @@ func build(root string, retention ports.RetentionSettingsStore, dl download.Opti
 	hasher := filesystem.NewHasher()
 	fingerprinter := filesystem.NewFingerprinter()
 	endpoints := sqlite.NewEndpointRepository(db)
+	// 监听引擎共用仓库（票 #92）：relation 集合/端点根路径/policy/任务终态
+	// 的事实源与 sync 同一 DB。
+	taskRepo := sqlite.NewTaskRepository(db)
+	mappingRepo := sqlite.NewMappingRepository(db)
 	// 下载物化引擎（ADR-0008，票 #58/#63）：并发度取全局 config [download]
 	// concurrency 的生效值缺省（默认 6；headless 工具与 GUI 共用同一装配路径，
 	// 显式配置的消费归 appconfig 加载层与 SettingsService 面）。零值即合法默认。
@@ -139,8 +159,8 @@ func build(root string, retention ports.RetentionSettingsStore, dl download.Opti
 		Snapshots:     sqlite.NewSnapshotRepository(db),
 		Baselines:     sqlite.NewBaselineRepository(db),
 		Plans:         sqlite.NewPlanRepository(db),
-		Tasks:         sqlite.NewTaskRepository(db),
-		Mappings:      sqlite.NewMappingRepository(db),
+		Tasks:         taskRepo,
+		Mappings:      mappingRepo,
 		Preparations:  sqlite.NewPreparationRepository(db),
 		HashCache:     sqlite.NewHashCacheRepository(db),
 		Events:        sqlite.NewEventRepository(db),
@@ -231,6 +251,53 @@ func build(root string, retention ports.RetentionSettingsStore, dl download.Opti
 		}
 		settingsSvc = transport.NewSettingsService(settingsApp, app)
 	}
+
+	// 监听引擎（ADR-0010，票 #92）：fsnotify 事件源（adapters 层，core 不
+	// import fsnotify）+ 触发器状态机（application/watch 纯逻辑），自动链调
+	// QuickUpdate 同一用例（不复制编排、不绕任务互斥）。事件源构造失败只记
+	// 日志——监听面整体禁用降级回手动，不阻断启动（watch_status 投影空值）。
+	// 启动归 StartWatcher（GUI main 显式调用）；Close 收敛 Stop。
+	var watchEng *watch.Engine
+	wsrc, werr := fsnotifywatch.New()
+	if werr != nil {
+		log.Printf("bootstrap: 监听事件源构造失败（监听面禁用，降级回手动）: %v", werr)
+	} else {
+		watchEng, werr = watch.New(watch.Deps{
+			Relations: sqlite.NewRelationRepository(db),
+			Endpoints: endpoints,
+			Mappings:  mappingRepo,
+			Tasks:     taskRepo,
+			Source:    wsrc,
+			NewSource: func() (ports.DirEventSource, error) { return fsnotifywatch.New() },
+			// 自动链缝=统一快速更新用例（#86）：watcher 触发层（静默期/单飞/
+			// 连败计数/暂停复位）在用例之外（ADR-0010 §5/§6，契约 07 §3.1.6）。
+			Chain: func(ctx context.Context, relationID string) (string, string, error) {
+				res, err := app.QuickUpdate(ctx, view.QuickUpdateInput{RelationID: relationID})
+				if err != nil {
+					return "", "", err
+				}
+				return res.Outcome, res.ApplyTaskID, nil
+			},
+			PublishWatchFailed: func(ctx context.Context, relationID string) error {
+				return app.PublishWatchFailed(ctx, relationID)
+			},
+			Now: defaultNow,
+		})
+		if werr != nil {
+			log.Printf("bootstrap: 监听引擎装配失败（监听面禁用，降级回手动）: %v", werr)
+			_ = wsrc.Close()
+			watchEng = nil
+		} else {
+			// 状态投影 + 动态挂卸 kick + 手动快速更新收口订阅（paused 复位
+			// active 的接线点，契约 07 §3.2）。
+			app.AttachWatch(watchEng, watchEng.Kick)
+		}
+	}
+	svc := transport.NewSyncService(app)
+	if watchEng != nil {
+		svc.AttachQuickUpdateResult(watchEng.NotifyQuickUpdateResult)
+	}
+
 	return &Stack{
 		Layout:         layout,
 		DB:             db,
@@ -239,15 +306,19 @@ func build(root string, retention ports.RetentionSettingsStore, dl download.Opti
 		GCRepo:         sqlite.NewGCRepository(db),
 		GCTrash:        cas,
 		CAS:            cas,
-		Service:        transport.NewSyncService(app),
+		Watch:          watchEng,
+		Service:        svc,
 		ProjectService: transport.NewProjectService(projectSvc),
 		RuntimeService: transport.NewRuntimeService(runtimeSvc),
 		Settings:       settingsSvc,
 	}, nil
 }
 
-// Close 释放底层资源。
+// Close 释放底层资源（监听引擎先停——事件源 goroutine 退出后再关 DB）。
 func (s *Stack) Close() error {
+	if s.Watch != nil {
+		s.Watch.Stop()
+	}
 	if s.DB != nil {
 		return s.DB.Close()
 	}

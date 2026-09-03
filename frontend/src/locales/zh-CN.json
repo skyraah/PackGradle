@@ -226,6 +226,8 @@
   "workspaces.taskKind.restore": "回滚",
   "workspaces.taskKind.gc": "回收",
   "workspaces.watchFailed": "文件监听不可用",
+  "workspaces.watchPausedBanner": "自动同步已暂停，手动快速更新一次即可恢复",
+  "workspaces.watchUnavailableBanner": "监听不可用，已回退手动",
   "workspacesNew.goList": "前往工作区列表",
   "workspacesNew.title": "新建工作区",
   "workspacesNew.subtitle": "从已登记的项目源与运行实例创建同步工作区（先预检，确认后创建）",

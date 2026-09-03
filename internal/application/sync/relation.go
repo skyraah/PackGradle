@@ -315,6 +315,8 @@ func (a *App) CreateRelation(ctx context.Context, preparationID string) (view.Re
 	}
 	// 事务已提交（事件发布恒在提交之后；创建流当前无事件，规则在此落锚——
 	// 后续在本流程加事件必须保持在 RunInTx 返回成功之后）。
+	// 监听面动态挂卸（票 #92，ADR-0010 §4）：新关系常驻监听，机会主义 kick。
+	a.kickWatch()
 	return result, nil
 }
 

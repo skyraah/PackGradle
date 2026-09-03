@@ -94,6 +94,9 @@ type WorkspaceStateDTO struct {
 	// status ∈ {draft, resolved} 且非 stale/expired/applied 的最新计划，无则空。
 	// 系统通知去重依据与前端「有待确认计划」角标数据源。
 	PendingPlanID string `json:"pending_plan_id,omitempty"`
+	// WatchStatus 是监听状态投影（契约 07 §3.2，票 #92；只增不删）：
+	// active|unavailable|paused，空串=未挂载；会话内存态，零持久化零 schema。
+	WatchStatus string `json:"watch_status,omitempty"`
 }
 
 // SnapshotSummaryDTO 是快照摘要。

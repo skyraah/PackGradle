@@ -177,6 +177,59 @@ type App struct {
 	// relationID → 进行中调用；由 quMu 保护，收口时关闭 done 释放等待者。
 	quMu       sync.Mutex
 	quInflight map[string]*quickUpdateCall
+
+	// watch 是监听引擎状态投影缝（ADR-0010，票 #92）：bootstrap 装配
+	//（AttachWatch）；nil=无监听面（headless 工具/未启动 watcher），投影空值。
+	watch WatchStatusProvider
+	// watchKick 是监听引擎的重挂 kick（relation 建立/重绑/policy 修改/恢复
+	// 收口后动态挂卸）；nil=无监听面。watchMu 保护装配与读取（装配先于任何
+	// 用例并发发生，仍保守加锁）。
+	watchMu   sync.Mutex
+	watchKick func()
+}
+
+// WatchStatusProvider 是监听引擎的状态投影缝（application/watch.Engine 满足；
+// GetWorkspace 投影 watch_status 用，nil=无监听面投影空值）。
+type WatchStatusProvider interface {
+	WatchStatus(relationID string) string
+}
+
+// AttachWatch 装配监听引擎（bootstrap 专用，调用一次）：status 供 GetWorkspace
+// 投影 watch_status；kick 供 relation 建立/重绑/policy 修改/恢复收口/任务终态
+// 后触发监听面动态挂卸（异步非阻塞）。
+func (a *App) AttachWatch(status WatchStatusProvider, kick func()) {
+	a.watchMu.Lock()
+	defer a.watchMu.Unlock()
+	a.watch = status
+	a.watchKick = kick
+}
+
+// watchStatusFor 投影单关系 watch_status（无监听面返回空串=未挂载）。
+func (a *App) watchStatusFor(relationID string) string {
+	a.watchMu.Lock()
+	w := a.watch
+	a.watchMu.Unlock()
+	if w == nil {
+		return ""
+	}
+	return w.WatchStatus(relationID)
+}
+
+// kickWatch 异步通知监听引擎重挂（失败/未装配静默——重挂是机会主义维护面）。
+func (a *App) kickWatch() {
+	a.watchMu.Lock()
+	kick := a.watchKick
+	a.watchMu.Unlock()
+	if kick != nil {
+		kick()
+	}
+}
+
+// PublishWatchFailed 经事件出口发布 watch_failed（契约 04 §2.5 预留形状启用，
+// 票 #92）：bootstrap 把它注入监听引擎的 PublishWatchFailed 依赖——发布链
+// 与任务/失效事件同一出口（先持久化分配 stream_sequence 再转发 sink）。
+func (a *App) PublishWatchFailed(ctx context.Context, relationID string) error {
+	return a.pub.PublishWatchFailed(ctx, relationID)
 }
 
 // LastScanTiming 返回最近一次完成的扫描分相耗时（进程生命周期内最后一次；
@@ -253,9 +306,13 @@ func New(deps AppDeps) (*App, error) {
 		gcKick:     make(chan struct{}, 1),
 		quInflight: make(map[string]*quickUpdateCall),
 	}
-	// 任务终态钩子 = 惰性清理通道的任务终态触发（ADR-0011 §2/§3，票 #89）；
+	// 任务终态钩子 = 惰性清理通道的任务终态触发（ADR-0011 §2/§3，票 #89）
+	// + 监听面动态挂卸（任务终态后关系健康/绑定可能漂移，票 #92）；
 	// 清理面未装配时钩子内部零操作，装配调用保持无条件（runner 装配一次）。
-	app.runner.SetTerminalHook(app.lazyCleanupAfterTask)
+	app.runner.SetTerminalHook(func(ctx context.Context, t model.Task) {
+		app.lazyCleanupAfterTask(ctx, t)
+		app.kickWatch()
+	})
 	return app, nil
 }
 

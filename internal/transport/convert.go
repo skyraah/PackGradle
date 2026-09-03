@@ -131,6 +131,7 @@ func workspaceDTO(v view.WorkspaceView) WorkspaceDTO {
 			DiffState: v.State.DiffState, RelationHealth: v.State.RelationHealth,
 			ActiveTaskID: v.State.ActiveTaskID, RelationRevision: v.State.RelationRevision,
 			PendingPlanID: v.State.PendingPlanID,
+			WatchStatus:   v.State.WatchStatus,
 		},
 		Features:     featuresDTO(v.Features),
 		Availability: availabilityDTO(v.Availability),

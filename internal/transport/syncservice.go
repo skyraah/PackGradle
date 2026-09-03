@@ -15,10 +15,20 @@ import (
 // （Apply 运行头/逐操作/历史提交）自票 #39 起挂载。
 type SyncService struct {
 	app syncapp.Application
+	// quickUpdateResult 订阅手动快速更新收口（票 #92：watch 面订阅其结果即
+	// 手动成功——paused 复位 active 的接线点；不改 QuickUpdate 用例编排）。
+	// bootstrap 装配监听引擎时注入；nil=无监听面（headless 工具）。
+	quickUpdateResult func(relationID string, chainErr error)
 }
 
 // NewSyncService 构造服务。
 func NewSyncService(app syncapp.Application) *SyncService { return &SyncService{app: app} }
+
+// AttachQuickUpdateResult 订阅手动快速更新收口（bootstrap 装配监听引擎时调用
+// 一次；自动链直接调应用用例、不经本服务，天然只有手动入口抵达）。
+func (s *SyncService) AttachQuickUpdateResult(notify func(relationID string, chainErr error)) {
+	s.quickUpdateResult = notify
+}
 
 // ServiceName 返回服务注册名（Wails v3 生命周期可选接口）。
 func (s *SyncService) ServiceName() string { return "packgradle.core.SyncService" }
@@ -269,6 +279,11 @@ func (s *SyncService) ConfirmPlan(input ConfirmPlanDTO) (TaskDTO, error) {
 // 链内失败 AppError 透传零新码。
 func (s *SyncService) QuickUpdate(relationID string) (QuickUpdateResultDTO, error) {
 	v, err := s.app.QuickUpdate(context.Background(), view.QuickUpdateInput{RelationID: relationID})
+	// 手动快速更新收口订阅（契约 07 §3.2：paused 由手动快速更新成功复位）；
+	// 失败也通知（自动面只在成功时复位，失败是 no-op），通知不影响返回值。
+	if s.quickUpdateResult != nil {
+		s.quickUpdateResult(relationID, err)
+	}
 	if err != nil {
 		return QuickUpdateResultDTO{}, err
 	}

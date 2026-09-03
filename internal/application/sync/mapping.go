@@ -94,5 +94,7 @@ func (a *App) UpdateMappingPolicy(ctx context.Context, input view.UpdateMappingP
 	if err != nil {
 		return view.PolicyView{}, err
 	}
+	// 监听面是 policy 的函数（ADR-0010 §3，票 #92）：policy 修改 → 重挂监听。
+	a.kickWatch()
 	return out, nil
 }

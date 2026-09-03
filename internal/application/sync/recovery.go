@@ -196,6 +196,9 @@ func (a *App) AcknowledgeRecovery(ctx context.Context, taskID string) (view.Work
 		// 恢复处置收口=安全窗口复查事件（票 #64，ADR-0007 §3）：唤醒排队中的
 		// GC 任务自动续排。
 		a.kickGC()
+		// 监听面动态挂卸（票 #92，ADR-0010 §4）：恢复期挂载保持，复位后重评
+		// 待决失效（恢复期只标脏不物化的积压自此可发射）。
+		a.kickWatch()
 	}
 	return a.GetWorkspace(ctx, relationID)
 }

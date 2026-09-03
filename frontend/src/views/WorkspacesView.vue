@@ -117,6 +117,20 @@ const rows = computed<WorkspaceRow[]>(() =>
     }),
 )
 
+// watch 状态横幅（契约 07 §6，票 #92）：watch_status ∈ {paused, unavailable}
+// 渲染横幅——paused=自动物化连败暂停（手动快速更新成功即后端复位，横幅随
+// 受控重查消失）/ unavailable=监听死亡降级回手动；active 与未挂载不渲染。
+// 数据源=WorkspaceStateDTO.watch_status（会话内存态，事件到达经受控重查刷新）。
+const watchBanners = computed(() =>
+    workspaces.value
+        .filter(w => w.state.watch_status === 'paused' || w.state.watch_status === 'unavailable')
+        .map(w => ({
+            relationID: w.relation.relation_id,
+            name: w.relation.project.display_name,
+            paused: w.state.watch_status === 'paused',
+        })),
+)
+
 function taskProgress(task: TaskDTO): string {
     if (task.total <= 0) return ''
     return Math.min(100, Math.round((task.completed / task.total) * 100)) + '%'
@@ -280,6 +294,19 @@ const cols: { key: string; alignRight?: boolean }[] = [
             </div>
             <Button @click="router.push('/workspaces/new')">{{ t('workspaces.new') }}</Button>
         </div>
+
+        <!-- watch 状态横幅（契约 07 §6，票 #92）：paused/unavailable 才渲染，
+             active 不渲染；横幅在 bootstrap 错误卡与工作区表之间常驻展示 -->
+        <Card v-for="b in watchBanners" :key="b.relationID">
+            <CardContent class="flex items-center gap-3 py-3">
+                <span
+                    :class="b.paused ? 'text-amber-600 dark:text-amber-400' : 'text-destructive'"
+                    class="text-sm"
+                >
+                    {{ b.name }}：{{ t(b.paused ? 'workspaces.watchPausedBanner' : 'workspaces.watchUnavailableBanner') }}
+                </span>
+            </CardContent>
+        </Card>
 
         <!-- bootstrap 失败：统一错误态 + 重试（走同一管线） -->
         <Card v-if="bootstrapError">

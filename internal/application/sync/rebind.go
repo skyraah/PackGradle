@@ -296,6 +296,8 @@ func (a *App) ApplyRebind(ctx context.Context, preparationID string) (view.Relat
 	}
 	// 事务已提交；发布 relation_invalidated（事件恒在提交之后，发布失败不影响提交）
 	_ = a.pub.PublishRelationInvalidated(ctxWithoutCancel(ctx), prep.RelationID)
+	// 监听面动态挂卸（票 #92，ADR-0010 §4）：重绑后端点根路径变化，重挂监听。
+	a.kickWatch()
 	return result, nil
 }
 

@@ -57,6 +57,21 @@ func (p *Publisher) PublishRelationInvalidated(ctx context.Context, relationID s
 	return p.publish(ctx, env)
 }
 
+// PublishWatchFailed 发布监听失败信号（契约 04 §2.5 预留形状原样启用，票 #92：
+// envelope 带 relation_id、payload {}；前端按 invalidation 处理 + 一次性
+// 「监听不可用」提示）。仅监听引擎重建仍败时发出（ADR-0010 §7）。
+func (p *Publisher) PublishWatchFailed(ctx context.Context, relationID string) error {
+	env := model.EventEnvelope{
+		SchemaVersion: model.CurrentSchemaVersion,
+		EventID:       p.ids("evt_"),
+		EventType:     model.EventWatchFailed,
+		EmittedAt:     p.now().UTC().Format(time.RFC3339),
+		RelationID:    relationID,
+		Payload:       json.RawMessage(`{}`),
+	}
+	return p.publish(ctx, env)
+}
+
 func (p *Publisher) publish(ctx context.Context, env model.EventEnvelope) error {
 	seq, err := p.events.Append(ctx, env)
 	if err != nil {
