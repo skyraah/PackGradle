@@ -176,7 +176,7 @@ func flipExistingIgnoreRule(next *model.MappingPolicy, t ignoreTarget) (handled,
 	for i := range next.Rules {
 		r := &next.Rules[i]
 		// S2 共享谓词：与计划面 exactPathIgnoreDirection 同口径（前缀归一化
-		// 走 policy.NormalizeRelPath，mod 规则不参与）。
+		// 走 normalize.NormalizeRelPath，mod 规则不参与）。
 		if !plan.ExactPathRuleForPath(*r, t.relLower) {
 			continue
 		}

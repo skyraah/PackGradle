@@ -18,7 +18,7 @@ var t100BTarget = ignoreTarget{
 }
 
 // exactBRule 构造既有规则；前缀大小写与尾分隔符故意不归一，锁定谓词经
-// policy.NormalizeRelPath 的归一化口径（小写、斜杠、去首尾分隔）与扫描一致。
+// normalize.NormalizeRelPath 的归一化口径（小写、斜杠、去首尾分隔）与扫描一致。
 func exactBRule(direction string, include, exclude []string) model.MappingRule {
 	return model.MappingRule{
 		ID:                 "existing-b",

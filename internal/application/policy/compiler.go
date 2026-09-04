@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"packgradle/internal/core/model"
+	"packgradle/internal/core/normalize"
 )
 
 // 合法枚举（编译期校验，检视报告 P0-5）。与 model.MappingRule 字段一一对应。
@@ -174,7 +175,7 @@ func compileRule(r *model.MappingRule, seenIDs map[string]bool, modCount *int) e
 	if model.ResourceKind(r.ResourceKind) == model.ResourceMod {
 		*modCount++
 		for _, field := range []string{"project_prefix", "runtime_prefix"} {
-			if got := NormalizeRelPath(rulePrefix(r, field)); got != modsPrefix {
+			if got := normalize.NormalizeRelPath(rulePrefix(r, field)); got != modsPrefix {
 				return ruleErr(r.ID, field, rulePrefix(r, field), "mod 语义规则前缀必须是 "+modsPrefix)
 			}
 		}
@@ -215,7 +216,7 @@ func validateFilePrefix(ruleID, field, prefix string) error {
 	if strings.HasPrefix(strings.ReplaceAll(prefix, "\\", "/"), "/") {
 		return ruleErr(ruleID, field, prefix, "前缀必须是 root 相对路径，不能是绝对路径")
 	}
-	normalized := NormalizeRelPath(prefix)
+	normalized := normalize.NormalizeRelPath(prefix)
 	if err := validateRelSegments(normalized, "前缀"); err != nil {
 		return ruleErr(ruleID, field, prefix, err.Error())
 	}
@@ -229,8 +230,8 @@ func validateFilePrefix(ruleID, field, prefix string) error {
 func compileFileRule(r model.MappingRule) (*CompiledFileRule, error) {
 	fr := &CompiledFileRule{
 		Rule:          r,
-		projectPrefix: NormalizeRelPath(r.ProjectPrefix),
-		runtimePrefix: NormalizeRelPath(r.RuntimePrefix),
+		projectPrefix: normalize.NormalizeRelPath(r.ProjectPrefix),
+		runtimePrefix: normalize.NormalizeRelPath(r.RuntimePrefix),
 	}
 	for _, g := range r.Include {
 		glob, err := CompileGlob(g)

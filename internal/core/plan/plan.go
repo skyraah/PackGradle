@@ -11,7 +11,6 @@ import (
 	"strings"
 	"time"
 
-	"packgradle/internal/application/policy"
 	"packgradle/internal/core/diff"
 	"packgradle/internal/core/model"
 	"packgradle/internal/core/normalize"
@@ -440,13 +439,13 @@ func exactPathIgnoreDirection(policy model.MappingPolicy, id model.ResourceID) s
 }
 
 // resourceIDPath 剥离 file: 资源 ID 内嵌的 root 相对路径（归一化口径与扫描
-// 器一致：policy.NormalizeRelPath，小写、斜杠、去首尾分隔）。
+// 器一致：normalize.NormalizeRelPath，小写、斜杠、去首尾分隔）。
 func resourceIDPath(id model.ResourceID) (string, bool) {
 	s := string(id)
 	if !strings.HasPrefix(s, "file:") {
 		return "", false
 	}
-	p := policy.NormalizeRelPath(strings.TrimPrefix(s, "file:"))
+	p := normalize.NormalizeRelPath(strings.TrimPrefix(s, "file:"))
 	return p, p != ""
 }
 
