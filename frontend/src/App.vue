@@ -25,7 +25,7 @@ import {
     X,
 } from '@lucide/vue'
 import { navRoutes } from './router'
-import { taskCenterOpen, useUi } from './stores/ui'
+import { useUi, taskDrawerOpen } from './stores/ui'
 import { tasks } from './stores/syncCache'
 import { isDark, toggleTheme } from './stores/theme'
 import TaskCenterDrawer from './components/common/TaskCenterDrawer.vue'
@@ -89,7 +89,8 @@ const pageTitle = computed(() => {
     return typeof key === 'string' && key ? t(key) : ''
 })
 
-// 任务中心抽屉开合收敛于 stores/ui（视图内「查看任务」入口共用，票 #104）
+// 任务中心抽屉开合收敛于 stores/ui（壳层铃铛与视图内「查看任务」入口共用，票 #104/#105）
+const taskDrawer = taskDrawerOpen
 const activeTaskCount = computed(() => tasks.value.size)
 
 // —— Mock 模式徽标：仅开发构建装载（生产构建 __DEV__ 恒 false，动态导入被裁剪，
@@ -159,7 +160,7 @@ onBeforeUnmount(() => {
                 size="icon-sm"
                 class="app-no-drag relative"
                 :title="t('tasks.title')"
-                @click="taskCenterOpen = true"
+                @click="taskDrawer = true"
             >
                 <BellRing v-if="activeTaskCount > 0" class="size-4.5" />
                 <Bell v-else class="size-4.5" />
@@ -236,7 +237,7 @@ onBeforeUnmount(() => {
     </div>
 
     <!-- 任务中心抽屉 -->
-    <TaskCenterDrawer v-model="taskCenterOpen" />
+    <TaskCenterDrawer v-model="taskDrawer" />
 
     <!-- 全局通知（ui store 排队，右下角 toast：语义色左边框 + 约 3200ms 自动消失；长任务结果以任务中心为权威） -->
     <Transition name="toast">

@@ -14,7 +14,7 @@ import { ArrowLeftRight } from '@lucide/vue'
 import { SyncService } from '../api'
 import type { TaskDTO, WorkspaceDTO } from '../api'
 import { bootstrapped, bootstrapError, retryBootstrap, tasks, triggerRequery, workspaces } from '../stores/syncCache'
-import { showSnackbar, taskCenterOpen } from '../stores/ui'
+import { showSnackbar, taskDrawerOpen } from '../stores/ui'
 import { errText } from '../utils/errors'
 import { availabilityReasonText, canPrepareSync, canRebind, prepareSync } from '../utils/plans'
 import { DIFF_TONES, HEALTH_TONES, toneOf, type BadgeTone } from '../utils/pageState'
@@ -237,7 +237,7 @@ function openWorkspace(row: WorkspaceRow): void {
 }
 
 // 行末主操作分发（原型 §7.1 act 映射）：viewTask 打开任务中心抽屉（壳层共用
-// stores/ui 的 taskCenterOpen），其余为导航或写动作
+// stores/ui 的 taskDrawerOpen），其余为导航或写动作
 function runRowAction(row: WorkspaceRow): void {
     const relID = row.workspace.relation.relation_id
     switch (row.action.kind) {
@@ -252,7 +252,7 @@ function runRowAction(row: WorkspaceRow): void {
             startScan(row)
             break
         case 'viewTask':
-            taskCenterOpen.value = true
+            taskDrawerOpen.value = true
             break
         case 'prepare':
             prepareSyncPlan(row)
