@@ -164,6 +164,29 @@ export function verdictClass(v: string): string {
     return VERDICT_CLASSES[v] ?? 'text-muted-foreground'
 }
 
+// CHANGE_VERDICTS 把后端变更分类映射到原型资源表判断键（票 #105：判断列纯文字
+// 着色走 verdictClass 家族）。映射沿原型 verdictLabel 语义：收敛/等值/自动合并
+// 属「一致」族(s)，初始化待选择为身份确认(l)，项目源侧改/删为 p，运行实例侧改/删
+// 为 r/rd，双端冲突 c，删除冲突 dc。
+export const CHANGE_VERDICTS: Record<string, string> = {
+    noop: 's',
+    converged: 's',
+    adopt_equal: 's',
+    merged_clean: 's',
+    init_choice: 'l',
+    project_to_runtime: 'p',
+    remove_project_candidate: 'p',
+    runtime_to_project: 'r',
+    remove_runtime_candidate: 'rd',
+    conflict_modify: 'c',
+    conflict_delete_modify: 'dc',
+}
+
+// verdictKeyOf 返回变更分类对应的原型判断键（未知分类返回空串 → verdictClass 兜底 muted）。
+export function verdictKeyOf(classification: string): string {
+    return CHANGE_VERDICTS[classification] ?? ''
+}
+
 // formatTime 把 RFC3339 时间戳渲染为本地时间；空值显「—」，无法解析原样返回
 // （后端时间恒为 RFC3339，此分支兜底）。
 export function formatTime(s?: string): string {

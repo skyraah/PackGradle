@@ -9,6 +9,10 @@ interface Notice {
     timeout: number
 }
 
+// 任务中心抽屉开合（App.vue 绑定渲染）：抽屉本体挂在壳层，页面级「查看任务」
+// 主操作（工作区对象头，UX 原型 C-02 扫描中横幅/主操作，票 #105）经此打开。
+export const taskDrawerOpen = ref(false)
+
 const snackbar = ref(false)
 const snackbarMsg = ref('')
 const snackbarTone = ref<NoticeTone>('info')

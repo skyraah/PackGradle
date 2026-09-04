@@ -25,7 +25,7 @@ import {
     X,
 } from '@lucide/vue'
 import { navRoutes } from './router'
-import { useUi } from './stores/ui'
+import { useUi, taskDrawerOpen } from './stores/ui'
 import { tasks } from './stores/syncCache'
 import { isDark, toggleTheme } from './stores/theme'
 import TaskCenterDrawer from './components/common/TaskCenterDrawer.vue'
@@ -89,7 +89,7 @@ const pageTitle = computed(() => {
     return typeof key === 'string' && key ? t(key) : ''
 })
 
-const taskDrawer = ref(false)
+const taskDrawer = taskDrawerOpen
 const activeTaskCount = computed(() => tasks.value.size)
 
 // —— Mock 模式徽标：仅开发构建装载（生产构建 __DEV__ 恒 false，动态导入被裁剪，
