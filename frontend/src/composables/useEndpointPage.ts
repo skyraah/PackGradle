@@ -5,6 +5,7 @@ import { useI18n } from 'vue-i18n'
 import type { EndpointDTO, EndpointHealthDTO } from '../api'
 import { showSnackbar } from '../stores/ui'
 import { errText } from '../utils/errors'
+import { endpointHealthTone } from '../utils/pageState'
 
 // 服务适配面：由各页面用具体 Service（ProjectService / RuntimeService）装配
 export interface EndpointPageService {
@@ -66,11 +67,8 @@ export function useEndpointPage(service: EndpointPageService) {
         return h && h !== 'checking' ? h : undefined
     }
 
-    function healthBadgeVariant(status: string) {
-        if (status === 'ok') return 'default' as const
-        if (status === 'missing') return 'destructive' as const
-        return 'secondary' as const
-    }
+    // 健康徽标色调收敛于 utils/pageState 的 endpointHealthTone（票 #102）
+    const healthBadgeTone = endpointHealthTone
 
     return {
         registered,
@@ -81,6 +79,6 @@ export function useEndpointPage(service: EndpointPageService) {
         register,
         checkHealth,
         healthOf,
-        healthBadgeVariant,
+        healthBadgeTone,
     }
 }

@@ -14,6 +14,7 @@ import { bootstrapped, triggerRequery, workspaces } from '../stores/syncCache'
 import { showSnackbar } from '../stores/ui'
 import { errText, errorCode } from '../utils/errors'
 import { pickDirectory } from '../utils/dialogs'
+import { checkTone } from '../utils/pageState'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
@@ -116,11 +117,6 @@ async function apply() {
     } finally {
         applying.value = false
     }
-}
-
-function checkVariant(c: PreparationCheckDTO): 'default' | 'destructive' | 'secondary' {
-    if (c.passed) return 'default'
-    return c.severity === 'blocking' ? 'destructive' : 'secondary'
 }
 
 // 绑定指纹摘要：完整哈希不适合直读，展示前后一致性即可（对比结论见 fingerprint_changed）
@@ -295,7 +291,7 @@ function fingerprintSummary(fp: string): string {
                             <TableRow v-for="c in checks" :key="c.code + (c.args?.[0] ?? '')">
                                 <TableCell class="font-medium">{{ t(c.code, c.args ?? []) }}</TableCell>
                                 <TableCell>
-                                    <Badge :variant="checkVariant(c)">
+                                    <Badge :variant="checkTone(c.passed, c.severity).variant">
                                         {{ c.passed ? t('workspacesNew.checkPassed') : c.severity === 'blocking' ? t('workspacesNew.checkBlocking') : t('workspacesNew.checkWarning') }}
                                     </Badge>
                                 </TableCell>
