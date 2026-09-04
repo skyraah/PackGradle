@@ -88,6 +88,12 @@ const cols = ['history.commit.colResource', 'history.commit.colProject', 'histor
 // 同一套键；缺键渲染键名本身便于发现遗漏）。——
 const skipped = computed(() => commit.value?.skipped ?? [])
 
+// —— 用户决议清单（票 #100，ADR-0013 §1）：「已忽略」（随提交合成 ignore 规则，
+// 恢复入口在受管范围页）与「手动处理」（本次吸收进基线）分列展示——与上方
+// skipped 的物化取数剔除项是两个清单。——
+const ignored = computed(() => commit.value?.ignored ?? [])
+const manual = computed(() => commit.value?.manual ?? [])
+
 // 重试跳过项分两路（#62 遗留项收口；#86 单调用化）：
 // - 授权模式开：升级走快速更新同一后端用例（SyncService.QuickUpdate，契约 07
 //   §3.1 唯一口径）——链在后端阻塞收口，前端按三态承接：no_diff → 「已是最新」；
@@ -326,6 +332,40 @@ watch([relationID, commitID], () => void loadHead(), { immediate: true })
                                 </TableRow>
                             </TableBody>
                         </Table>
+                    </CardContent>
+                </Card>
+
+                <!-- 用户决议清单（票 #100，ADR-0013）：已忽略 / 手动处理分列 -->
+                <Card v-if="ignored.length > 0 || manual.length > 0">
+                    <CardContent class="py-2">
+                        <div v-if="ignored.length > 0" class="border-b px-2 py-2 pb-3">
+                            <div class="flex flex-col">
+                                <span class="font-medium text-sm text-foreground">{{ t('history.commit.ignoredTitle') }}（{{ ignored.length }}）</span>
+                                <span class="text-muted-foreground text-xs">{{ t('history.commit.ignoredHint') }}</span>
+                            </div>
+                            <div class="mt-2 flex flex-col gap-1">
+                                <span
+                                    v-for="row in ignored"
+                                    :key="row.resource_id"
+                                    class="max-w-96 truncate font-mono text-xs"
+                                    :title="row.resource_id"
+                                >{{ row.resource_id }}</span>
+                            </div>
+                        </div>
+                        <div v-if="manual.length > 0" class="px-2 py-2" :class="ignored.length > 0 ? 'pt-3' : ''">
+                            <div class="flex flex-col">
+                                <span class="font-medium text-sm text-foreground">{{ t('history.commit.manualTitle') }}（{{ manual.length }}）</span>
+                                <span class="text-muted-foreground text-xs">{{ t('history.commit.manualHint') }}</span>
+                            </div>
+                            <div class="mt-2 flex flex-col gap-1">
+                                <span
+                                    v-for="row in manual"
+                                    :key="row.resource_id"
+                                    class="max-w-96 truncate font-mono text-xs"
+                                    :title="row.resource_id"
+                                >{{ row.resource_id }}</span>
+                            </div>
+                        </div>
                     </CardContent>
                 </Card>
 
