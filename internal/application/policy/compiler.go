@@ -174,7 +174,7 @@ func compileRule(r *model.MappingRule, seenIDs map[string]bool, modCount *int) e
 	if model.ResourceKind(r.ResourceKind) == model.ResourceMod {
 		*modCount++
 		for _, field := range []string{"project_prefix", "runtime_prefix"} {
-			if got := normalizeRelPath(rulePrefix(r, field)); got != modsPrefix {
+			if got := NormalizeRelPath(rulePrefix(r, field)); got != modsPrefix {
 				return ruleErr(r.ID, field, rulePrefix(r, field), "mod 语义规则前缀必须是 "+modsPrefix)
 			}
 		}
@@ -215,7 +215,7 @@ func validateFilePrefix(ruleID, field, prefix string) error {
 	if strings.HasPrefix(strings.ReplaceAll(prefix, "\\", "/"), "/") {
 		return ruleErr(ruleID, field, prefix, "前缀必须是 root 相对路径，不能是绝对路径")
 	}
-	normalized := normalizeRelPath(prefix)
+	normalized := NormalizeRelPath(prefix)
 	if err := validateRelSegments(normalized, "前缀"); err != nil {
 		return ruleErr(ruleID, field, prefix, err.Error())
 	}
@@ -229,8 +229,8 @@ func validateFilePrefix(ruleID, field, prefix string) error {
 func compileFileRule(r model.MappingRule) (*CompiledFileRule, error) {
 	fr := &CompiledFileRule{
 		Rule:          r,
-		projectPrefix: normalizeRelPath(r.ProjectPrefix),
-		runtimePrefix: normalizeRelPath(r.RuntimePrefix),
+		projectPrefix: NormalizeRelPath(r.ProjectPrefix),
+		runtimePrefix: NormalizeRelPath(r.RuntimePrefix),
 	}
 	for _, g := range r.Include {
 		glob, err := CompileGlob(g)

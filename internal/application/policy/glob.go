@@ -26,7 +26,7 @@ func CompileGlob(pattern string) (*Glob, error) {
 	if strings.HasPrefix(slash, "/") {
 		return nil, fmt.Errorf("glob 模式为绝对路径: %q", pattern)
 	}
-	p := normalizeRelPath(pattern)
+	p := NormalizeRelPath(pattern)
 	if p == "" {
 		return nil, fmt.Errorf("空 glob 模式")
 	}
@@ -57,8 +57,11 @@ func (g *Glob) MatchPath(path string) bool {
 	return false
 }
 
-// normalizeRelPath 归一化：反斜杠转斜杠、小写、去首尾 '/'。
-func normalizeRelPath(p string) string {
+// NormalizeRelPath 归一化 root 相对路径：反斜杠转斜杠、小写、去首尾 '/'。
+// 是全仓路径比较的唯一归一化入口（票 #100 S1：此前 plan/sync 各持一份同形
+// 私有实现）：glob 编译、规则前缀比较、资源 ID 内嵌路径提取共用本口径
+// （managedfiles 以小写斜杠路径匹配规则）。
+func NormalizeRelPath(p string) string {
 	p = strings.ReplaceAll(p, "\\", "/")
 	p = strings.ToLower(p)
 	p = strings.Trim(p, "/")

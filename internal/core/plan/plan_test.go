@@ -178,6 +178,39 @@ func TestResourceDirectionExactPathIgnoreFallback(t *testing.T) {
 	}
 }
 
+// TestResourceDirectionGlobbedExactPrefixNotIgnored 票 #100 C2 资格收窄：
+// 同前缀但带 glob 的 ignore 规则不精确治理该文件——扫描候选按 Matches 裁决
+//（managedfiles：include 不命中即退出候选），该文件实际由被覆盖的目录规则
+// 治理；精确前缀快路径不得据此判 ignore，否则与扫描口径背离（资源在扫描面
+// 出现、在计划面消失）。
+func TestResourceDirectionGlobbedExactPrefixNotIgnored(t *testing.T) {
+	const id = "file:config/b.toml"
+	rules := []model.MappingRule{
+		{ID: "config", ResourceKind: "text_file", ProjectPrefix: "config", RuntimePrefix: "config", Direction: "bidirectional"},
+		{ID: "user-glob", ResourceKind: "text_file", ProjectPrefix: "config/b.toml", RuntimePrefix: "config/b.toml", Include: []string{"bak.toml"}, Direction: "ignore"},
+		{ID: "mods", ResourceKind: "mod", ProjectPrefix: "mods", RuntimePrefix: "mods", Direction: "bidirectional"},
+	}
+	pol := model.MappingPolicy{SchemaVersion: model.CurrentSchemaVersion, PolicyID: "default-v1", Revision: 1, Rules: rules}
+	// 快照观察 hit config 目录规则（bidirectional）：带 glob 的同前缀 ignore
+	// 规则不抢裁决，方向随观察结论
+	staleProj := snapshot(model.SideProject, fileObs(id, "h1", "config"))
+	staleRt := snapshot(model.SideRuntime, fileObs(id, "h1", "config"))
+	if got := ResourceDirection(pol, staleProj, staleRt, id); got != "bidirectional" {
+		t.Errorf("观察 hit 目录规则时方向 = %q，期望 bidirectional（带 glob 的同前缀规则不精确治理）", got)
+	}
+	// 双侧无观察（快路径唯一入口）：同样不得判 ignore
+	if got := ResourceDirection(pol, snapshot(model.SideProject), snapshot(model.SideRuntime), id); got != "bidirectional" {
+		t.Errorf("双侧无观察时方向 = %q，期望 bidirectional（快路径不命中带 glob 规则）", got)
+	}
+	// 对照：去掉 include 即精确治理（合成形状），快路径恢复命中
+	trimmed := append([]model.MappingRule{}, rules...)
+	trimmed[1].Include = nil
+	trimmedPol := model.MappingPolicy{SchemaVersion: model.CurrentSchemaVersion, PolicyID: "default-v1", Revision: 1, Rules: trimmed}
+	if got := ResourceDirection(trimmedPol, snapshot(model.SideProject), snapshot(model.SideRuntime), id); got != "ignore" {
+		t.Errorf("同前缀无 glob 时方向 = %q，期望 ignore（对照：资格收窄只因 glob）", got)
+	}
+}
+
 // findOp 按 ResourceID 查找操作。
 func findOp(ops []model.PlannedOperation, id string) (model.PlannedOperation, bool) {
 	for _, op := range ops {

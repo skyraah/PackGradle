@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"packgradle/internal/application/policy"
 	"packgradle/internal/core/diff"
 	"packgradle/internal/core/model"
 	"packgradle/internal/core/normalize"
@@ -417,6 +418,12 @@ func resourceDirection(policy model.MappingPolicy, project, runtime model.Observ
 // exactPathIgnoreDirection 判断资源是否被「两侧前缀恰等于资源路径」的单文件
 // ignore 规则覆盖（synthesizedIgnoreRules 的合成形状）；命中返回 ignore，
 // 否则空串。非 file: 资源不按路径裁决（mod 规则前缀恒为 mods）。
+// 资格收窄（票 #100 C2）：仅 include/exclude 均空的规则算精确治理该文件——
+// 合成规则两者恒空；用户自建同前缀但带 glob 的规则经扫描 Matches 裁决
+//（managedfiles 候选收集：include 不命中即退出候选）可能不治理该文件，
+// 不得据此判 ignore，否则与扫描口径背离（扫描面出现、计划面消失）——该
+// 资源按观察/最长前缀裁决的正常语义走（direction=ignore 的这类规则同样
+// 只在观察 hit 时生效）。
 func exactPathIgnoreDirection(policy model.MappingPolicy, id model.ResourceID) string {
 	path, ok := resourceIDPath(id)
 	if !ok {
@@ -424,28 +431,23 @@ func exactPathIgnoreDirection(policy model.MappingPolicy, id model.ResourceID) s
 	}
 	for i := range policy.Rules {
 		r := &policy.Rules[i]
-		if r.Direction == directionIgnore && model.ResourceKind(r.ResourceKind) != model.ResourceMod &&
-			rulePathPrefix(r.ProjectPrefix) == path && rulePathPrefix(r.RuntimePrefix) == path {
+		if r.Direction == directionIgnore && len(r.Include) == 0 && len(r.Exclude) == 0 &&
+			ExactPathRuleForPath(*r, path) {
 			return directionIgnore
 		}
 	}
 	return ""
 }
 
-// resourceIDPath 剥离 file: 资源 ID 内嵌的 root 相对路径（小写、斜杠、去首尾
-// 分隔，与 policy 包 normalizeRelPath 的匹配口径一致）。
+// resourceIDPath 剥离 file: 资源 ID 内嵌的 root 相对路径（归一化口径与扫描
+// 器一致：policy.NormalizeRelPath，小写、斜杠、去首尾分隔）。
 func resourceIDPath(id model.ResourceID) (string, bool) {
 	s := string(id)
 	if !strings.HasPrefix(s, "file:") {
 		return "", false
 	}
-	p := strings.Trim(strings.ToLower(strings.ReplaceAll(strings.TrimPrefix(s, "file:"), "\\", "/")), "/")
+	p := policy.NormalizeRelPath(strings.TrimPrefix(s, "file:"))
 	return p, p != ""
-}
-
-// rulePathPrefix 归一化规则前缀用于路径比较（小写、斜杠、去首尾分隔）。
-func rulePathPrefix(prefix string) string {
-	return strings.Trim(strings.ToLower(strings.ReplaceAll(prefix, "\\", "/")), "/")
 }
 
 // opAllowed 判断操作类别是否被方向允许：project_to_runtime 禁止

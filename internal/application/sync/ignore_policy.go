@@ -80,11 +80,14 @@ func ignoreTargetOf(id model.ResourceID, snapP, snapR model.ObservedSnapshot) (i
 // 不碰策略；无忽略决议零写入（revision 不动）。返回是否有策略写入（驱动事务
 // 提交后的 kickWatch，ADR-0010 §3）。
 //
-// 规则复用优先：既有文件规则两侧前缀已恰好等于该路径时只翻转方向（幂等，避免
-// 等前缀并列触发 diag.mapping.collision）；否则追加新规则——枚举字段照抄观察
-// 命中的现行生效规则（最长前缀胜出者），避免合成值与模板语义漂移。保存前过
-// policy.Validate 编译约束全集（坑 B：唯一 ID、恰好一条 mod 规则、文件规则禁入
-// mods/ 前缀、glob 可编译等），失败即整场回滚进恢复面。
+// 规则复用优先：既有文件规则两侧前缀已恰好等于该路径且不带 glob 时只翻转方向
+// （已恰为 ignore 则零写入——无谓 SavePolicy 会使 revision 无谓 +1，坑 A/C1；
+// 避免等前缀并列触发 diag.mapping.collision）；同前缀但带 glob 的用户自建规则
+// 不治理该文件（扫描口径），不翻转、不合成，该资源退回普通 skip 语义（C2）；
+// 否则追加新规则——枚举字段照抄观察命中的现行生效规则（最长前缀胜出者），
+// 避免合成值与模板语义漂移。保存前过 policy.Validate 编译约束全集（坑 B：
+// 唯一 ID、恰好一条 mod 规则、文件规则禁入 mods/ 前缀、glob 可编译等），失败
+// 即整场回滚进恢复面。
 func (a *App) synthesizeIgnoreRules(ctx context.Context, repos ports.Repos, relationID string,
 	plan model.SyncPlan, snapP, snapR model.ObservedSnapshot) (bool, error) {
 
@@ -103,15 +106,22 @@ func (a *App) synthesizeIgnoreRules(ctx context.Context, repos ports.Repos, rela
 	}
 	next := cur
 	changed := false
-	for _, id := range skipIDs {
-		t, ok := ignoreTargetOf(id, snapP, snapR)
-		if !ok {
-			continue
-		}
-		if flipExistingIgnoreRule(&next, t) {
-			changed = true
-			continue
-		}
+		for _, id := range skipIDs {
+			t, ok := ignoreTargetOf(id, snapP, snapR)
+			if !ok {
+				// 刻意的静默 continue：合成不可达目标（实践上仅 mod 资源——
+				// 编译器禁文件规则入 mods/ 前缀，ADR-0013 §4）不报错、不落
+				// 规则，决议按普通 skip 语义吸收进基线（测试
+				// TestModIgnoreResolutionLeavesNoRule 钉住该契约）。
+				continue
+			}
+			handled, flipped := flipExistingIgnoreRule(&next, t)
+			if handled {
+				if flipped {
+					changed = true
+				}
+				continue
+			}
 		gov := governingRule(next, t.govID)
 		rule := model.MappingRule{
 			ID:           uniqueIgnoreRuleID(next, t.relPath),
@@ -148,22 +158,40 @@ func (a *App) synthesizeIgnoreRules(ctx context.Context, repos ports.Repos, rela
 	return true, nil
 }
 
-// flipExistingIgnoreRule 把两侧前缀已恰好等于目标路径的既有文件规则方向翻转为
-// ignore（恢复后再次忽略 / 策略漂移的幂等路径）。命中并翻转返回 true。
-func flipExistingIgnoreRule(next *model.MappingPolicy, t ignoreTarget) bool {
+// flipExistingIgnoreRule 处理「两侧前缀已恰好等于目标路径」的既有文件规则
+// （恢复后再次忽略 / 策略漂移的幂等路径），返回（是否命中既有规则, 是否本次
+// 实际翻转了方向=有写入）：
+//
+//   - 无既有精确前缀规则 → (false, false)，调用方合成新规则；
+//   - 方向非 ignore 且不带 glob → 就地翻转，(true, true)；
+//   - 已恰为 ignore → (true, false)：无实际变化，零写入——返回 flipped=true
+//     会触发无谓 SavePolicy（revision 无谓 +1、同关系其它计划无谓 stale，
+//     坑 A）（C1）；
+//   - 同前缀但带 glob（用户自建规则）→ (true, false) 且不触碰该规则（C2）：
+//     glob 经扫描 Matches 裁决（managedfiles 候选收集）后该规则可能不治理
+//     目标文件，翻转它既可能误改无关治理、也不能并列合成同前缀新规则（等
+//     前缀并列触发 diag.mapping.collision）——该资源退回普通 skip 语义
+//     （留在差异面，行为等同 ADR-0013 之前），不翻转、不合成。
+func flipExistingIgnoreRule(next *model.MappingPolicy, t ignoreTarget) (handled, flipped bool) {
 	for i := range next.Rules {
 		r := &next.Rules[i]
-		if model.ResourceKind(r.ResourceKind) == model.ResourceMod {
+		// S2 共享谓词：与计划面 exactPathIgnoreDirection 同口径（前缀归一化
+		// 走 policy.NormalizeRelPath，mod 规则不参与）。
+		if !plan.ExactPathRuleForPath(*r, t.relLower) {
 			continue
 		}
-		if normalizeRelPrefix(r.ProjectPrefix) == t.relLower && normalizeRelPrefix(r.RuntimePrefix) == t.relLower {
-			if r.Direction != directionIgnore {
-				r.Direction = directionIgnore
-			}
-			return true
+		// C2 资格收窄：合成规则的 include/exclude 恒空；带 glob 的同前缀规则
+		// 不治理该文件（扫描口径），回退不翻转、不合成。
+		if len(r.Include) != 0 || len(r.Exclude) != 0 {
+			return true, false
 		}
+		if r.Direction != directionIgnore {
+			r.Direction = directionIgnore
+			return true, true
+		}
+		return true, false
 	}
-	return false
+	return false, false
 }
 
 // governingRule 按 ID 查观察命中的现行生效规则；mod 语义规则不算（其枚举字段
@@ -197,13 +225,6 @@ func uniqueIgnoreRuleID(p model.MappingPolicy, relPath string) string {
 			return id
 		}
 	}
-}
-
-// normalizeRelPrefix 归一化规则前缀用于路径比较（小写、斜杠、去首尾分隔），
-// 与 policy 包 normalizeRelPath 的匹配口径一致（managedfiles 以小写斜杠路径
-// 匹配规则）。
-func normalizeRelPrefix(prefix string) string {
-	return strings.Trim(strings.ToLower(strings.ReplaceAll(prefix, "\\", "/")), "/")
 }
 
 // decisionEntry 是用户决议资源的提交摘要单行（与 skippedEntry 的物化取数剔除
