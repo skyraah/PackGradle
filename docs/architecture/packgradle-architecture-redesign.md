@@ -162,7 +162,7 @@ Apply + Verify -> new SyncBaseline -> SyncCommit
 - `ObservedSnapshot` 可频繁生成、可被任务取消、可因文件继续变化而过期。
 - `SyncBaseline` 只能在 Apply 后复扫验证成功时创建；失败、取消或仅预览不得推进。
 - `SyncCommit` 记录“为什么以及如何从旧 Baseline 变成新 Baseline”，而不是充当文件备份本身。
-- 用户在 resolved plan 中预先选择 `skip` 时，允许产生 `completeness=partial` 的 Commit：只更新所有已选且成功验证的资源；跳过或仍冲突的资源继续沿用旧 Baseline，并保持 Relation 为 dirty/conflicted。
+- 用户在 resolved plan 中预先选择 `skip`（忽略）或 `manual`（手动处理）时，允许产生 `completeness=partial` 的 Commit：只更新所有已选且成功验证的资源（ADR-0013，票 #100）。`skip` = 持久移出受管范围——提交期合成单文件 ignore 规则（随提交事务落库），该资源自此不再出现在差异、计划、快速更新与 changes 页，恢复唯一入口是受管范围页把规则方向改回；基线仍记录该资源，恢复后从既有基线续算。`manual` = 本次不生成操作，双端现状随提交吸收进新基线，此后任一侧再变更照常回到差异面。
 - 任一已选操作执行或验证失败时，不创建 Commit、不推进任何 Baseline，整个任务进入 `recovery_required`；“部分执行成功”不是 partial Commit。
 
 ### 3.4 MappingPolicy
