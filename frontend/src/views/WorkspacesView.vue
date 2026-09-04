@@ -12,6 +12,14 @@ import { bootstrapped, bootstrapError, retryBootstrap, tasks, triggerRequery, wo
 import { showSnackbar } from '../stores/ui'
 import { errText } from '../utils/errors'
 import { availabilityReasonText, canPrepareSync, canQuickUpdate, canRebind, prepareSync } from '../utils/plans'
+import {
+    BASELINE_TONES,
+    DIFF_TONES,
+    HEALTH_TONES,
+    SCAN_TONES,
+    toneOf,
+    type BadgeTone,
+} from '../utils/pageState'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
@@ -20,43 +28,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 const { t } = useI18n()
 const router = useRouter()
 
-// 正交状态徽标：ok=绿 / 进行中=secondary / 需注意=琥珀 / 异常=destructive（稳定状态色，
-// 不使用整行鲜红背景——UX 原型 §7.1 状态画板）
-interface BadgeTone {
-    variant: 'default' | 'secondary' | 'destructive' | 'outline'
-    class?: string
-}
-const OK: BadgeTone = { variant: 'outline', class: 'text-emerald-600 dark:text-emerald-400' }
-const WARN: BadgeTone = { variant: 'outline', class: 'text-amber-600 dark:text-amber-400' }
-const NEUTRAL: BadgeTone = { variant: 'outline' }
-const BUSY: BadgeTone = { variant: 'secondary' }
-const BAD: BadgeTone = { variant: 'destructive' }
-
-const scanTones: Record<string, BadgeTone> = {
-    ready: OK,
-    scanning: BUSY,
-    queued: BUSY,
-    never_scanned: NEUTRAL,
-    failed: BAD,
-}
-const baselineTones: Record<string, BadgeTone> = { ready: OK, stale: WARN, none: NEUTRAL }
-const diffTones: Record<string, BadgeTone> = {
-    clean: OK,
-    dirty: BUSY,
-    conflicted: BAD,
-    initialization_required: WARN,
-    unknown: NEUTRAL,
-}
-const healthTones: Record<string, BadgeTone> = {
-    healthy: OK,
-    endpoint_missing: WARN,
-    rebind_required: WARN,
-    recovery_required: BAD,
-}
-
-function toneOf(map: Record<string, BadgeTone>, value: string): BadgeTone {
-    return map[value] ?? NEUTRAL
-}
+// 正交状态徽标（UX 原型 §7.1 状态画板）：色调映射收敛于 utils/pageState（票 #102）
 
 // —— 行视图模型：缓存每次提交后统一派生，模板不重复取值 ——
 interface WorkspaceRow {
@@ -108,10 +80,10 @@ const rows = computed<WorkspaceRow[]>(() =>
             // 操作由 T11 承接」而 T11 未落，历史页此前 UI 不可达）；空态由历史页自行呈现
             canHistory: w.features.history_view === true,
             scanLabel: w.state.scan_state === 'failed' ? t('workspaces.scanRetryAction') : t('workspaces.scanAction'),
-            healthTone: toneOf(healthTones, w.relation.health),
-            scanTone: toneOf(scanTones, w.state.scan_state),
-            baselineTone: toneOf(baselineTones, w.state.baseline_state),
-            diffTone: toneOf(diffTones, w.state.diff_state),
+            healthTone: toneOf(HEALTH_TONES, w.relation.health),
+            scanTone: toneOf(SCAN_TONES, w.state.scan_state),
+            baselineTone: toneOf(BASELINE_TONES, w.state.baseline_state),
+            diffTone: toneOf(DIFF_TONES, w.state.diff_state),
             activity: lastActivity(w),
         }
     }),
@@ -366,7 +338,7 @@ const cols: { key: string; alignRight?: boolean }[] = [
                                             :title="t('workspaces.pendingPlanBadge')"
                                             @click="openPendingPlan(row)"
                                         >
-                                            <Badge variant="outline" class="text-amber-600 dark:text-amber-400">
+                                            <Badge variant="st-warn">
                                                 {{ t('workspaces.pendingPlanBadge') }}
                                             </Badge>
                                         </button>

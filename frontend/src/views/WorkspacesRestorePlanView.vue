@@ -26,10 +26,13 @@ import { errorCode, errText } from '../utils/errors'
 import { availabilityReasonText, canPrepareRestore } from '../utils/plans'
 import {
     BAD,
+    INFO,
     NEUTRAL,
     OK,
+    PLAN_TONES,
     WARN,
     formatTime,
+    toneOf,
     type BadgeTone,
 } from '../utils/pageState'
 import {
@@ -121,8 +124,8 @@ const counts = computed(() => {
     }
 })
 
-// —— 判定徽标色调（四标记 + delete 行；色调沿工作区列表同画板）——
-const INFO: BadgeTone = { variant: 'outline', class: 'text-blue-600 dark:text-blue-400' }
+// —— 判定徽标色调（四标记 + delete 行；色调常量与计划状态映射收敛于
+// utils/pageState，票 #102）——
 function markerTone(row: RestorePlanItemDTO): BadgeTone {
     switch (row.marker) {
         case 'restorable_from_cas':
@@ -338,15 +341,6 @@ watch(
     },
 )
 
-const statusTones: Record<string, { variant: 'default' | 'secondary' | 'destructive' | 'outline'; class?: string }> = {
-    draft: { variant: 'secondary' },
-    resolved: { variant: 'outline', class: 'text-emerald-600 dark:text-emerald-400' },
-    confirmed: { variant: 'outline', class: 'text-primary' },
-    applied: { variant: 'outline', class: 'text-emerald-600 dark:text-emerald-400' },
-    stale: { variant: 'outline', class: 'text-amber-600 dark:text-amber-400' },
-    expired: { variant: 'outline', class: 'text-amber-600 dark:text-amber-400' },
-}
-
 const cols = ['restore.colResource', 'restore.colMarker', 'restore.colAvailability', 'restore.colAction']
 </script>
 
@@ -357,7 +351,7 @@ const cols = ['restore.colResource', 'restore.colMarker', 'restore.colAvailabili
             <div>
                 <h1 class="flex items-center gap-2 text-xl font-semibold">
                     {{ t('restore.title') }}
-                    <Badge v-if="plan" :variant="statusTones[plan.status]?.variant ?? 'outline'" :class="statusTones[plan.status]?.class">
+                    <Badge v-if="plan" :variant="toneOf(PLAN_TONES, plan.status).variant">
                         {{ t('restore.status.' + plan.status) }}
                     </Badge>
                 </h1>
@@ -529,7 +523,7 @@ const cols = ['restore.colResource', 'restore.colMarker', 'restore.colAvailabili
                                             <div v-if="row.availability === 'ok'" class="flex items-center gap-1.5 text-sm">
                                                 <span class="h-2 w-2 rounded-full bg-emerald-500"></span>
                                                 {{ t('restore.availOk') }}
-                                                <Badge v-if="row.newer_available" variant="outline" class="text-amber-600 dark:text-amber-400" :title="t('restore.availNewerTip')">
+                                                <Badge v-if="row.newer_available" variant="st-warn" plain :title="t('restore.availNewerTip')">
                                                     {{ t('restore.availNewer') }}
                                                 </Badge>
                                             </div>

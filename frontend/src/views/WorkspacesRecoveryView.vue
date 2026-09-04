@@ -19,7 +19,7 @@ import { showSnackbar } from '../stores/ui'
 import { errorCode, errText } from '../utils/errors'
 import {
     BAD,
-    BUSY,
+    RUN,
     formatTime,
     NEUTRAL,
     OK,
@@ -183,17 +183,17 @@ async function rescan(): Promise<void> {
 
 // —— 展示辅助（色调/时间收敛于 utils/pageState）——
 const stateTones: Record<string, BadgeTone> = {
-    prepared: BUSY,
-    staged: BUSY,
-    applying: BUSY,
-    verifying: BUSY,
+    prepared: RUN,
+    staged: RUN,
+    applying: RUN,
+    verifying: RUN,
     committed: OK,
     recovery_required: BAD,
 }
 
 const statusTones: Record<string, BadgeTone> = {
     pending: NEUTRAL,
-    running: BUSY,
+    running: RUN,
     applied: OK,
     verified: OK,
     failed: BAD,
@@ -286,7 +286,7 @@ const opsCols = ['recovery.colOrdinal', 'recovery.colStatus', 'recovery.colResou
                             <Badge :variant="toneOf(stateTones, run.state).variant" :class="toneOf(stateTones, run.state).class">
                                 {{ t('recovery.state.' + run.state) }}
                             </Badge>
-                            <Badge v-if="run.acknowledged_at" variant="outline" class="text-emerald-600 dark:text-emerald-400">
+                            <Badge v-if="run.acknowledged_at" variant="st-ok" plain>
                                 {{ t('recovery.acknowledgedAt') }} {{ formatTime(run.acknowledged_at) }}
                             </Badge>
                             <span v-else class="text-muted-foreground text-xs">{{ t('recovery.notAcknowledged') }}</span>

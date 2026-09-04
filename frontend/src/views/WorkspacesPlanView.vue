@@ -17,6 +17,7 @@ import MergePreviewDrawer from '../components/common/MergePreviewDrawer.vue'
 import { bootstrapped, tasks, triggerRequery, workspaces } from '../stores/syncCache'
 import { showSnackbar } from '../stores/ui'
 import { errText } from '../utils/errors'
+import { PLAN_TONES, toneOf } from '../utils/pageState'
 import {
     availabilityReasonText,
     canApplySync,
@@ -116,13 +117,7 @@ const summaryChips = computed(() => {
 })
 const bidirectional = computed(() => writeRuntimeCount.value > 0 && writeProjectCount.value > 0)
 
-const statusTones: Record<string, { variant: 'default' | 'secondary' | 'destructive' | 'outline'; class?: string }> = {
-    draft: { variant: 'secondary' },
-    resolved: { variant: 'outline', class: 'text-emerald-600 dark:text-emerald-400' },
-    applied: { variant: 'outline', class: 'text-emerald-600 dark:text-emerald-400' },
-    stale: { variant: 'outline', class: 'text-amber-600 dark:text-amber-400' },
-    expired: { variant: 'outline', class: 'text-amber-600 dark:text-amber-400' },
-}
+// 计划状态徽标色调收敛于 utils/pageState 的 PLAN_TONES（票 #102，与回滚计划页共用）
 
 // —— 页签（shadcn 注册表当前不可达，Tabs 待 add tabs 后替换为注册表组件；
 // 页面内状态切换沿 T09/T10 原生控件先例）——
@@ -312,7 +307,7 @@ function openMergePreview(resourceId: string): void {
             <div>
                 <h1 class="flex items-center gap-2 text-xl font-semibold">
                     {{ plan ? t('plans.title.' + plan.kind) : t('plans.title') }}
-                    <Badge v-if="plan" :variant="statusTones[plan.status]?.variant ?? 'outline'" :class="statusTones[plan.status]?.class">
+                    <Badge v-if="plan" :variant="toneOf(PLAN_TONES, plan.status).variant">
                         {{ t('plans.status.' + plan.status) }}
                     </Badge>
                 </h1>
@@ -431,7 +426,7 @@ function openMergePreview(resourceId: string): void {
                                     <TableCell>
                                         <div class="flex flex-wrap items-center gap-1">
                                             <Badge variant="outline">{{ t('plans.op.' + op.kind) }}</Badge>
-                                            <Badge v-if="isMergedOp(op.kind)" variant="secondary" class="text-emerald-600 dark:text-emerald-400">
+                                            <Badge v-if="isMergedOp(op.kind)" variant="st-ok" plain>
                                                 {{ t('plans.mergeBadge') }}
                                             </Badge>
                                             <!-- merged_clean 行「查看合并结果」（契约 07 §6，票 #94）：

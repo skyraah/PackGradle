@@ -12,7 +12,7 @@ import type { ChangeDTO, ChangesSummaryDTO } from '../api'
 import { bootstrapped, tasks, triggerRequery, workspaces } from '../stores/syncCache'
 import { showSnackbar } from '../stores/ui'
 import { errText } from '../utils/errors'
-import { PAGE_LIMIT } from '../utils/pageState'
+import { CLASS_TONES, PAGE_LIMIT, toneOf } from '../utils/pageState'
 import { canPrepareSync, prepareSync } from '../utils/plans'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -154,33 +154,8 @@ const activeTask = computed(() => {
 })
 
 // —— 展示辅助 ——
-interface BadgeTone {
-    variant: 'default' | 'secondary' | 'destructive' | 'outline'
-    class?: string
-}
-const OK: BadgeTone = { variant: 'outline', class: 'text-emerald-600 dark:text-emerald-400' }
-const WARN: BadgeTone = { variant: 'outline', class: 'text-amber-600 dark:text-amber-400' }
-const NEUTRAL: BadgeTone = { variant: 'outline' }
-const BUSY: BadgeTone = { variant: 'secondary' }
-const BAD: BadgeTone = { variant: 'destructive' }
-
-const classTones: Record<string, BadgeTone> = {
-    noop: NEUTRAL,
-    converged: OK,
-    adopt_equal: OK,
-    init_choice: WARN,
-    project_to_runtime: BUSY,
-    runtime_to_project: BUSY,
-    remove_runtime_candidate: WARN,
-    remove_project_candidate: WARN,
-    merged_clean: OK,
-    conflict_modify: BAD,
-    conflict_delete_modify: BAD,
-}
-
-function classTone(c: string): BadgeTone {
-    return classTones[c] ?? NEUTRAL
-}
+// 变更分类徽标色调收敛于 utils/pageState 的 CLASS_TONES（票 #102）：判断列
+// 沿原型资源表以 st plain（无圆点）形态呈现，删除冲突等冲突徽标同列同形态。
 
 function humanSize(bytes?: number): string {
     if (!bytes || bytes <= 0) return ''
@@ -210,8 +185,8 @@ const summaryChips = computed(() => {
     ]
 })
 
-// 分类枚举单源：classTones 的键序即筛选下拉的选项序
-const classOptions = Object.keys(classTones)
+// 分类枚举单源：CLASS_TONES 的键序即筛选下拉的选项序
+const classOptions = Object.keys(CLASS_TONES)
 
 const cols = ['changes.colResource', 'changes.colProject', 'changes.colBaseline', 'changes.colRuntime', 'changes.colVerdict']
 
@@ -297,7 +272,7 @@ const kindOptions = ['mod', 'text_file', 'binary_file']
                     <Badge v-for="chip in summaryChips" :key="chip.key" variant="outline" class="text-muted-foreground">
                         {{ t(chip.key) }} {{ chip.count }}
                     </Badge>
-                    <Badge v-if="pageState === 'refreshing'" variant="secondary">{{ t('changes.refreshing') }}</Badge>
+                    <Badge v-if="pageState === 'refreshing'" variant="st-run" plain>{{ t('changes.refreshing') }}</Badge>
                 </div>
 
                 <div class="flex flex-wrap items-center gap-2">
@@ -342,8 +317,8 @@ const kindOptions = ['mod', 'text_file', 'binary_file']
                                             <Badge
                                                 v-for="d in row.diagnostics"
                                                 :key="d.code + (d.args?.join('|') ?? '')"
-                                                variant="outline"
-                                                class="text-amber-600 dark:text-amber-400"
+                                                variant="st-mut"
+                                                plain
                                                 :title="d.detail"
                                             >
                                                 {{ t(d.code, d.args ?? []) }}
@@ -373,10 +348,10 @@ const kindOptions = ['mod', 'text_file', 'binary_file']
                                     </TableCell>
                                     <TableCell>
                                         <div class="flex flex-col items-start gap-1">
-                                            <Badge :variant="classTone(row.classification).variant" :class="classTone(row.classification).class">
+                                            <Badge plain :variant="toneOf(CLASS_TONES, row.classification).variant">
                                                 {{ t('changes.class.' + row.classification) }}
                                             </Badge>
-                                            <Badge v-for="c in row.conflicts" :key="c.kind" variant="destructive">
+                                            <Badge v-for="c in row.conflicts" :key="c.kind" variant="st-err" plain>
                                                 {{ t('changes.conflict.' + c.kind) }}
                                             </Badge>
                                         </div>

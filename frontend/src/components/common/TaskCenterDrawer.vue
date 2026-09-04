@@ -12,6 +12,7 @@ import { tasks, workspaces, triggerRequery } from '../../stores/syncCache'
 import { SyncService } from '../../api'
 import { showSnackbar } from '../../stores/ui'
 import { errText } from '../../utils/errors'
+import { TASK_TONES, toneOf } from '../../utils/pageState'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import {
@@ -65,19 +66,8 @@ function goTo(target: string): void {
     void router.push(target)
 }
 
-// 状态徽标：ok=绿 / 进行中=secondary / 需注意=琥珀 / 异常=destructive（与工作区列表同画板）
-const statusTones: Record<string, { variant: 'default' | 'secondary' | 'destructive' | 'outline'; class?: string }> = {
-    queued: { variant: 'secondary' },
-    running: { variant: 'outline', class: 'text-primary' },
-    succeeded: { variant: 'outline', class: 'text-emerald-600 dark:text-emerald-400' },
-    failed: { variant: 'destructive' },
-    cancelled: { variant: 'outline' },
-    recovery_required: { variant: 'outline', class: 'text-amber-600 dark:text-amber-400' },
-}
-
-function statusTone(status: string) {
-    return statusTones[status] ?? { variant: 'outline' }
-}
+// 状态徽标（UX 原型 ST.task；色调映射收敛于 utils/pageState，票 #102）：
+// running 徽标以 pulse 承接原型呼吸动画。
 
 function progress(task: TaskDTO): number | null {
     if (task.status !== 'running' || task.total <= 0) return null
@@ -149,7 +139,7 @@ async function cancelTask(task: TaskDTO): Promise<void> {
                             </div>
                             <div class="text-muted-foreground mt-0.5 text-xs">{{ activityText(task) }}</div>
                         </div>
-                        <Badge :variant="statusTone(task.status).variant" :class="statusTone(task.status).class">
+                        <Badge :variant="toneOf(TASK_TONES, task.status).variant" :pulse="task.status === 'running'">
                             {{ statusLabel(task.status) }}
                         </Badge>
                     </div>

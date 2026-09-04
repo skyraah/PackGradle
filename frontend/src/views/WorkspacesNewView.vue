@@ -15,6 +15,7 @@ import type {
 } from '../api'
 import { showSnackbar } from '../stores/ui'
 import { errText } from '../utils/errors'
+import { checkTone } from '../utils/pageState'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
@@ -114,10 +115,7 @@ async function create() {
     }
 }
 
-function checkVariant(c: PreparationCheckDTO): 'default' | 'destructive' | 'secondary' {
-    if (c.passed) return 'default'
-    return c.severity === 'blocking' ? 'destructive' : 'secondary'
-}
+// 预检查徽标色调收敛于 utils/pageState 的 checkTone（票 #102，与重绑页共用）
 </script>
 
 <template>
@@ -265,7 +263,7 @@ function checkVariant(c: PreparationCheckDTO): 'default' | 'destructive' | 'seco
                             <TableRow v-for="c in checks" :key="c.code + (c.args?.[0] ?? '')">
                                 <TableCell class="font-medium">{{ t(c.code, c.args ?? []) }}</TableCell>
                                 <TableCell>
-                                    <Badge :variant="checkVariant(c)">
+                                    <Badge :variant="checkTone(c.passed, c.severity).variant">
                                         {{ c.passed ? t('workspacesNew.checkPassed') : c.severity === 'blocking' ? t('workspacesNew.checkBlocking') : t('workspacesNew.checkWarning') }}
                                     </Badge>
                                 </TableCell>

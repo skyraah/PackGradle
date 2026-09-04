@@ -21,7 +21,7 @@ const page = useEndpointPage({
     register: (rootPath) => ProjectService.RegisterProject({ root_path: rootPath }),
     health: (endpointID) => ProjectService.GetProjectHealth(endpointID),
 })
-const { registered, loadingList, registering, health, loadRegistered, register, checkHealth, healthOf, healthBadgeVariant } = page
+const { registered, loadingList, registering, health, loadRegistered, register, checkHealth, healthOf, healthBadgeTone } = page
 
 const candidates = ref<ProjectCandidateDTO[]>([])
 const parentDir = ref('')
@@ -90,7 +90,7 @@ async function registerFromPath(rootPath: string) {
                                     <span class="text-muted-foreground text-xs">{{ t('endpoints.health.checking') }}</span>
                                 </template>
                                 <template v-else-if="healthOf(ep.id)">
-                                    <Badge :variant="healthBadgeVariant(healthOf(ep.id)!.status)">
+                                    <Badge :variant="healthBadgeTone(healthOf(ep.id)!.status).variant">
                                         {{ t('endpoints.health.' + healthOf(ep.id)!.status) }}
                                     </Badge>
                                 </template>
