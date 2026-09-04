@@ -375,6 +375,14 @@ func validChoice(kind model.ConflictKind, choice model.ResolutionChoice) bool {
 	return false
 }
 
+// ResourceDirection 是 resourceDirection 的导出口（票 #100，ADR-0013 §3）：
+// 工作区 diff_state、changes 页、QuickUpdate 无差异判定与 verifyRescan 的
+// ignore 过滤必须与计划构建完全同口径，统一经本函数判定，杜绝「计划静默
+// 但差异面显示」的裂缝。
+func ResourceDirection(policy model.MappingPolicy, project, runtime model.ObservedSnapshot, id model.ResourceID) string {
+	return resourceDirection(policy, project, runtime, id)
+}
+
 // resourceDirection 查资源观察命中的映射规则方向：project 侧观察优先，
 // 其 PolicyID 未命中规则时回退 runtime 侧；找不到规则视为 bidirectional。
 func resourceDirection(policy model.MappingPolicy, project, runtime model.ObservedSnapshot, id model.ResourceID) string {

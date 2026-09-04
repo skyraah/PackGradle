@@ -209,7 +209,8 @@ func (a *App) waitScanTerminal(ctx context.Context, taskID string) error {
 // diffHasActionableChange 判定双端最新快照相对基线是否存在可行动差异（无差异
 // 短路的判定边界）：与 GetWorkspace 的 diff_state=clean 同判——无冲突且全部
 // diff 为 noop/converged 即无差异（adopt_equal 属初始化语境的可行动差异，走
-// 计划链完成初始化）。
+// 计划链完成初始化）；direction=ignore 的资源与计划构建同口径剔除（票 #100，
+// ADR-0013 §3），否则忽略资源恒 actionable、快速更新永不短路。
 func (a *App) diffHasActionableChange(ctx context.Context, rel model.Relation, snapP, snapR model.ObservedSnapshot) (bool, error) {
 	var base *model.SyncBaseline
 	if rel.HeadBaselineID != "" {
@@ -223,10 +224,20 @@ func (a *App) diffHasActionableChange(ctx context.Context, rel model.Relation, s
 	if err != nil {
 		return false, err
 	}
-	if len(result.Conflicts) > 0 {
-		return true, nil
+	policySet, err := a.deps.Mappings.GetPolicy(ctx, rel.RelationID)
+	if err != nil {
+		return false, err
+	}
+	ignored := ignoreDirectionFilter(policySet, snapP, snapR)
+	for _, c := range result.Conflicts {
+		if !ignored(c.ResourceID) {
+			return true, nil
+		}
 	}
 	for _, d := range result.Diffs {
+		if ignored(d.ResourceID) {
+			continue
+		}
 		if d.Classification != diff.ClassNoop && d.Classification != diff.ClassConverged {
 			return true, nil
 		}
