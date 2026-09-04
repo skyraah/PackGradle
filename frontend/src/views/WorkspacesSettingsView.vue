@@ -6,6 +6,8 @@
 // 授权模式语义（CONTEXT.md 词条 + ADR-0005 §4）：开启后非冲突操作免逐次确认
 //（quick_update 编排免确认直达）；冲突与删除永不适用；恢复所需期间暂停生效、
 // 开关值保留（入口由后端 err.recovery.in_progress 门禁挡）；回滚永远人工确认。
+// 票 #107：原型无本页画板，按全局设置页 SET-01 的分区语言现场补设计——全宽分区 +
+// 顶边框分隔 + 150px 标签行；开关读写行为不变。入口移对象头「更多」菜单由 #105 落地。
 import { computed, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useRoute, useRouter } from 'vue-router'
@@ -15,7 +17,6 @@ import { showSnackbar } from '../stores/ui'
 import { errText } from '../utils/errors'
 import { availabilityReasonText, canQuickUpdate } from '../utils/plans'
 import { Button } from '@/components/ui/button'
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Switch } from '@/components/ui/switch'
 
 const { t } = useI18n()
@@ -58,9 +59,9 @@ async function setAuthorized(enabled: boolean): Promise<void> {
 </script>
 
 <template>
-    <div class="mx-auto flex w-full max-w-4xl flex-col gap-4 p-4 text-foreground">
+    <div class="mx-auto flex w-full max-w-4xl flex-col p-4 text-foreground">
         <!-- 头部 -->
-        <div class="flex items-start justify-between gap-4">
+        <div class="mb-3.5 flex items-start justify-between gap-4">
             <div>
                 <h1 class="page-title">{{ t('workspaces.settings.title') }}</h1>
                 <p class="text-muted-foreground mt-1 text-sm">
@@ -78,30 +79,28 @@ async function setAuthorized(enabled: boolean): Promise<void> {
         </div>
 
         <!-- 工作区不存在 -->
-        <Card v-if="relationMissing">
-            <CardContent class="flex flex-col items-start gap-3 py-6">
+        <section v-if="relationMissing" class="pb-1.5 pt-1">
+            <div class="flex flex-wrap items-center gap-3.5 py-[9px]">
                 <span class="text-destructive text-sm">{{ t('workspaces.settings.relationMissing') }}</span>
                 <Button variant="outline" size="sm" @click="router.push('/workspaces')">
                     {{ t('workspaces.settings.backToList') }}
                 </Button>
-            </CardContent>
-        </Card>
+            </div>
+        </section>
 
         <!-- 授权模式（工作区详情设置区，契约 06 §9；开关与投影同源，恢复期值保留） -->
-        <Card v-else-if="wsRow">
-            <CardHeader>
-                <CardTitle>{{ t('workspaces.settings.authTitle') }}</CardTitle>
-                <CardDescription>{{ t('workspaces.settings.authHint') }}</CardDescription>
-            </CardHeader>
-            <CardContent class="flex flex-col gap-3">
-                <div class="flex items-center justify-between gap-4">
-                    <div class="text-sm font-medium">{{ t('workspaces.settings.authLabel') }}</div>
-                    <Switch :model-value="wsRow.authorized_apply" :disabled="saving" @update:model-value="setAuthorized" />
-                </div>
-                <div class="text-muted-foreground text-xs">
+        <section v-else-if="wsRow" class="pb-1.5 pt-1">
+            <h2 class="text-[14.5px] font-bold leading-tight">{{ t('workspaces.settings.authTitle') }}</h2>
+            <p class="text-muted-foreground mb-3 mt-0.5 text-xs">{{ t('workspaces.settings.authHint') }}</p>
+            <div class="flex flex-wrap items-center gap-3.5 py-[9px]">
+                <span class="w-[150px] flex-none text-[12.5px] text-muted-foreground">{{ t('workspaces.settings.authLabel') }}</span>
+                <div class="min-w-[200px] flex-1 text-xs text-muted-foreground">
                     {{ t('workspaces.settings.entryPrefix') }}{{ quickUpdateState }}
                 </div>
-            </CardContent>
-        </Card>
+                <div class="flex flex-none items-center gap-2">
+                    <Switch :model-value="wsRow.authorized_apply" :disabled="saving" @update:model-value="setAuthorized" />
+                </div>
+            </div>
+        </section>
     </div>
 </template>

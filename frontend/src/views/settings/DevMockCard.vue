@@ -1,10 +1,10 @@
 <script setup lang="ts">
-// 设置页 · Mock 数据层卡片：仅开发构建装载（SettingsView 以 __DEV__ 门控异步导入，
+// 设置页 · Mock 数据层分区：仅开发构建装载（SettingsView 以 __DEV__ 门控异步导入，
 // 生产构建此组件连同 mock.* 文案引用整体裁剪）。切换需确认——确认后整页刷新重载缓存。
+// 票 #107：随设置页去卡片化，改为与画板 SET-01 同语言的全宽分区行（150px 标签）。
 import { ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { isMockEnabled, setMockEnabled } from '../../api'
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Switch } from '@/components/ui/switch'
 import {
     AlertDialog,
@@ -37,16 +37,16 @@ function confirmMock() {
 </script>
 
 <template>
-    <Card>
-        <CardHeader>
-            <CardTitle>{{ t('settings.devTitle') }}</CardTitle>
-            <CardDescription>{{ t('mock.hint') }}</CardDescription>
-        </CardHeader>
-        <CardContent class="flex items-center justify-between gap-4">
-            <div class="text-sm font-medium">{{ t('mock.switchLabel') }}</div>
-            <Switch :model-value="mockOn" @update:model-value="askMock" />
-        </CardContent>
-    </Card>
+    <section class="border-t border-border pb-1.5 pt-[18px]">
+        <h2 class="text-[14.5px] font-bold leading-tight">{{ t('settings.devTitle') }}</h2>
+        <p class="text-muted-foreground mb-3 mt-0.5 text-xs">{{ t('mock.hint') }}</p>
+        <div class="flex flex-wrap items-center gap-3.5 py-[9px]">
+            <span class="w-[150px] flex-none text-[12.5px] text-muted-foreground">{{ t('mock.switchLabel') }}</span>
+            <div class="flex flex-none items-center gap-2">
+                <Switch :model-value="mockOn" @update:model-value="askMock" />
+            </div>
+        </div>
+    </section>
 
     <!-- Mock 切换确认（切换后整页刷新） -->
     <AlertDialog v-model:open="mockDialog">
