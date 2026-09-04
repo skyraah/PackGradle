@@ -19,10 +19,11 @@ import type { DiagnosticDTO, MappingRuleDTO, PolicyDTO, WorkspaceDTO } from '../
 import { bootstrapped, triggerRequery, workspaces } from '../stores/syncCache'
 import { showSnackbar } from '../stores/ui'
 import { errorCode, errText } from '../utils/errors'
-import { DIFF_TONES, HEALTH_TONES, toneOf } from '../utils/pageState'
+import { DIFF_TONES, HEALTH_TONES, latestScanText, toneOf } from '../utils/pageState'
 import { availabilityReasonText, canQuickUpdate } from '../utils/plans'
+import { useWorkspaceHeadTabs } from '../composables/useWorkspaceHeadTabs'
 import WorkspaceObjectHead from '../components/common/WorkspaceObjectHead.vue'
-import type { HeadBadge, HeadMenuItem, HeadTab } from '../components/common/WorkspaceObjectHead.vue'
+import type { HeadBadge, HeadMenuItem } from '../components/common/WorkspaceObjectHead.vue'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
@@ -34,7 +35,6 @@ const route = useRoute()
 const router = useRouter()
 
 const relationID = computed(() => String(route.params.id ?? ''))
-const changesRoute = computed(() => '/workspaces/' + relationID.value + '/changes')
 
 // —— 策略查询快照（编辑草稿独立保存，保存成功前不回写）——
 const policy = ref<PolicyDTO | null>(null)
@@ -194,19 +194,11 @@ const adaptersText = computed(() => {
 const lastScanText = computed(() => {
     const w = wsRow.value
     if (!w) return ''
-    const stamps = [w.latest_project_snapshot?.captured_at, w.latest_runtime_snapshot?.captured_at]
-        .filter((s): s is string => !!s)
-        .map(s => Date.parse(s))
-        .filter(v => !Number.isNaN(v))
-    if (!stamps.length) return '—'
-    return new Date(Math.max(...stamps)).toLocaleString()
+    return latestScanText(w.latest_project_snapshot?.captured_at, w.latest_runtime_snapshot?.captured_at)
 })
 
-// 页签「变化 | 受管范围」：受管范围页激活（画板 M-01，票 #108）
-const tabs = computed<HeadTab[]>(() => [
-    { value: 'changes', label: t('objHead.tab.changes'), to: changesRoute.value },
-    { value: 'mappings', label: t('objHead.tab.mappings') },
-])
+// 页签「变化 | 受管范围 | 历史」三常驻（拍板 Q8-a）：受管范围页激活（画板 M-01，票 #108）
+const tabs = useWorkspaceHeadTabs(() => relationID.value, 'mappings')
 
 // 主操作 = 编辑受管范围（画板 M-01 注记：编辑能力已实现时才出现入口，P1 只读表为默认态；
 // 编辑中主操作让位给页内保存/放弃操作条）

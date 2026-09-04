@@ -17,7 +17,7 @@ import { bootstrapped, bootstrapError, retryBootstrap, tasks, triggerRequery, wo
 import { showSnackbar, taskDrawerOpen } from '../stores/ui'
 import { errText } from '../utils/errors'
 import { availabilityReasonText, canPrepareSync, canRebind, prepareSync } from '../utils/plans'
-import { DIFF_TONES, HEALTH_TONES, toneOf, type BadgeTone } from '../utils/pageState'
+import { DIFF_TONES, HEALTH_TONES, latestScanText, toneOf, type BadgeTone } from '../utils/pageState'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
@@ -103,7 +103,7 @@ const rows = computed<WorkspaceRow[]>(() =>
             // 扫描与基线信息由行末主操作与 #105 变化页指标条承接）
             healthTone: toneOf(HEALTH_TONES, w.relation.health),
             diffTone: toneOf(DIFF_TONES, w.state.diff_state),
-            activity: lastActivity(w),
+            activity: latestScanText(w.latest_project_snapshot?.captured_at, w.latest_runtime_snapshot?.captured_at),
             action: rowActionFor(w, task),
         }
     }),
@@ -132,15 +132,6 @@ function taskPercent(task: TaskDTO): number | null {
 
 function taskKindLabel(task: TaskDTO): string {
     return t('workspaces.taskKind.' + task.kind)
-}
-
-function lastActivity(w: WorkspaceDTO): string {
-    const stamps = [w.latest_project_snapshot?.captured_at, w.latest_runtime_snapshot?.captured_at]
-        .filter((s): s is string => !!s)
-        .map(s => Date.parse(s))
-        .filter(v => !Number.isNaN(v))
-    if (!stamps.length) return '—'
-    return new Date(Math.max(...stamps)).toLocaleString()
 }
 
 // —— 行操作（动作成功后立即触发一轮受控重查；后续事件继续经管线刷新）——

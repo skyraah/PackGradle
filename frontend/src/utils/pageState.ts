@@ -194,3 +194,15 @@ export function formatTime(s?: string): string {
     const at = Date.parse(s)
     return Number.isNaN(at) ? s : new Date(at).toLocaleString()
 }
+
+// latestScanText 最近扫描时间文案：取双端最新快照 captured_at 的最大值渲染为本地
+// 时间，无有效时间戳显「—」（原为 workspaces 列表/变化/历史/受管范围四视图各自
+// 复制的同形代码，票 #111 评审收敛于此）。
+export function latestScanText(projectAt?: string, runtimeAt?: string): string {
+    const stamps = [projectAt, runtimeAt]
+        .filter((s): s is string => !!s)
+        .map(s => Date.parse(s))
+        .filter(v => !Number.isNaN(v))
+    if (!stamps.length) return '—'
+    return new Date(Math.max(...stamps)).toLocaleString()
+}

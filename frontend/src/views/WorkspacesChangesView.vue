@@ -36,13 +36,15 @@ import {
     HEALTH_TONES,
     PAGE_LIMIT,
     formatTime,
+    latestScanText,
     toneOf,
     verdictClass,
     verdictKeyOf,
 } from '../utils/pageState'
 import { availabilityReasonText, canPrepareSync, canQuickUpdate, prepareSync } from '../utils/plans'
+import { useWorkspaceHeadTabs } from '../composables/useWorkspaceHeadTabs'
 import WorkspaceObjectHead from '../components/common/WorkspaceObjectHead.vue'
-import type { HeadBadge, HeadMenuItem, HeadTab } from '../components/common/WorkspaceObjectHead.vue'
+import type { HeadBadge, HeadMenuItem } from '../components/common/WorkspaceObjectHead.vue'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
@@ -223,19 +225,11 @@ const adaptersText = computed(() => {
 const lastScanText = computed(() => {
     const w = wsRow.value
     if (!w) return ''
-    const stamps = [w.latest_project_snapshot?.captured_at, w.latest_runtime_snapshot?.captured_at]
-        .filter((s): s is string => !!s)
-        .map(s => Date.parse(s))
-        .filter(v => !Number.isNaN(v))
-    if (!stamps.length) return '—'
-    return new Date(Math.max(...stamps)).toLocaleString()
+    return latestScanText(w.latest_project_snapshot?.captured_at, w.latest_runtime_snapshot?.captured_at)
 })
 
-// 页签「变化 | 受管范围」：跨页导航，活动态各页自持（本页恒 changes）
-const tabs = computed<HeadTab[]>(() => [
-    { value: 'changes', label: t('objHead.tab.changes') },
-    { value: 'mappings', label: t('objHead.tab.mappings'), to: '/workspaces/' + relationID.value + '/mappings' },
-])
+// 页签「变化 | 受管范围 | 历史」三常驻（拍板 Q8-a）：跨页导航，活动态各页自持（本页恒 changes）
+const tabs = useWorkspaceHeadTabs(() => relationID.value, 'changes')
 
 // —— 主操作（§7.1 行操作优先级，唯一主操作随工作区状态切换）——
 const preparing = ref(false)

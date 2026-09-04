@@ -46,7 +46,8 @@ import {
     toneOf,
     type BadgeTone,
 } from '../utils/pageState'
-import RestoreConfirmDialog, { type ConfirmRequirementVM } from '../components/common/RestoreConfirmDialog.vue'
+import RestoreConfirmDialog from '../components/common/RestoreConfirmDialog.vue'
+import type { ConfirmRequirementVM } from '../components/common/DangerConfirmDialog.vue'
 import {
     AlertDialog,
     AlertDialogCancel,
