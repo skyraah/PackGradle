@@ -18,6 +18,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	syncapp "packgradle/internal/application/sync"
 	"packgradle/internal/application/view"
@@ -413,5 +414,172 @@ func TestIgnoreSurvivesRebind(t *testing.T) {
 		if c.ResourceID == t100IgnoreTarget {
 			t.Fatal("忽略语义跨重绑存活：被忽略资源不应重新进入初始化冲突")
 		}
+	}
+}
+
+// TestModIgnoreResolutionLeavesNoRule C3（双轴评审）：ignoreTargetOf 对合成
+// 不可达目标静默 continue 是刻意的（实践上仅 mod 可达——编译器禁文件规则入
+// mods/ 前缀，ADR-0013 §4）。契约：mod 资源选忽略 → 无规则落库、无错误、
+// 提交成功，决议按普通 skip 语义吸收进基线。注意 mod 资源 ID 是 `mod:` 前缀
+//（不是 `mods/` 路径）。夹具复用 t06/t87 的 packwiz 链（makeFixtures 含 mod
+// 冲突）；提交链取零操作形态（三个 mod 冲突全选忽略——mod 跨侧拷贝无下载
+// 直链时引擎不可执行，恰好证明 mod 忽略只走吸收语义）。
+func TestModIgnoreResolutionLeavesNoRule(t *testing.T) {
+	projectRoot, instanceDir, dataRoot := makeFixtures(t)
+	app, _ := newStack(t, dataRoot)
+	ctx := context.Background()
+	rel := mustPrepareAndCreate(t, app, projectRoot, instanceDir)
+	scanAndWait(t, app, rel.RelationID)
+
+	ws, err := app.GetWorkspace(ctx, rel.RelationID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	draft, err := app.PrepareSync(ctx, view.PrepareSyncInput{
+		RelationID:             rel.RelationID,
+		RelationRevision:       ws.State.RelationRevision,
+		InputProjectSnapshotID: ws.LatestProjectSnapshot.SnapshotID,
+		InputRuntimeSnapshotID: ws.LatestRuntimeSnapshot.SnapshotID,
+	})
+	if err != nil {
+		t.Fatalf("PrepareSync: %v", err)
+	}
+	resolutions := make([]model.Resolution, 0, len(draft.Conflicts))
+	for _, c := range draft.Conflicts {
+		resolutions = append(resolutions, model.Resolution{ResourceID: c.ResourceID, Choice: model.ChoiceSkip})
+	}
+	resolved, err := app.ResolvePlan(ctx, view.ResolvePlanInput{PlanID: draft.PlanID, Resolutions: resolutions})
+	if err != nil {
+		t.Fatalf("ResolvePlan: %v", err)
+	}
+	tv, err := app.ConfirmPlan(ctx, view.ConfirmPlanInput{PlanID: resolved.PlanID})
+	if err != nil {
+		t.Fatalf("ConfirmPlan: %v", err)
+	}
+	final := waitTask(t, app, tv.TaskID) // 任一失败终态都会 Fatal → 「无错误」契约
+	if final.Outcome != model.TaskOutcomePartial {
+		t.Fatalf("mod 忽略决议提交 outcome = %s，期望 partial（skip 语义计入剩余差异）", final.Outcome)
+	}
+
+	// 无 ignore 规则落库、revision 不动（策略零写入）
+	if n := t100IgnoreDirectionRuleCount(t, app, rel.RelationID); n != 0 {
+		t.Fatalf("mod 忽略决议不应合成规则，发现 %d 条", n)
+	}
+	if got := mustWorkspace(t, app, rel.RelationID).State.RelationRevision; got != 1 {
+		t.Fatalf("mod 忽略决议后 revision = %d，期望不动（1）", got)
+	}
+}
+
+// TestGlobbedExactPrefixRuleFallsBackToPlainSkip C2（双轴评审）端到端：用户
+// 自建「同前缀带 glob」规则（include 不命中目标 → 扫描口径下不治理该文件，
+// direction=ignore 做成最尖锐形态）存在时，忽略决议不翻转该规则、不并列合成
+// 新规则（等前缀并列触发 diag.mapping.collision）——该资源退回普通 skip 语义
+// 留在差异面，策略零写入（revision 不动）。
+func TestGlobbedExactPrefixRuleFallsBackToPlainSkip(t *testing.T) {
+	projectRoot, instanceDir, dataRoot := makeApplyFixtures(t)
+	app, _ := newStack(t, dataRoot)
+	ctx := context.Background()
+	rel := mustRelationForApply(t, app, projectRoot, instanceDir)
+
+	// 注入用户规则：前缀恰等 b.toml 路径 + include glob（不命中 b.toml）
+	pol, err := app.GetMappingPolicy(ctx, rel.RelationID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rules := append([]model.MappingRule{}, pol.Rules...)
+	rules = append(rules, model.MappingRule{
+		ID: "user-b-glob", ResourceKind: "text_file",
+		ProjectPrefix: t100IgnorePath, RuntimePrefix: t100IgnorePath,
+		Include: []string{"bak.toml"}, Direction: "ignore",
+		Materialization: "copy", MergePolicy: "manual", RuntimeLocalPolicy: "exclude",
+	})
+	pv, err := app.UpdateMappingPolicy(ctx, view.UpdateMappingPolicyInput{
+		RelationID: rel.RelationID, ExpectedRevision: pol.RelationRevision, Rules: rules,
+	})
+	if err != nil {
+		t.Fatalf("UpdateMappingPolicy(注入带 glob 用户规则): %v", err)
+	}
+	rel.Revision = pv.RelationRevision
+
+	mustScanAndWait(t, app, rel.RelationID)
+
+	// C2 计划面口径的间接锁定：b.toml 冲突仍进初始化计划（若快路径误判
+	// ignore，该冲突会被整体剔除、决议缺失）
+	choices := map[model.ResourceID]model.ResolutionChoice{
+		"file:config/a.toml": model.ChoiceInitializeFromProject,
+		t100IgnoreTarget:     model.ChoiceSkip,
+		"file:config/c.toml": model.ChoiceInitializeFromProject,
+	}
+	resolved := mustResolveApplyPlan(t, app, rel, choices)
+	tv := mustConfirm(t, app, resolved.PlanID)
+	final := waitApplyTask(t, app, tv.TaskID)
+	if final.Status != model.TaskStatusSucceeded {
+		t.Fatalf("提交未成功: %s %+v", final.Status, final.Problem)
+	}
+
+	// 规则面零变化：无合成规则、用户规则原样（方向与 glob 未被触碰）
+	after, err := app.GetMappingPolicy(ctx, rel.RelationID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(after.Rules) != len(rules) {
+		t.Fatalf("提交后规则数 = %d，期望 %d（不翻转、不合成）", len(after.Rules), len(rules))
+	}
+	for _, r := range after.Rules {
+		if r.ID == "user-b-glob" {
+			if r.Direction != "ignore" || len(r.Include) != 1 || r.Include[0] != "bak.toml" {
+				t.Fatalf("用户规则被触碰: direction=%s include=%v", r.Direction, r.Include)
+			}
+		}
+	}
+	// 策略零写入：revision 不动（坑 A 不触发，C1 同款语义）
+	if got := mustWorkspace(t, app, rel.RelationID).State.RelationRevision; got != rel.Revision {
+		t.Fatalf("提交后 revision = %d，期望不动（%d，零 SavePolicy）", got, rel.Revision)
+	}
+
+	// 资源留在差异面（普通 skip 语义吸收后 noop 行仍在）
+	if row, found := t100ChangesRow(t, app, rel.RelationID, t100IgnoreTarget); !found || row.Classification != "noop" {
+		t.Fatalf("带 glob 回退后资源应留在差异面: found=%v classification=%s", found, row.Classification)
+	}
+}
+
+// TestExpiredPlanWithIgnoreResolutionRejected T1（双轴评审，验收 4 后半直接
+// 用例）：含忽略决议的 resolved 计划过期后 ConfirmPlan 被拒——决议只是草稿
+// 意图（ADR-0013 §0 Q11-a），不留任何规则落库、revision 不动。过期注入沿
+// t94 先例：假时钟闭包越过计划 TTL（既有过期机制，ResolvePlan 时点重置 TTL）。
+func TestExpiredPlanWithIgnoreResolutionRejected(t *testing.T) {
+	projectRoot, instanceDir, dataRoot := makeApplyFixtures(t)
+	now := time.Now()
+	app, _ := newStack(t, dataRoot, func(d *syncapp.AppDeps) { d.Now = func() time.Time { return now } })
+	ctx := context.Background()
+	rel := mustRelationForApply(t, app, projectRoot, instanceDir)
+
+	choices := map[model.ResourceID]model.ResolutionChoice{
+		"file:config/a.toml": model.ChoiceInitializeFromProject,
+		t100IgnoreTarget:     model.ChoiceSkip,
+		"file:config/c.toml": model.ChoiceInitializeFromProject,
+	}
+	resolved := mustResolveApplyPlan(t, app, rel, choices)
+
+	// 越过计划 TTL（planTTL=15m）→ ConfirmPlan 的过期门拒绝
+	now = now.Add(16 * time.Minute)
+	if _, err := app.ConfirmPlan(ctx, view.ConfirmPlanInput{PlanID: resolved.PlanID}); errCode(t, err) != syncapp.CodePlanExpired {
+		t.Fatalf("过期计划确认应被拒 err.plan.expired: %v", err)
+	}
+
+	// 决议蒸发：无 ignore 规则落库、revision 不动
+	if n := t100IgnoreDirectionRuleCount(t, app, rel.RelationID); n != 0 {
+		t.Fatalf("过期计划不得留下任何 ignore 规则，发现 %d 条", n)
+	}
+	if got := mustWorkspace(t, app, rel.RelationID).State.RelationRevision; got != 1 {
+		t.Fatalf("过期拒绝后 revision = %d，期望不动（1）", got)
+	}
+	// 读取投影按过期呈现（契约 05 §5）
+	got, err := app.GetPlan(ctx, resolved.PlanID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Status != "expired" {
+		t.Fatalf("过期计划投影 status = %s，期望 expired", got.Status)
 	}
 }
