@@ -261,6 +261,21 @@ const recordedChoices = computed(() => {
     return m
 })
 
+// 回显本地化（票 #111）：后端存 snake_case 枚举（ResolutionChoice），i18n 键为
+// camelCase（plans.choice.*），显式映射防两套拼写漂移；映射外取值（CLI 侧决议）
+// 回显原值，不渲染键名。
+const CHOICE_LABEL_KEYS: Record<string, string> = {
+    initialize_from_project: 'plans.choice.initializeFromProject',
+    initialize_from_runtime: 'plans.choice.initializeFromRuntime',
+    take_project: 'plans.choice.takeProject',
+    take_runtime: 'plans.choice.takeRuntime',
+}
+
+function choiceLabel(value: string): string {
+    const key = CHOICE_LABEL_KEYS[value]
+    return key ? t(key) : value
+}
+
 const unresolvedCount = computed(() => {
     const cs = plan.value?.conflicts ?? []
     return cs.filter(c => !choices.value[c.resource_id]).length
@@ -675,7 +690,7 @@ function openMergePreview(resourceId: string): void {
                                         </RadioGroup>
                                         <div v-else class="text-muted-foreground text-xs">
                                             <template v-if="recordedChoices.has(c.resource_id)">
-                                                {{ t('plans.choiceApplied', [t('plans.choice.' + recordedChoices.get(c.resource_id))]) }}
+                                                {{ t('plans.choiceApplied', [choiceLabel(recordedChoices.get(c.resource_id) ?? '')]) }}
                                                 · {{ t('plans.choiceRecorded') }}
                                             </template>
                                             <template v-else>{{ t('plans.choiceRecorded') }}</template>
