@@ -14,6 +14,10 @@ const snackbarMsg = ref('')
 const snackbarTone = ref<NoticeTone>('info')
 const snackbarTimeout = ref(3200)
 const current = ref<Notice | null>(null)
+
+// 任务中心抽屉的全局开合：壳层（App.vue）持有渲染，视图内的「查看任务」入口
+// （UX 原型 §7.1 行操作优先级链，票 #104）与之共用同一状态
+export const taskCenterOpen = ref(false)
 const queue: Notice[] = []
 let transitionTimer: ReturnType<typeof setTimeout> | undefined
 
