@@ -22,6 +22,7 @@ export type {
     ChangesSummaryDTO,
     CommitChangeDTO,
     CommitDTO,
+    CommitDecisionDTO,
     CommitPageDTO,
     CommitSkippedDTO,
     CommitSummaryDTO,

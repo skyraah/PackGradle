@@ -176,6 +176,8 @@ func (a *App) GetCommit(ctx context.Context, relationID, commitID string) (view.
 		PlanID:        c.PlanID,
 		Changes:       changes,
 		Skipped:       commitSkippedView(c.Summary),
+		Ignored:       commitDecisionsView(c.Summary, "ignored"),
+		Manual:        commitDecisionsView(c.Summary, "manual"),
 	}, nil
 }
 
@@ -205,6 +207,27 @@ func commitSkippedView(summary json.RawMessage) []view.CommitSkippedView {
 		out = append(out, view.CommitSkippedView{
 			ResourceID: s.ResourceID, ReasonCode: s.ReasonCode, ReasonArgs: args,
 		})
+	}
+	return out
+}
+
+// commitDecisionsView 从提交头 summary JSON 解析用户决议清单（ADR-0013 §1，
+// 票 #100）：key 取 "ignored"（已忽略）/ "manual"（手动处理）。解析失败/旧行
+// 无该记录返回空切片——摘要与 skipped 同为诊断性数据，解析缺陷不阻断提交
+// 详情读取。
+func commitDecisionsView(summary json.RawMessage, key string) []view.CommitDecisionView {
+	if len(summary) == 0 {
+		return []view.CommitDecisionView{}
+	}
+	var parsed map[string][]struct {
+		ResourceID string `json:"resource_id"`
+	}
+	if err := json.Unmarshal(summary, &parsed); err != nil {
+		return []view.CommitDecisionView{}
+	}
+	out := make([]view.CommitDecisionView, 0, len(parsed[key]))
+	for _, d := range parsed[key] {
+		out = append(out, view.CommitDecisionView{ResourceID: d.ResourceID})
 	}
 	return out
 }
