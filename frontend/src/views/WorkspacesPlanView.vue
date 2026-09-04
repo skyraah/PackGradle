@@ -136,17 +136,29 @@ watch(planID, () => {
     tab.value = 'operations'
 })
 
-// P1 choose_side：modify_modify/delete_modify 二选一，initialize_choice 从存在侧初始化
+// 四选（票 #100，ADR-0013 §0 Q1-c）：三类冲突统一「择侧 ×2 + 忽略 + 手动处理」；
+// 忽略按资源身份隐藏——mod 资源不提供忽略（编译器禁文件规则入 mods/ 前缀，
+// 无法合成规则；resource_id 的 mod: 前缀即 mod 身份）。mod 冲突仍有择侧 +
+// 手动处理。本判断无前端单测设施：验收 6 由项目口径（vue-tsc + 构建 + L1
+// 走查）承接——走查项 = mod 冲突卡不出现「忽略此文件」选项。
 function choiceOptions(c: ConflictDTO): { value: string; labelKey: string; disabled?: boolean }[] {
+    const ignore = c.resource_id.startsWith('mod:')
+        ? []
+        : [{ value: 'skip', labelKey: 'plans.choice.ignore' }]
+    const manual = [{ value: 'manual', labelKey: 'plans.choice.manual' }]
     if (c.kind === 'initialize_choice') {
         return [
             { value: 'initialize_from_project', labelKey: 'plans.choice.initializeFromProject', disabled: !c.project },
             { value: 'initialize_from_runtime', labelKey: 'plans.choice.initializeFromRuntime', disabled: !c.runtime },
+            ...ignore,
+            ...manual,
         ]
     }
     return [
         { value: 'take_project', labelKey: 'plans.choice.takeProject' },
         { value: 'take_runtime', labelKey: 'plans.choice.takeRuntime' },
+        ...ignore,
+        ...manual,
     ]
 }
 
@@ -501,11 +513,21 @@ function openMergePreview(resourceId: string): void {
                                     </div>
                                 </details>
                                 <!-- 决议控件：仅 draft 且可推进时；计划内容本身不可编辑 -->
-                                <div v-if="canResolve" class="flex flex-wrap items-center gap-2">
-                                    <label v-for="opt in choiceOptions(c)" :key="opt.value" class="flex items-center gap-1 text-sm" :class="opt.disabled ? 'text-muted-foreground cursor-not-allowed' : 'cursor-pointer'">
-                                        <input v-model="choices[c.resource_id]" type="radio" :name="'choice-' + c.resource_id" :value="opt.value" :disabled="opt.disabled" class="accent-current" />
-                                        {{ t(opt.labelKey) }}
-                                    </label>
+                                <div v-if="canResolve" class="flex flex-col gap-1">
+                                    <div class="flex flex-wrap items-center gap-2">
+                                        <label v-for="opt in choiceOptions(c)" :key="opt.value" class="flex items-center gap-1 text-sm" :class="opt.disabled ? 'text-muted-foreground cursor-not-allowed' : 'cursor-pointer'">
+                                            <input v-model="choices[c.resource_id]" type="radio" :name="'choice-' + c.resource_id" :value="opt.value" :disabled="opt.disabled" class="accent-current" />
+                                            {{ t(opt.labelKey) }}
+                                        </label>
+                                    </div>
+                                    <!-- 选中忽略/手动处理时的后果提示（票 #100，ADR-0013 §1）：
+                                         忽略=随提交持久移出受管范围；手动处理=本次吸收进基线 -->
+                                    <div
+                                        v-if="choices[c.resource_id] === 'skip' || choices[c.resource_id] === 'manual'"
+                                        class="text-muted-foreground text-xs"
+                                    >
+                                        {{ t('plans.choiceHint.' + choices[c.resource_id]) }}
+                                    </div>
                                 </div>
                                 <div v-else-if="plan.status === 'resolved'" class="text-muted-foreground text-xs">
                                     {{ t('plans.choiceRecorded') }}

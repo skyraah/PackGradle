@@ -88,6 +88,46 @@ const cols = ['history.commit.colResource', 'history.commit.colProject', 'histor
 // 同一套键；缺键渲染键名本身便于发现遗漏）。——
 const skipped = computed(() => commit.value?.skipped ?? [])
 
+// —— 用户决议清单（票 #100，ADR-0013 §1）：「已忽略」（随提交合成 ignore 规则，
+// 恢复入口在受管范围页）与「手动处理」（本次吸收进基线）分列展示——与上方
+// skipped 的物化取数剔除项是两个清单。——
+const ignored = computed(() => commit.value?.ignored ?? [])
+const manual = computed(() => commit.value?.manual ?? [])
+
+// —— 决议分列块（评审 S5 抽取）：ignored/manual 两段近似模板收敛为单一渲染
+// 子块，section 对象即 props（locale 键名 / padding 类差异），渲染结果与分列
+// 实现逐类名一致。——
+interface DecisionSection {
+    key: 'ignored' | 'manual'
+    titleKey: string
+    hintKey: string
+    rows: NonNullable<CommitDTO['ignored']>
+    sectionClass: string
+}
+const decisionSections = computed<DecisionSection[]>(() => {
+    const sections: DecisionSection[] = []
+    if (ignored.value.length > 0) {
+        sections.push({
+            key: 'ignored',
+            titleKey: 'history.commit.ignoredTitle',
+            hintKey: 'history.commit.ignoredHint',
+            rows: ignored.value,
+            sectionClass: 'border-b px-2 py-2 pb-3',
+        })
+    }
+    if (manual.value.length > 0) {
+        sections.push({
+            key: 'manual',
+            titleKey: 'history.commit.manualTitle',
+            hintKey: 'history.commit.manualHint',
+            rows: manual.value,
+            // 与 ignored 同现时补顶距（原 manual 块的 :class 条件）
+            sectionClass: ignored.value.length > 0 ? 'px-2 py-2 pt-3' : 'px-2 py-2',
+        })
+    }
+    return sections
+})
+
 // 重试跳过项分两路（#62 遗留项收口；#86 单调用化）：
 // - 授权模式开：升级走快速更新同一后端用例（SyncService.QuickUpdate，契约 07
 //   §3.1 唯一口径）——链在后端阻塞收口，前端按三态承接：no_diff → 「已是最新」；
@@ -326,6 +366,26 @@ watch([relationID, commitID], () => void loadHead(), { immediate: true })
                                 </TableRow>
                             </TableBody>
                         </Table>
+                    </CardContent>
+                </Card>
+
+                <!-- 用户决议清单（票 #100，ADR-0013）：已忽略 / 手动处理分列 -->
+                <Card v-if="decisionSections.length > 0">
+                    <CardContent class="py-2">
+                        <div v-for="section in decisionSections" :key="section.key" :class="section.sectionClass">
+                            <div class="flex flex-col">
+                                <span class="font-medium text-sm text-foreground">{{ t(section.titleKey) }}（{{ section.rows.length }}）</span>
+                                <span class="text-muted-foreground text-xs">{{ t(section.hintKey) }}</span>
+                            </div>
+                            <div class="mt-2 flex flex-col gap-1">
+                                <span
+                                    v-for="row in section.rows"
+                                    :key="row.resource_id"
+                                    class="max-w-96 truncate font-mono text-xs"
+                                    :title="row.resource_id"
+                                >{{ row.resource_id }}</span>
+                            </div>
+                        </div>
                     </CardContent>
                 </Card>
 

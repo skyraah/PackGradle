@@ -295,7 +295,14 @@ func (a *App) runApply(ctx context.Context, queued model.Task) {
 		failRun(resultIOError, fmt.Errorf("验证复扫失败: %w", err))
 		return
 	}
-	violations, remaining, err := verifyRescan(plan, keepPlans, rescanP, rescanR, base, skips)
+	// 复扫所用现行策略：verifyRescan 的 ignore 过滤与复扫观察的 PolicyID 同源
+	// （票 #100，ADR-0013 §3）。
+	policySet, err := a.deps.Mappings.GetPolicy(ctx, rel.RelationID)
+	if err != nil {
+		failRun(resultIOError, fmt.Errorf("读取映射策略: %w", err))
+		return
+	}
+	violations, remaining, err := verifyRescan(plan, keepPlans, rescanP, rescanR, base, skips, policySet)
 	if err != nil {
 		failRun(resultVerifyMismatch, fmt.Errorf("验证比较失败: %w", err))
 		return
@@ -333,6 +340,11 @@ func (a *App) runApply(ctx context.Context, queued model.Task) {
 	contentRefs, ingestDiags := a.ingestBaselineProjectContent(ctx, proj.RootPath, &newBaseline)
 	commit := buildSyncCommit(rel, plan, commitID, baselineID, nowStr, completeness, remaining,
 		rescanP.SnapshotID, rescanR.SnapshotID, buildCommitChanges(keepPlans, snapP, snapR, rescanP, rescanR), skips, ingestDiags)
+
+	// 忽略决议随提交事务生效（ADR-0013 §2，票 #100）：提交期合成单文件 ignore
+	// 规则；policyChanged 驱动事务提交后的 kickWatch（坑 C：监听挂新 policy 快照，
+	// 提交后 kick 才拿得到落库值）。
+	var policyChanged bool
 
 	err = a.deps.Tx.RunInTx(commitCtx, func(repos ports.Repos) error {
 		if err := repos.Snapshots.Insert(ctx, rescanP); err != nil {
@@ -376,6 +388,15 @@ func (a *App) runApply(ctx context.Context, queued model.Task) {
 				return fmt.Errorf("操作 %s 标记 verified: %w", s.fp.op.ID, err)
 			}
 		}
+		// 忽略决议的规则合成（坑 A：SavePolicy 存储层联动 revision+1，同关系其它
+		// draft/resolved 计划投影 stale 属预期，ADR-0002 决议 2；被提交计划已过
+		// ConfirmPlan 修订门，事务中段递增不影响本次提交。坑 B：合成经
+		// policy.Validate 前置，失败整场回滚）。manual 决议不碰策略。
+		changed, err := a.synthesizeIgnoreRules(ctx, repos, rel.RelationID, plan, snapP, snapR)
+		if err != nil {
+			return fmt.Errorf("合成忽略规则: %w", err)
+		}
+		policyChanged = changed
 		a.consumePlanConfirmation(ctx, repos, plan.PlanID)
 		return nil
 	})
@@ -385,6 +406,11 @@ func (a *App) runApply(ctx context.Context, queued model.Task) {
 		return
 	}
 	state = model.ApplyRunCommitted
+	// policy 修改的既有伴随动作（ADR-0010 §3）：事务提交成功后重挂监听
+	// （监听挂的是新 policy 快照，提交后 kick 才拿得到落库值）。
+	if policyChanged {
+		a.kickWatch()
+	}
 
 	// staging 仅在提交事务成功后清理（ADR-0004 §5）：按本运行 ownership 隔离
 	// 子树删除，幂等可重试；失败保留证据（staging_cleared 保持 false）。
@@ -1151,16 +1177,25 @@ func buildCommitChanges(plans []applyFilePlan, inP, inR, rescanP, rescanR model.
 // buildSyncCommit 组装提交头（契约 05 §3.5；completeness 由剩余差异数推导）。
 // skips 非空时 summary 附跳过清单（成功 N + 跳过 M 及逐项原因码，GetCommit
 // 投影消费；票 #63 剔除语义的透出面）；ingestDiags 非空时 summary 附基线内容
-// 摄取降级清单（ADR-0012 §2：竞态降级的提交面证据，DTO 投影不读取该键）。
+// 摄取降级清单（ADR-0012 §2：竞态降级的提交面证据，DTO 投影不读取该键）；
+// 用户的忽略/手动处理决议资源分列进 summary（ADR-0013 §1，票 #100，坑 D：
+// 与 skips 的物化取数剔除项无关）。
 func buildSyncCommit(rel model.Relation, plan model.SyncPlan, commitID, baselineID, nowStr, completeness string,
 	remaining int, verifiedP, verifiedR string, changes []model.CommitChange, skips []stagedOp,
 	ingestDiags []model.Diagnostic) model.SyncCommit {
 
+	ignored, manual := decisionEntries(plan.Resolutions)
 	summaryObj := map[string]any{
 		"operation_count": len(plan.Operations),
 		"plan_kind":       string(plan.Kind),
 		"success_count":   len(changes),
 		"skip_count":      len(skips),
+	}
+	if len(ignored) > 0 {
+		summaryObj["ignored"] = ignored
+	}
+	if len(manual) > 0 {
+		summaryObj["manual"] = manual
 	}
 	if len(skips) > 0 {
 		entries := make([]skippedEntry, 0, len(skips))

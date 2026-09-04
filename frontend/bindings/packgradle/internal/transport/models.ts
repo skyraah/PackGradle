@@ -162,6 +162,21 @@ export interface CommitDTO {
      * 成功 N + 跳过 M（带 err.download.* 原因码）；旧行无该记录为空数组。
      */
     "skipped": CommitSkippedDTO[] | null;
+
+    /**
+     * Ignored/Manual 是用户决议资源清单（ADR-0013 §1，票 #100）：已忽略
+     * （ChoiceSkip，随提交合成 ignore 规则）/手动处理（ChoiceManual）分列，
+     * 与 Skipped 的物化取数剔除项无关；旧行无该记录为空数组。
+     */
+    "ignored": CommitDecisionDTO[] | null;
+    "manual": CommitDecisionDTO[] | null;
+}
+
+/**
+ * CommitDecisionDTO 是用户决议资源单行（ADR-0013 §1，票 #100）。
+ */
+export interface CommitDecisionDTO {
+    "resource_id": string;
 }
 
 /**
@@ -667,9 +682,12 @@ export interface RestorePlanDTO {
  * RestorePlanItemDTO 是回滚计划单资源行。Marker 枚举
  * restorable_from_cas|redownload_required|user_object_required|unrecoverable
  * （delete 行不占四标记）；MarkerReason 仅 user_object_required 行
- * （no_redownload_info|cf_unavailable|hash_format_unsupported）；Skipped/Staged
+ * （no_redownload_info|cf_unavailable|hash_format_unsupported|no_project_content
+ * ——末值为 ADR-0012 §4 存量宽判降级：目标基线项目侧无实测 Content，补全通道
+ * 关闭，skip 或项目端改回目标语义后重新 prepare 是仅有的出口）；Skipped/Staged
  * 为读取时实时投影；Availability 仅 redownload_required 行（ok|unknown）；
- * ExpectedDigest 仅 user_object_required 行（验收入库的目标摘要）。
+ * ExpectedDigest 仅 user_object_required 行（验收入库的目标摘要；
+ * no_project_content 行恒空——该行永不就绪）。
  */
 export interface RestorePlanItemDTO {
     "resource_id": string;

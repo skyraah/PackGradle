@@ -397,9 +397,17 @@ func commitDTO(v view.CommitView) CommitDTO {
 			ResourceID: s.ResourceID, ReasonCode: s.ReasonCode, ReasonArgs: s.ReasonArgs,
 		})
 	}
+	decisions := func(src []view.CommitDecisionView) []CommitDecisionDTO {
+		out := make([]CommitDecisionDTO, 0, len(src))
+		for _, d := range src {
+			out = append(out, CommitDecisionDTO{ResourceID: d.ResourceID})
+		}
+		return out
+	}
 	return CommitDTO{
 		SchemaVersion: v.SchemaVersion, Summary: commitSummaryDTO(v.Summary),
 		PlanID: v.PlanID, Changes: changes, Skipped: skipped,
+		Ignored: decisions(v.Ignored), Manual: decisions(v.Manual),
 	}
 }
 

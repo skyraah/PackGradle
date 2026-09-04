@@ -678,13 +678,17 @@ func sideSemantic(id model.ResourceID, rep *model.Representation) (string, error
 //     为 sha1/murmur2 等非可比格式，双侧语义比对对其豁免——两层校验的第一层
 //     已证明来源正确性）；
 //  2. 未选资源相对既有基线未漂移（跳过/手动裁决资源与本场剔出的取数失败资源
-//     豁免 violation，但计入剩余差异——partial 语义）。
+//     豁免 violation，但计入剩余差异——partial 语义）；direction=ignore 的资源
+//     （票 #100，ADR-0013 §3）已移出受管范围：不 violation、不计剩余差异，
+//     否则「忽略后下一次 apply 必炸」。
 //
-// skipped 是本场剔出的取数失败清单（可空）。返回违规清单与剩余差异数。
+// skipped 是本场剔出的取数失败清单（可空）；policySet 是复扫所用现行策略
+// （与复扫观察的 PolicyID 同源）。返回违规清单与剩余差异数。
 func verifyRescan(plan model.SyncPlan, plans []applyFilePlan, rescanP, rescanR model.ObservedSnapshot,
-	base *model.SyncBaseline, skips []stagedOp) (violations []string, remaining int, err error) {
+	base *model.SyncBaseline, skips []stagedOp, policySet model.MappingPolicy) (violations []string, remaining int, err error) {
 
 	snaps := map[model.Side]model.ObservedSnapshot{model.SideProject: rescanP, model.SideRuntime: rescanR}
+	ignored := ignoreDirectionFilter(policySet, rescanP, rescanR)
 
 	for _, fp := range plans {
 		switch actionChangeKind(fp.action) {
@@ -749,7 +753,7 @@ func verifyRescan(plan model.SyncPlan, plans []applyFilePlan, rescanP, rescanR m
 	}
 	counted := map[model.ResourceID]bool{}
 	for _, d := range res.Diffs {
-		if clean[d.Classification] || dlDone[d.ResourceID] {
+		if clean[d.Classification] || dlDone[d.ResourceID] || ignored(d.ResourceID) {
 			continue
 		}
 		counted[d.ResourceID] = true

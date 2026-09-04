@@ -90,6 +90,19 @@ func absentBase(id string) baseEntry {
 	return baseEntry{id: id}
 }
 
+// runtimeOnlyBase 构造「基线单侧表示」条目：project 无表示（nil）、runtime
+// present 且同指纹。这是忽略/手动处理决议吸收后的基线形态（ADR-0013 §1：
+// skip 资源照抄复扫观测，project nil / runtime 有表示），票 #100 验收 7 的
+// 真值表缺口。
+func runtimeOnlyBase(id, digest string) baseEntry {
+	rep := model.Representation{
+		RelativePath: "config/" + strings.TrimPrefix(id, "file:") + ".ini",
+		Format:       "ini",
+		Content:      content(digest),
+	}
+	return baseEntry{id: id, runtime: &rep}
+}
+
 // baseline 构造最小 SyncBaseline；project/runtime 为 nil 表示该侧 absent。
 func baseline(entries ...baseEntry) *model.SyncBaseline {
 	resources := make(map[model.ResourceID]model.BaselineResource, len(entries))
@@ -201,6 +214,63 @@ func TestThreeWayWithBaselineTruthTable(t *testing.T) {
 			}
 			if (d.RuntimeSemantic != "") != d.RuntimePresent {
 				t.Errorf("RuntimeSemantic=%q 与 RuntimePresent=%v 不一致", d.RuntimeSemantic, d.RuntimePresent)
+			}
+		})
+	}
+}
+
+// TestThreeWayAsymmetricBaseline 覆盖「基线单侧表示」真值表（票 #100 验收 7；
+// ADR-0013 §1 吸收基线形态：基线 project nil / runtime 有表示）：现状一致
+// noop；runtime 再变走 runtime_to_project 普通写；project 侧新增该文件走
+// project_to_runtime；runtime 侧删除是 remove_project_candidate。
+func TestThreeWayAsymmetricBaseline(t *testing.T) {
+	const id = "file:options.ini"
+	cases := []struct {
+		name          string
+		projectDigest string // "" 表示该侧 absent
+		runtimeDigest string
+		want          Classification
+	}{
+		{"现状与基线一致 noop", "", "h1", ClassNoop},
+		{"runtime 再变 runtime_to_project", "", "h2", ClassRuntimeToProject},
+		{"project 新增 project_to_runtime", "h2", "h1", ClassProjectToRuntime},
+		{"runtime 删除 remove_project_candidate", "", "", ClassRemoveProjectCandidate},
+		{"双变同指纹 converged", "h2", "h2", ClassConverged},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			base := baseline(runtimeOnlyBase(id, "h1"))
+			var proj, rt []model.ResourceObservation
+			if tc.projectDigest != "" {
+				proj = append(proj, fileObs(id, tc.projectDigest))
+			}
+			if tc.runtimeDigest != "" {
+				rt = append(rt, fileObs(id, tc.runtimeDigest))
+			}
+			res, err := ThreeWay(Input{
+				RelationID: "rel_test",
+				Base:       base,
+				Project:    snapshot(model.SideProject, proj...),
+				Runtime:    snapshot(model.SideRuntime, rt...),
+			})
+			if err != nil {
+				t.Fatalf("ThreeWay 报错: %v", err)
+			}
+			if len(res.Diffs) != 1 {
+				t.Fatalf("期望 1 条 diff，得到 %d", len(res.Diffs))
+			}
+			d := res.Diffs[0]
+			if d.Classification != tc.want {
+				t.Errorf("分类 = %q，期望 %q", d.Classification, tc.want)
+			}
+			if len(res.Conflicts) != 0 {
+				t.Errorf("单侧表示基线各行不应产生冲突: %+v", res.Conflicts)
+			}
+			if d.BaseProjectPresent {
+				t.Errorf("BaseProjectPresent 应为 false（基线单侧表示）")
+			}
+			if !d.BaseRuntimePresent {
+				t.Errorf("BaseRuntimePresent 应为 true（基线单侧表示）")
 			}
 		})
 	}

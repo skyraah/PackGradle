@@ -176,6 +176,8 @@ func (a *App) GetCommit(ctx context.Context, relationID, commitID string) (view.
 		PlanID:        c.PlanID,
 		Changes:       changes,
 		Skipped:       commitSkippedView(c.Summary),
+		Ignored:       commitDecisionsView(c.Summary, commitSummaryDecisionsIgnored),
+		Manual:        commitDecisionsView(c.Summary, commitSummaryDecisionsManual),
 	}, nil
 }
 
@@ -207,6 +209,38 @@ func commitSkippedView(summary json.RawMessage) []view.CommitSkippedView {
 		})
 	}
 	return out
+}
+
+// commitSummaryDecisions 是提交头 summary JSON 中用户决议清单的键（票 #100，
+// S4：写入侧 apply.go 同名键，调用点禁魔法串）。
+const (
+	commitSummaryDecisionsIgnored = "ignored"
+	commitSummaryDecisionsManual  = "manual"
+)
+
+// commitDecisionsView 从提交头 summary JSON 解析用户决议清单（ADR-0013 §1，
+// 票 #100）：key 取 commitSummaryDecisionsIgnored（已忽略）或
+// commitSummaryDecisionsManual（手动处理）。解析失败/旧行无该记录返回空切片
+// ——摘要与 skipped 同为诊断性数据，解析缺陷不阻断提交详情读取。
+func commitDecisionsView(summary json.RawMessage, key string) []view.CommitDecisionView {
+	if len(summary) == 0 {
+		return []view.CommitDecisionView{}
+	}
+	// struct 形态解析：summary 还承载标量键（operation_count 等），整包按
+	// map[string][]T 反解会因类型不符整体失败；行形状即 view.CommitDecisionView
+	// 本身（S2：解析与投影复用同一 DTO，不再持匿名副本）。
+	var parsed struct {
+		Ignored []view.CommitDecisionView `json:"ignored"`
+		Manual  []view.CommitDecisionView `json:"manual"`
+	}
+	if err := json.Unmarshal(summary, &parsed); err != nil {
+		return []view.CommitDecisionView{}
+	}
+	src := parsed.Manual
+	if key == commitSummaryDecisionsIgnored {
+		src = parsed.Ignored
+	}
+	return append(make([]view.CommitDecisionView, 0, len(src)), src...)
 }
 
 // applyRunView 把运行头投影为视图（字段直映，无临时路径/proof 通道）。

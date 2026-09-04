@@ -34,6 +34,14 @@ export function ApplyRebind(preparationID: string): $CancellablePromise<$models.
 }
 
 /**
+ * AttachQuickUpdateResult 订阅手动快速更新收口（bootstrap 装配监听引擎时调用
+ * 一次；自动链直接调应用用例、不经本服务，天然只有手动入口抵达）。
+ */
+export function AttachQuickUpdateResult(notify: any): $CancellablePromise<void> {
+    return $Call.ByID(4095147877, notify);
+}
+
+/**
  * CancelTask 取消任务。
  */
 export function CancelTask(taskID: string): $CancellablePromise<void> {
