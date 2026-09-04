@@ -173,7 +173,7 @@ watch([relationID, commitID], () => void loadHead(), { immediate: true })
         <!-- 头部：记录类型 + 完整性 + 时间 + 剩余差异 + 来源计划 -->
         <div class="flex items-start justify-between gap-4">
             <div>
-                <h1 class="flex items-center gap-2 text-xl font-semibold">
+                <h1 class="flex items-center gap-2 page-title">
                     {{ summary ? t('history.kind.' + summary.kind) : t('history.commit.title') }}
                     <Badge v-if="summary" :variant="completenessTone(summary.completeness).variant" :class="completenessTone(summary.completeness).class">
                         {{ t('history.completeness.' + summary.completeness) }}

@@ -115,17 +115,18 @@ const toneIcon: Record<string, Component> = {
     warning: CircleAlert,
     error: CircleX,
 }
-const toneClass: Record<string, string> = {
-    info: 'bg-tint-primary text-foreground border-primary/30',
-    success: 'bg-tint-success text-foreground border-emerald-500/30',
-    warning: 'bg-tint-warning text-foreground border-amber-500/30',
-    error: 'bg-tint-error text-foreground border-destructive/30',
-}
 const toneIconClass: Record<string, string> = {
     info: 'text-primary',
     success: 'text-emerald-500',
     warning: 'text-amber-500',
     error: 'text-destructive',
+}
+// 原型 toast（.toast.ok/.err）：中性面板 + 3px 语义色左边框；info/warning 顺延主色 / 琥珀
+const toneAccentClass: Record<string, string> = {
+    info: 'border-l-primary',
+    success: 'border-l-emerald-500',
+    warning: 'border-l-amber-500',
+    error: 'border-l-destructive',
 }
 
 onBeforeUnmount(() => {
@@ -137,7 +138,7 @@ onBeforeUnmount(() => {
 
 <template>
     <div class="flex h-full w-full flex-col overflow-hidden bg-background text-foreground">
-        <header class="bg-card/90 flex h-[52px] flex-none items-center border-b border-border px-2.5 backdrop-blur">
+        <header class="bg-card/90 flex h-[46px] flex-none items-center border-b border-border px-2.5 backdrop-blur">
             <div class="app-no-drag flex flex-none items-center gap-2">
                 <span class="grid size-[30px] place-items-center rounded-lg bg-primary text-primary-foreground">
                     <Hammer class="size-4" />
@@ -214,7 +215,7 @@ onBeforeUnmount(() => {
                 <button
                     v-for="item in navItems"
                     :key="item.path"
-                    class="relative mx-auto my-1 flex h-14 w-14 flex-col items-center justify-center gap-1 rounded-[10px]"
+                    class="mx-auto my-1 flex h-14 w-14 flex-col items-center justify-center gap-1 rounded-[10px]"
                     :class="
                         activePath === item.path
                             ? 'bg-tint-primary text-primary'
@@ -222,10 +223,6 @@ onBeforeUnmount(() => {
                     "
                     @click="router.push(item.path)"
                 >
-                    <span
-                        v-if="activePath === item.path"
-                        class="bg-primary absolute top-3 bottom-3 -left-1.5 w-[3px] rounded-full"
-                    />
                     <component :is="item.icon" class="size-6" />
                     <span class="text-[10px] leading-none">{{ t(item.titleKey) }}</span>
                 </button>
@@ -241,12 +238,12 @@ onBeforeUnmount(() => {
     <!-- 任务中心抽屉 -->
     <TaskCenterDrawer v-model="taskDrawer" />
 
-    <!-- 全局通知（ui store 排队，右上角轻量提示；长任务结果以任务中心为权威） -->
+    <!-- 全局通知（ui store 排队，右下角 toast：语义色左边框 + 约 3200ms 自动消失；长任务结果以任务中心为权威） -->
     <Transition name="toast">
         <div
             v-if="snackbar"
-            class="app-no-drag fixed top-[60px] right-3 z-[2400] flex max-w-[460px] min-w-[280px] items-start gap-2.5 rounded-[10px] border p-3 text-sm leading-relaxed shadow-lg"
-            :class="toneClass[snackbarTone] ?? toneClass.info"
+            class="app-no-drag bg-surface-3 fixed right-[18px] bottom-[18px] z-[2400] flex max-w-[380px] items-start gap-2.5 rounded-lg border border-border border-l-[3px] px-3.5 py-[9px] text-[12.5px] leading-relaxed shadow-lg"
+            :class="toneAccentClass[snackbarTone] ?? toneAccentClass.info"
         >
             <component :is="toneIcon[snackbarTone] ?? Info" class="mt-0.5 size-4 flex-none" :class="toneIconClass[snackbarTone]" />
             <span class="min-w-0 break-all">{{ snackbarMsg }}</span>
@@ -271,6 +268,6 @@ onBeforeUnmount(() => {
 .toast-enter-from,
 .toast-leave-to {
     opacity: 0;
-    transform: translateY(-8px);
+    transform: translateY(8px);
 }
 </style>

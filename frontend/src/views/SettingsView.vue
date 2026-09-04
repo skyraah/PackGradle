@@ -181,7 +181,7 @@ async function requestGC(): Promise<void> {
 <template>
     <div class="mx-auto flex w-full max-w-3xl flex-col gap-4 p-4">
         <div>
-            <h1 class="text-xl font-semibold">{{ t('settings.title') }}</h1>
+            <h1 class="page-title">{{ t('settings.title') }}</h1>
             <p class="text-muted-foreground mt-1 text-sm">{{ t('settings.subtitle') }}</p>
         </div>
 

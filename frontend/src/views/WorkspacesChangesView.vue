@@ -223,7 +223,7 @@ const kindOptions = ['mod', 'text_file', 'binary_file']
         <!-- 头部：工作区上下文 + 返回/重查 -->
         <div class="flex items-start justify-between gap-4">
             <div>
-                <h1 class="text-xl font-semibold">
+                <h1 class="page-title">
                     <template v-if="wsRow">
                         {{ wsRow.relation.project.display_name }}
                         <span class="text-muted-foreground">↔</span>

@@ -62,7 +62,7 @@ async function setAuthorized(enabled: boolean): Promise<void> {
         <!-- 头部 -->
         <div class="flex items-start justify-between gap-4">
             <div>
-                <h1 class="text-xl font-semibold">{{ t('workspaces.settings.title') }}</h1>
+                <h1 class="page-title">{{ t('workspaces.settings.title') }}</h1>
                 <p class="text-muted-foreground mt-1 text-sm">
                     <template v-if="wsRow">
                         {{ wsRow.relation.project.display_name }}

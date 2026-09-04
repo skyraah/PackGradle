@@ -355,7 +355,7 @@ const cols = ['restore.colResource', 'restore.colMarker', 'restore.colAvailabili
         <!-- 头部：标题 + 状态 + 回滚目标 + 有效期 -->
         <div class="flex items-start justify-between gap-4">
             <div>
-                <h1 class="flex items-center gap-2 text-xl font-semibold">
+                <h1 class="flex items-center gap-2 page-title">
                     {{ t('restore.title') }}
                     <Badge v-if="plan" :variant="statusTones[plan.status]?.variant ?? 'outline'" :class="statusTones[plan.status]?.class">
                         {{ t('restore.status.' + plan.status) }}

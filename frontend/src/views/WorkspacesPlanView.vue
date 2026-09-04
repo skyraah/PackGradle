@@ -310,7 +310,7 @@ function openMergePreview(resourceId: string): void {
         <!-- 头部：计划标题 + 状态 + 有效期 + 来源 -->
         <div class="flex items-start justify-between gap-4">
             <div>
-                <h1 class="flex items-center gap-2 text-xl font-semibold">
+                <h1 class="flex items-center gap-2 page-title">
                     {{ plan ? t('plans.title.' + plan.kind) : t('plans.title') }}
                     <Badge v-if="plan" :variant="statusTones[plan.status]?.variant ?? 'outline'" :class="statusTones[plan.status]?.class">
                         {{ t('plans.status.' + plan.status) }}

@@ -9,7 +9,8 @@
 @custom-variant dark (&:where(.dark, .dark *));
 
 :root {
-    --radius: 0.625rem;
+    /* 圆角基准 8px（UX 原型 §3：卡片/弹层 8px、按钮与输入 6px），shadcn 组件经下方 --radius-* 落到对应值 */
+    --radius: 0.5rem;
 
     /* 概念风格 · 亮色 */
     --background: #f2f5f9;
@@ -107,10 +108,17 @@
     --color-tint-warning: var(--tint-warning);
     --color-tint-error: var(--tint-error);
 
-    --radius-sm: calc(var(--radius) - 4px);
-    --radius-md: calc(var(--radius) - 2px);
-    --radius-lg: var(--radius);
-    --radius-xl: calc(var(--radius) + 4px);
+    --radius-sm: calc(var(--radius) - 4px); /* 4px：checkbox 等微型控件 */
+    --radius-md: calc(var(--radius) - 2px); /* 6px：按钮 / 输入（原型 .btn / .input） */
+    --radius-lg: var(--radius);             /* 8px：弹层 / toast（原型 .dialog / .toast） */
+    --radius-xl: var(--radius);             /* 8px：卡片（原型 .card） */
+}
+
+/* 页面标题（原型 .page-head h1：18px/700） */
+@utility page-title {
+    font-size: 18px;
+    font-weight: 700;
+    line-height: 1.3;
 }
 
 :root {
