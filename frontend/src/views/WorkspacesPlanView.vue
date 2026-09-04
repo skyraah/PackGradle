@@ -139,7 +139,8 @@ watch(planID, () => {
 // 四选（票 #100，ADR-0013 §0 Q1-c）：三类冲突统一「择侧 ×2 + 忽略 + 手动处理」；
 // 忽略按资源身份隐藏——mod 资源不提供忽略（编译器禁文件规则入 mods/ 前缀，
 // 无法合成规则；resource_id 的 mod: 前缀即 mod 身份）。mod 冲突仍有择侧 +
-// 手动处理。
+// 手动处理。本判断无前端单测设施：验收 6 由项目口径（vue-tsc + 构建 + L1
+// 走查）承接——走查项 = mod 冲突卡不出现「忽略此文件」选项。
 function choiceOptions(c: ConflictDTO): { value: string; labelKey: string; disabled?: boolean }[] {
     const ignore = c.resource_id.startsWith('mod:')
         ? []
