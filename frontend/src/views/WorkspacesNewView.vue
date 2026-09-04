@@ -123,7 +123,7 @@ function checkVariant(c: PreparationCheckDTO): 'default' | 'destructive' | 'seco
 <template>
     <div class="mx-auto flex w-full max-w-5xl flex-col gap-4 p-4 text-foreground">
         <div>
-            <h1 class="text-xl font-semibold">{{ t('workspacesNew.title') }}</h1>
+            <h1 class="page-title">{{ t('workspacesNew.title') }}</h1>
             <p class="text-muted-foreground mt-1 text-sm">{{ t('workspacesNew.subtitle') }}</p>
         </div>
 

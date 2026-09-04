@@ -12,7 +12,7 @@ interface Notice {
 const snackbar = ref(false)
 const snackbarMsg = ref('')
 const snackbarTone = ref<NoticeTone>('info')
-const snackbarTimeout = ref(4200)
+const snackbarTimeout = ref(3200)
 const current = ref<Notice | null>(null)
 const queue: Notice[] = []
 let transitionTimer: ReturnType<typeof setTimeout> | undefined
@@ -28,7 +28,7 @@ function showNext() {
     snackbar.value = true
 }
 
-export function showSnackbar(message: string, tone: NoticeTone = 'info', timeout = 4200) {
+export function showSnackbar(message: string, tone: NoticeTone = 'info', timeout = 3200) {
     const normalized = message.trim()
     if (!normalized) return
     queue.push({ message: normalized, tone, timeout })

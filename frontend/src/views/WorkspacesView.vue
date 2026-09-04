@@ -289,7 +289,7 @@ const cols: { key: string; alignRight?: boolean }[] = [
     <div class="mx-auto flex w-full max-w-6xl flex-col gap-4 p-4 text-foreground">
         <div class="flex items-center justify-between gap-4">
             <div>
-                <h1 class="text-xl font-semibold">{{ t('workspaces.title') }}</h1>
+                <h1 class="page-title">{{ t('workspaces.title') }}</h1>
                 <p class="text-muted-foreground mt-1 text-sm">{{ t('workspaces.subtitle') }}</p>
             </div>
             <Button @click="router.push('/workspaces/new')">{{ t('workspaces.new') }}</Button>

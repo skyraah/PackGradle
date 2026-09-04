@@ -219,7 +219,7 @@ const opsCols = ['recovery.colOrdinal', 'recovery.colStatus', 'recovery.colResou
         <!-- 头部：工作区上下文 + 返回 -->
         <div class="flex items-start justify-between gap-4">
             <div>
-                <h1 class="flex items-center gap-2 text-xl font-semibold">
+                <h1 class="flex items-center gap-2 page-title">
                     {{ t('recovery.title') }}
                     <Badge v-if="runReady" :variant="toneOf(stateTones, run!.state).variant" :class="toneOf(stateTones, run!.state).class">
                         {{ t('recovery.state.' + run!.state) }}
