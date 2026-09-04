@@ -113,8 +113,8 @@ const rowMark: Record<DiffRowType, string> = {
             </SheetHeader>
 
             <div class="min-h-0 flex-1 overflow-y-auto p-3">
-                <!-- 停用/过期计划：预览仍可看（只读），说明横幅 -->
-                <div v-if="readonlyHint" class="bg-amber-500/10 text-amber-600 dark:text-amber-400 mb-3 rounded-md px-3 py-2 text-xs">
+                <!-- 停用/过期计划：预览仍可看（只读），说明横幅（tint 警告语言与页面横幅一致） -->
+                <div v-if="readonlyHint" class="bg-tint-warning text-warning mb-3 rounded-md px-3 py-2 text-xs">
                     {{ t('plans.mergePreview.staleHint') }}
                 </div>
 
