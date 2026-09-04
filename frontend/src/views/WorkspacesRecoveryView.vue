@@ -1,17 +1,21 @@
 <script setup lang="ts">
 // /workspaces/:id/recoveries/:run_id：恢复详情（契约 05 §3.2/§3.3/§3.4、§5 D2；
-// UX 原型 §7.12）。run_id 即 task_id（apply_runs 主键）。
-// 数据源：GetApplyRun（运行头投影，六阶段 state）+ ListApplyOperations（逐操作
-// 清单分页，白名单投影——普通视图无临时路径/无 ownership proof，硬约束 4）。
-// 动作：「确认人工处理」AcknowledgeRecovery（内联确认条沿 mappings 页先例，仅
-// state=recovery_required 且未 acknowledged 时可用）；收口后重扫引导（StartScan
-// 沿既有入口先例，availability 唯一门控；relation_invalidated 由后端在收口后
-// 发布，经既有受控重查管线自然刷新工作区投影，本页事件管线零改动）。
+// UX 原型无画板，票 #110 按回滚面同一语言重排：对象头式页头 + 状态横幅 + 运行
+// 摘要 facts 双列 + 操作清单表，行为不变）。
+// run_id 即 task_id（apply_runs 主键）。数据源：GetApplyRun（运行头投影，六阶段
+// state）+ ListApplyOperations（逐操作清单分页，白名单投影——普通视图无临时路径/
+// 无 ownership proof，硬约束 4）。
+// 动作（不变）：「确认人工处理」AcknowledgeRecovery（内联确认条沿 mappings 页
+// 先例，仅 state=recovery_required 且未 acknowledged 时可用）；收口后重扫引导
+// （StartScan 沿既有入口先例，availability 唯一门控；relation_invalidated 由后端
+// 在收口后发布，经既有受控重查管线自然刷新工作区投影）。
 // 工作区上下文读 stores/syncCache；任务推进经 task_updated → syncCache 投影变化
 // 触发本页重查，页面不自建轮询。
 import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useRoute, useRouter } from 'vue-router'
+import type { Component } from 'vue'
+import { CircleAlert, CircleCheck, Info, RefreshCw } from '@lucide/vue'
 import { SyncService } from '../api'
 import type { ApplyOperationDTO, ApplyRunDTO } from '../api'
 import { bootstrapped, tasks, triggerRequery, workspaces } from '../stores/syncCache'
@@ -200,6 +204,63 @@ const statusTones: Record<string, BadgeTone> = {
     compensated: WARN,
 }
 
+// —— 状态横幅（同屏最多一条，语言同回滚面）：recovery_required 红色带「确认
+// 人工处理」；已人工确认 → 绿色带「重新扫描」；运行中/已提交 → 信息/成功不带动作 ——
+interface BannerVM {
+    tone: 'warn' | 'err' | 'info' | 'ok'
+    icon: Component
+    title: string
+    text: string
+    action?: { label: string; variant: 'default' | 'secondary' | 'destructive'; run: () => void }
+}
+
+const banner = computed<BannerVM | null>(() => {
+    const r = run.value
+    if (!runReady.value || !r) return null
+    if (r.state === 'recovery_required') {
+        return {
+            tone: 'err',
+            icon: CircleAlert,
+            title: t('recovery.state.recovery_required'),
+            text: t('recovery.ackHint'),
+            action: { label: t('recovery.ackAction'), variant: 'destructive', run: () => (confirming.value = true) },
+        }
+    }
+    if (acknowledged.value) {
+        return {
+            tone: 'ok',
+            icon: CircleCheck,
+            title: t('recovery.rescanTitle'),
+            text: t('recovery.rescanHint'),
+            action: canRescan(wsRow.value)
+                ? { label: t('recovery.rescanAction'), variant: 'secondary', run: () => void rescan() }
+                : undefined,
+        }
+    }
+    if (r.state === 'committed') {
+        return { tone: 'ok', icon: CircleCheck, title: t('recovery.state.committed'), text: '' }
+    }
+    return {
+        tone: 'info',
+        icon: r.state === 'applying' || r.state === 'verifying' ? RefreshCw : Info,
+        title: t('recovery.state.' + r.state),
+        text: '',
+    }
+})
+
+const bannerClass: Record<BannerVM['tone'], string> = {
+    warn: 'bg-tint-warning border-tint-warning',
+    err: 'bg-tint-error border-tint-error',
+    info: 'bg-tint-primary border-tint-primary',
+    ok: 'bg-tint-success border-tint-success',
+}
+const bannerIconClass: Record<BannerVM['tone'], string> = {
+    warn: 'text-warning',
+    err: 'text-error',
+    info: 'text-primary',
+    ok: 'text-success',
+}
+
 const runFacts = computed(() => {
     const r = run.value
     if (!r) return []
@@ -216,31 +277,6 @@ const opsCols = ['recovery.colOrdinal', 'recovery.colStatus', 'recovery.colResou
 
 <template>
     <div class="mx-auto flex w-full max-w-6xl flex-col gap-4 p-4 text-foreground">
-        <!-- 头部：工作区上下文 + 返回 -->
-        <div class="flex items-start justify-between gap-4">
-            <div>
-                <h1 class="flex items-center gap-2 page-title">
-                    {{ t('recovery.title') }}
-                    <Badge v-if="runReady" :variant="toneOf(stateTones, run!.state).variant" :class="toneOf(stateTones, run!.state).class">
-                        {{ t('recovery.state.' + run!.state) }}
-                    </Badge>
-                </h1>
-                <p class="text-muted-foreground mt-1 text-sm">
-                    <template v-if="wsRow">
-                        {{ wsRow.relation.project.display_name }}
-                        <span class="text-muted-foreground">↔</span>
-                        {{ wsRow.relation.runtime.display_name }} ·
-                    </template>
-                    <span class="font-mono text-xs" :title="runID">{{ runID }}</span>
-                </p>
-            </div>
-            <div class="flex shrink-0 gap-2">
-                <Button variant="ghost" size="sm" @click="router.push('/workspaces')">
-                    {{ t('recovery.backToList') }}
-                </Button>
-            </div>
-        </div>
-
         <!-- 工作区不存在：syncCache 引导完成后仍找不到该关系 -->
         <Card v-if="relationMissing">
             <CardContent class="flex flex-col items-start gap-3 py-6">
@@ -252,6 +288,38 @@ const opsCols = ['recovery.colOrdinal', 'recovery.colStatus', 'recovery.colResou
         </Card>
 
         <template v-else>
+            <!-- 页头（对象头式语言）：h1 + 运行状态徽章 + 副行（双端名 · mono run id） -->
+            <div class="flex items-start justify-between gap-4">
+                <div class="min-w-0">
+                    <h1 class="page-title flex flex-wrap items-center gap-2">
+                        {{ t('recovery.title') }}
+                        <Badge
+                            v-if="runReady"
+                            :variant="toneOf(stateTones, run!.state).variant"
+                            :title="run!.acknowledged_at ? t('recovery.acknowledgedAt') + ' ' + formatTime(run!.acknowledged_at) : t('recovery.notAcknowledged')"
+                        >
+                            {{ t('recovery.state.' + run!.state) }}
+                        </Badge>
+                        <Badge v-if="runReady && run!.acknowledged_at" variant="st-ok" plain>
+                            {{ t('recovery.acknowledgedAt') }} {{ formatTime(run!.acknowledged_at) }}
+                        </Badge>
+                    </h1>
+                    <p class="text-muted-foreground mt-1 flex flex-wrap items-center gap-1.5 text-sm">
+                        <template v-if="wsRow">
+                            {{ wsRow.relation.project.display_name }}
+                            <span class="text-muted-foreground">↔</span>
+                            {{ wsRow.relation.runtime.display_name }} ·
+                        </template>
+                        <span class="font-mono text-xs" :title="runID">{{ runID }}</span>
+                    </p>
+                </div>
+                <div class="flex shrink-0 gap-2">
+                    <Button variant="ghost" size="sm" @click="router.push('/workspaces')">
+                        {{ t('recovery.backToList') }}
+                    </Button>
+                </div>
+            </div>
+
             <!-- 首查 loading -->
             <Card v-if="phase === 'loading'">
                 <CardContent class="py-2">
@@ -278,18 +346,49 @@ const opsCols = ['recovery.colOrdinal', 'recovery.colStatus', 'recovery.colResou
             </Card>
 
             <template v-else-if="run">
-                <!-- 运行摘要卡（六阶段 state / acknowledged / commit_id 等，GetApplyRun 投影） -->
+                <!-- 状态横幅：同屏最多一条（行为不变：动作只是打开内联确认条/重扫） -->
+                <div
+                    v-if="banner"
+                    class="flex items-center gap-2.5 rounded-lg border px-3.5 py-2.5 text-[12.5px]"
+                    :class="bannerClass[banner.tone]"
+                >
+                    <component :is="banner.icon" class="size-4 flex-none" :class="bannerIconClass[banner.tone]" aria-hidden="true" />
+                    <div class="min-w-0 flex-1">
+                        <span class="font-bold">{{ banner.title }}</span>
+                        <template v-if="banner.text">
+                            <span> · {{ banner.text }}</span>
+                        </template>
+                    </div>
+                    <Button
+                        v-if="banner.action"
+                        size="sm"
+                        :variant="banner.action.variant"
+                        @click="banner.action.run"
+                    >
+                        {{ banner.action.label }}
+                    </Button>
+                </div>
+
+                <!-- 「确认人工处理」内联确认条（mappings 页先例，行为不变） -->
+                <div v-if="canAcknowledge && confirming" class="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-tint-warning bg-tint-warning px-3.5 py-2.5">
+                    <span class="text-sm">{{ t('recovery.ackHint') }}</span>
+                    <div class="flex gap-2">
+                        <Button size="sm" :disabled="acknowledging" @click="acknowledge">{{ t('recovery.ackConfirm') }}</Button>
+                        <Button variant="ghost" size="sm" :disabled="acknowledging" @click="confirming = false">
+                            {{ t('recovery.ackCancel') }}
+                        </Button>
+                    </div>
+                </div>
+
+                <!-- 运行摘要卡（六阶段 state / acknowledged / commit_id 等，GetApplyRun
+                     投影；facts 双列，语言同回滚面计数条） -->
                 <Card>
                     <CardContent class="flex flex-col gap-3 py-4">
                         <div class="flex flex-wrap items-center gap-2">
                             <span class="font-medium">{{ t('recovery.summaryTitle') }}</span>
-                            <Badge :variant="toneOf(stateTones, run.state).variant" :class="toneOf(stateTones, run.state).class">
+                            <Badge :variant="toneOf(stateTones, run.state).variant">
                                 {{ t('recovery.state.' + run.state) }}
                             </Badge>
-                            <Badge v-if="run.acknowledged_at" variant="st-ok" plain>
-                                {{ t('recovery.acknowledgedAt') }} {{ formatTime(run.acknowledged_at) }}
-                            </Badge>
-                            <span v-else class="text-muted-foreground text-xs">{{ t('recovery.notAcknowledged') }}</span>
                         </div>
 
                         <div class="grid gap-x-8 gap-y-1 text-xs sm:grid-cols-2">
@@ -327,39 +426,11 @@ const opsCols = ['recovery.colOrdinal', 'recovery.colStatus', 'recovery.colResou
                     </CardContent>
                 </Card>
 
-                <!-- 「确认人工处理」内联确认条（mappings 页先例） -->
-                <div v-if="canAcknowledge && confirming" class="flex flex-wrap items-center justify-between gap-3 rounded-md border px-3 py-2">
-                    <span class="text-sm">{{ t('recovery.ackHint') }}</span>
-                    <div class="flex gap-2">
-                        <Button size="sm" :disabled="acknowledging" @click="acknowledge">{{ t('recovery.ackConfirm') }}</Button>
-                        <Button variant="ghost" size="sm" :disabled="acknowledging" @click="confirming = false">
-                            {{ t('recovery.ackCancel') }}
-                        </Button>
-                    </div>
-                </div>
-                <div v-else-if="canAcknowledge" class="flex justify-end">
-                    <Button size="sm" @click="confirming = true">{{ t('recovery.ackAction') }}</Button>
-                </div>
-
-                <!-- 收口后重扫引导（恢复路径不推进基线，acknowledge 后引导重扫） -->
-                <Card v-if="acknowledged">
-                    <CardContent class="flex flex-wrap items-center justify-between gap-3 py-4">
-                        <div class="flex flex-col gap-1">
-                            <span class="text-sm font-medium">{{ t('recovery.rescanTitle') }}</span>
-                            <span class="text-muted-foreground text-xs">{{ t('recovery.rescanHint') }}</span>
-                        </div>
-                        <!-- availability 唯一门控（契约 03 §2.1）：scan 不可用时不渲染按钮 -->
-                        <Button v-if="canRescan(wsRow)" size="sm" :disabled="rescanning" @click="rescan">
-                            {{ t('recovery.rescanAction') }}
-                        </Button>
-                    </CardContent>
-                </Card>
-
                 <!-- 操作清单（逐资源证据，ordinal 升序分页） -->
                 <Card>
                     <CardContent class="py-2">
                         <div class="text-muted-foreground flex items-center justify-between gap-2 px-2 py-2 text-xs">
-                            <span class="font-medium text-sm text-foreground">{{ t('recovery.operationsTitle') }}</span>
+                            <span class="text-foreground text-sm font-medium">{{ t('recovery.operationsTitle') }}</span>
                             <span>{{ t('history.shownOf', [ops.length]) }}</span>
                         </div>
 
@@ -402,7 +473,7 @@ const opsCols = ['recovery.colOrdinal', 'recovery.colStatus', 'recovery.colResou
                                         <TableRow v-for="op in ops" :key="op.operation_id">
                                             <TableCell class="text-muted-foreground text-xs">{{ op.ordinal }}</TableCell>
                                             <TableCell>
-                                                <Badge :variant="toneOf(statusTones, op.status).variant" :class="toneOf(statusTones, op.status).class">
+                                                <Badge :variant="toneOf(statusTones, op.status).variant">
                                                     {{ t('recovery.status.' + op.status) }}
                                                 </Badge>
                                             </TableCell>
@@ -410,7 +481,7 @@ const opsCols = ['recovery.colOrdinal', 'recovery.colStatus', 'recovery.colResou
                                                 {{ op.relative_path || op.resource_id || '—' }}
                                             </TableCell>
                                             <TableCell>
-                                                <Badge v-if="op.change_kind" variant="outline">{{ t('history.change.' + op.change_kind) }}</Badge>
+                                                <Badge v-if="op.change_kind" variant="outline" plain>{{ t('history.change.' + op.change_kind) }}</Badge>
                                                 <span v-else class="text-muted-foreground">—</span>
                                             </TableCell>
                                             <!-- 结果码为引擎定义的技术摘要码（非 err.* 码，不经 locale）；

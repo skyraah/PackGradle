@@ -1,29 +1,25 @@
 <script setup lang="ts">
 // /workspaces/:id/history/:commit_id：同步记录详情（契约 05 §3.5 GetCommit；
-// UX 原型 §7.8）。记录数据为本页查询快照（changes 全量不分页），工作区上下文
-// 与 history_view 门控读 stores/syncCache 投影。
-// 变更表列「前 → 后」为后端联表表示摘要（representationSummary），null 显「—」。
-// 回滚入口（契约 06 §9，票 #61）：本页主操作「回滚到此状态」是全产品回滚唯一
-// 入口（restore_preview 门控，feature 未点亮不渲染；prepare_restore availability
-// 不可用置灰显后端原因码）；head 提交禁选＝UI 防误触（head=历史首条，后端
-// availability 不含 commit 维度，空差异计划本就合法），以信息横幅说明。
+// UX 原型 P3 H-02，票 #110）。页头＝mono 记录 id + 完整性徽章（exact 绿 /
+// partial 琥珀带剩余数）+「返回历史」+ 主按钮「回滚到此状态」；head 记录禁选
+// 显信息横幅（该记录的结果即工作区现状，回滚到当前＝空操作）。
+// 回滚入口（契约 06 §9，票 #61）：本页主操作是全产品回滚唯一入口（restore_preview
+// 门控，feature 未点亮不渲染；prepare_restore availability 不可用置灰显后端原因码）。
+// 记录数据为本页查询快照（changes 全量不分页），工作区上下文与 history_view 门控
+// 读 stores/syncCache 投影。变更表列「前 → 后」为后端联表表示摘要，null 显「—」。
 // 状态机互斥：loading / error / gate / empty / ready（沿 changes 页先例）；
 // err.commit.not_found 落错误态错误条（记录不存在或跨关系）。
 import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useRoute, useRouter } from 'vue-router'
+import { History, Info } from '@lucide/vue'
 import { SyncService } from '../api'
 import type { CommitDTO, CommitSummaryDTO } from '../api'
 import { bootstrapped, triggerRequery, workspaces } from '../stores/syncCache'
 import { showSnackbar } from '../stores/ui'
 import { errText } from '../utils/errors'
 import { availabilityReasonText, canPrepareRestore } from '../utils/plans'
-import {
-    completenessTone,
-    formatTime,
-    resolvePageState,
-    type QueryPhase,
-} from '../utils/pageState'
+import { completenessTone, formatTime, resolvePageState, type QueryPhase } from '../utils/pageState'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
@@ -81,7 +77,29 @@ function rep(s?: string | null): string {
     return s ?? '—'
 }
 
-const cols = ['history.commit.colResource', 'history.commit.colProject', 'history.commit.colRuntime', 'history.commit.colOperation']
+// 完整性徽章文案：partial 带剩余数（H-02：partial · 剩余 N）
+const completenessLabel = computed(() => {
+    const s = summary.value
+    if (!s) return ''
+    return s.completeness === 'partial'
+        ? t('history.completenessRemaining', [s.remaining_change_count])
+        : t('history.completeness.' + s.completeness)
+})
+
+// —— 计数条（H-02 五枚）：变更资源 / 创建 / 修改 / 删除 / 剩余差异，全为行投影
+// 聚合的纯渲染 ——
+const counts = computed(() => {
+    const rows = commit.value?.changes ?? []
+    return {
+        total: rows.length,
+        create: rows.filter(r => r.change_kind === 'create').length,
+        modify: rows.filter(r => r.change_kind === 'modify').length,
+        remove: rows.filter(r => r.change_kind === 'delete').length,
+        remaining: summary.value?.remaining_change_count ?? 0,
+    }
+})
+
+const cols = ['history.commit.colResource', 'history.commit.colChange', 'history.commit.colProject', 'history.commit.colRuntime']
 
 // —— 跳过清单（票 #63 剔除语义透出面）：本场剔出的取数失败行（err.download.*
 // /hash_format_unsupported/content_unavailable），原因码直查 locale（与错误条
@@ -170,66 +188,6 @@ watch([relationID, commitID], () => void loadHead(), { immediate: true })
 
 <template>
     <div class="mx-auto flex w-full max-w-6xl flex-col gap-4 p-4 text-foreground">
-        <!-- 头部：记录类型 + 完整性 + 时间 + 剩余差异 + 来源计划 -->
-        <div class="flex items-start justify-between gap-4">
-            <div>
-                <h1 class="flex items-center gap-2 page-title">
-                    {{ summary ? t('history.kind.' + summary.kind) : t('history.commit.title') }}
-                    <Badge v-if="summary" :variant="completenessTone(summary.completeness).variant" :class="completenessTone(summary.completeness).class">
-                        {{ t('history.completeness.' + summary.completeness) }}
-                    </Badge>
-                    <Badge v-if="summary && summary.completeness === 'partial'" variant="outline" class="text-amber-600 dark:text-amber-400">
-                        {{ t('history.remainingCount', [summary.remaining_change_count]) }}
-                    </Badge>
-                </h1>
-                <p class="text-muted-foreground mt-1 text-sm">
-                    <template v-if="wsRow">
-                        {{ wsRow.relation.project.display_name }}
-                        <span class="text-muted-foreground">↔</span>
-                        {{ wsRow.relation.runtime.display_name }} ·
-                    </template>
-                    <template v-if="summary">{{ t('history.commit.created') }} {{ formatTime(summary.created_at) }}</template>
-                    <template v-if="summary?.commit_id"> · </template>
-                    <span v-if="summary?.commit_id" class="font-mono text-xs" :title="summary.commit_id">{{ summary.commit_id }}</span>
-                </p>
-            </div>
-            <div class="flex shrink-0 flex-wrap justify-end gap-2">
-                <!-- 回滚入口（全产品唯一，契约 06 §9）：restore_preview 门控 + head 禁选 -->
-                <Button
-                    v-if="restoreEntryVisible"
-                    size="sm"
-                    :disabled="!restoreReady || preparing"
-                    :title="restoreReady ? undefined : restoreReason"
-                    @click="prepareRestore"
-                >
-                    {{ t('restore.entryPrimary') }}
-                </Button>
-                <Button v-if="commit?.plan_id" variant="outline" size="sm" @click="router.push('/workspaces/' + relationID + '/plans/' + commit.plan_id)">
-                    {{ t('history.commit.plan') }}
-                </Button>
-                <Button variant="ghost" size="sm" @click="router.push('/workspaces/' + relationID + '/history')">
-                    {{ t('history.commit.backToHistory') }}
-                </Button>
-            </div>
-        </div>
-
-        <!-- head 禁选横幅（票 #61）：该记录的结果即工作区现状，回滚到当前＝空操作 -->
-        <Card v-if="wsRow && summary && isHead">
-            <CardContent class="text-muted-foreground flex items-center gap-2 py-3 text-sm">
-                <span class="text-foreground font-medium">{{ t('restore.headBannerTitle') }}</span>
-                <span>— {{ t('restore.headBannerHint') }}</span>
-            </CardContent>
-        </Card>
-
-        <!-- restore_preview 点亮但 prepare_restore 不可用：显后端原因码（唯一门控同源） -->
-        <Card v-else-if="wsRow && summary && wsRow.features.restore_preview === true && !restoreReady">
-            <CardContent class="flex flex-wrap items-center justify-between gap-3 py-3">
-                <span class="text-amber-600 text-sm dark:text-amber-400">
-                    {{ t('restore.entryUnavailable') }}<template v-if="restoreReason">：{{ restoreReason }}</template>
-                </span>
-            </CardContent>
-        </Card>
-
         <!-- 工作区不存在：syncCache 引导完成后仍找不到该关系 -->
         <Card v-if="relationMissing">
             <CardContent class="flex flex-col items-start gap-3 py-6">
@@ -241,6 +199,74 @@ watch([relationID, commitID], () => void loadHead(), { immediate: true })
         </Card>
 
         <template v-else>
+            <!-- 页头（H-02）：mono 记录 id + 完整性徽章；右侧「返回历史」+ 主按钮 -->
+            <div class="flex items-start justify-between gap-4">
+                <div class="min-w-0">
+                    <h1 class="page-title flex flex-wrap items-center gap-2">
+                        <span v-if="summary" class="truncate font-mono" :title="summary.commit_id">{{ summary.commit_id }}</span>
+                        <template v-else>{{ t('history.commit.title') }}</template>
+                        <Badge
+                            v-if="summary"
+                            :variant="completenessTone(summary.completeness).variant"
+                            :title="summary.completeness === 'partial' ? t('history.remainingCount', [summary.remaining_change_count]) : undefined"
+                        >
+                            {{ completenessLabel }}
+                        </Badge>
+                    </h1>
+                    <p class="text-muted-foreground mt-1 text-sm">
+                        <template v-if="summary">{{ t('history.kind.' + summary.kind) }} · {{ t('history.commit.created') }} {{ formatTime(summary.created_at) }}</template>
+                        <template v-if="wsRow"> · </template>
+                        <template v-if="wsRow">
+                            {{ wsRow.relation.project.display_name }}
+                            <span class="text-muted-foreground">↔</span>
+                            {{ wsRow.relation.runtime.display_name }}
+                        </template>
+                    </p>
+                </div>
+                <div class="flex shrink-0 flex-wrap justify-end gap-2">
+                    <Button variant="ghost" size="sm" @click="router.push('/workspaces/' + relationID + '/history')">
+                        {{ t('history.commit.backToHistory') }}
+                    </Button>
+                    <!-- 回滚入口（全产品唯一，契约 06 §9）：restore_preview 门控 + head 禁选 -->
+                    <Button
+                        v-if="restoreEntryVisible"
+                        size="sm"
+                        :disabled="!restoreReady || preparing"
+                        :title="restoreReady ? undefined : restoreReason"
+                        @click="prepareRestore"
+                    >
+                        <History class="size-3.5" aria-hidden="true" />
+                        {{ t('restore.entryPrimary') }}
+                    </Button>
+                </div>
+            </div>
+
+            <!-- head 禁选横幅（H-02 / 票 #61）：该记录的结果即工作区现状，回滚到当前＝空操作 -->
+            <div
+                v-if="wsRow && summary && isHead"
+                class="flex items-center gap-2.5 rounded-lg border border-tint-primary bg-tint-primary px-3.5 py-2.5 text-[12.5px]"
+            >
+                <Info class="text-primary size-4 flex-none" aria-hidden="true" />
+                <div class="min-w-0 flex-1">
+                    <span class="font-bold">{{ t('restore.headBannerTitle') }}</span>
+                    <span> · {{ t('restore.headBannerHint') }}</span>
+                </div>
+            </div>
+
+            <!-- restore_preview 点亮但 prepare_restore 不可用：显后端原因码（唯一门控同源） -->
+            <div
+                v-else-if="wsRow && summary && wsRow.features.restore_preview === true && !restoreReady"
+                class="flex flex-wrap items-center gap-2.5 rounded-lg border border-tint-warning bg-tint-warning px-3.5 py-2.5 text-[12.5px]"
+            >
+                <Info class="text-warning size-4 flex-none" aria-hidden="true" />
+                <div class="min-w-0 flex-1">
+                    <span class="font-bold">{{ t('restore.entryUnavailable') }}</span>
+                    <template v-if="restoreReason">
+                        <span> · {{ restoreReason }}</span>
+                    </template>
+                </div>
+            </div>
+
             <!-- 首查 loading：骨架行（保留表头同构） -->
             <Card v-if="pageState === 'loading'">
                 <CardContent class="py-2">
@@ -277,20 +303,41 @@ watch([relationID, commitID], () => void loadHead(), { immediate: true })
             </Card>
 
             <template v-else-if="summary">
-                <!-- 摘要条：完整性 / 剩余差异 / 来源计划 -->
+                <!-- 计数条（H-02 五枚）+ 来源计划 -->
                 <div class="flex flex-wrap items-center gap-2">
-                    <Badge variant="outline" class="text-muted-foreground">{{ t('history.commit.remaining') }} {{ summary.remaining_change_count }}</Badge>
-                    <Badge v-if="commit?.plan_id" variant="outline" class="text-muted-foreground">
-                        {{ t('history.commit.plan') }} <span class="max-w-48 truncate font-mono" :title="commit.plan_id">{{ commit.plan_id }}</span>
+                    <Badge variant="outline" class="text-muted-foreground">
+                        {{ t('history.commit.countTotal') }} <b class="text-foreground">{{ counts.total }}</b>
                     </Badge>
+                    <Badge variant="outline" class="text-muted-foreground">
+                        {{ t('history.commit.countCreate') }} <b class="text-foreground">{{ counts.create }}</b>
+                    </Badge>
+                    <Badge variant="outline" class="text-muted-foreground">
+                        {{ t('history.commit.countModify') }} <b class="text-foreground">{{ counts.modify }}</b>
+                    </Badge>
+                    <Badge variant="outline" class="text-muted-foreground">
+                        {{ t('history.commit.countDelete') }} <b class="text-foreground">{{ counts.remove }}</b>
+                    </Badge>
+                    <Badge variant="outline" class="text-muted-foreground">
+                        {{ t('history.commit.countRemaining') }} <b class="text-foreground">{{ counts.remaining }}</b>
+                    </Badge>
+                    <template v-if="commit?.plan_id">
+                        <span class="text-faint">|</span>
+                        <button
+                            class="text-primary max-w-48 truncate font-mono text-xs hover:underline"
+                            :title="commit.plan_id"
+                            @click="router.push('/workspaces/' + relationID + '/plans/' + commit.plan_id)"
+                        >
+                            {{ t('history.commit.plan') }} {{ commit.plan_id }}
+                        </button>
+                    </template>
                     <span v-else class="text-muted-foreground text-xs">{{ t('history.commit.planMissing') }}</span>
                 </div>
 
-                <!-- 逐资源变更表 -->
+                <!-- 逐资源变更表（H-02 四列：资源、变更、Project、Runtime） -->
                 <Card>
                     <CardContent class="py-2">
                         <div class="text-muted-foreground flex items-center justify-between gap-2 px-2 py-2 text-xs">
-                            <span class="font-medium text-sm text-foreground">{{ t('history.commit.changesTitle') }}</span>
+                            <span class="text-foreground text-sm font-medium">{{ t('history.commit.changesTitle') }}</span>
                             <span>{{ t('history.shownOf', [commit?.changes?.length ?? 0]) }}</span>
                         </div>
 
@@ -307,8 +354,11 @@ watch([relationID, commitID], () => void loadHead(), { immediate: true })
                             </TableHeader>
                             <TableBody>
                                 <TableRow v-for="row in commit?.changes ?? []" :key="row.resource_id">
-                                    <TableCell class="max-w-80 truncate font-medium" :title="row.resource_id">
+                                    <TableCell class="max-w-80 truncate font-mono text-sm font-medium" :title="row.resource_id">
                                         {{ row.resource_id }}
+                                    </TableCell>
+                                    <TableCell>
+                                        <Badge variant="outline" plain>{{ t('history.change.' + row.change_kind) }}</Badge>
                                     </TableCell>
                                     <TableCell class="max-w-72 truncate font-mono text-xs" :title="rep(row.project_before) + ' → ' + rep(row.project_after)">
                                         <span class="text-muted-foreground">{{ rep(row.project_before) }}</span>
@@ -319,9 +369,6 @@ watch([relationID, commitID], () => void loadHead(), { immediate: true })
                                         <span class="text-muted-foreground">{{ rep(row.runtime_before) }}</span>
                                         <span class="text-muted-foreground"> → </span>
                                         {{ rep(row.runtime_after) }}
-                                    </TableCell>
-                                    <TableCell>
-                                        <Badge variant="outline">{{ t('history.change.' + row.change_kind) }}</Badge>
                                     </TableCell>
                                 </TableRow>
                             </TableBody>
@@ -335,7 +382,7 @@ watch([relationID, commitID], () => void loadHead(), { immediate: true })
                     <CardContent class="py-2">
                         <div class="flex items-center justify-between gap-2 px-2 py-2">
                             <div class="flex flex-col">
-                                <span class="font-medium text-sm text-foreground">{{ t('history.commit.skippedTitle') }}（{{ skipped.length }}）</span>
+                                <span class="text-foreground text-sm font-medium">{{ t('history.commit.skippedTitle') }}（{{ skipped.length }}）</span>
                                 <span class="text-muted-foreground text-xs">{{ t('history.commit.skippedHint') }}</span>
                             </div>
                             <Button size="sm" variant="outline" :disabled="retrying" @click="retrySkipped">
