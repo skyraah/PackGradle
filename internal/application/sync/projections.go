@@ -219,14 +219,25 @@ func commitDecisionsView(summary json.RawMessage, key string) []view.CommitDecis
 	if len(summary) == 0 {
 		return []view.CommitDecisionView{}
 	}
-	var parsed map[string][]struct {
-		ResourceID string `json:"resource_id"`
+	// struct 形态解析：summary 还承载标量键（operation_count 等），整包按
+	// map[ string][]T 反解会因类型不符整体失败。
+	var parsed struct {
+		Ignored []struct {
+			ResourceID string `json:"resource_id"`
+		} `json:"ignored"`
+		Manual []struct {
+			ResourceID string `json:"resource_id"`
+		} `json:"manual"`
 	}
 	if err := json.Unmarshal(summary, &parsed); err != nil {
 		return []view.CommitDecisionView{}
 	}
-	out := make([]view.CommitDecisionView, 0, len(parsed[key]))
-	for _, d := range parsed[key] {
+	src := parsed.Manual
+	if key == "ignored" {
+		src = parsed.Ignored
+	}
+	out := make([]view.CommitDecisionView, 0, len(src))
+	for _, d := range src {
 		out = append(out, view.CommitDecisionView{ResourceID: d.ResourceID})
 	}
 	return out

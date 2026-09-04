@@ -134,6 +134,50 @@ func rule(id, direction string) model.MappingRule {
 	return model.MappingRule{ID: id, Direction: direction}
 }
 
+// TestResourceDirectionExactPathIgnoreFallback 票 #100（ADR-0013 §3 口径唯一点）：
+// 恰有两侧前缀等于资源路径的单文件 ignore 规则时恒判 ignore——忽略规则随提交
+// 事务合成后、下一次扫描前，存量快照的观察仍指向被覆盖的目录规则；差异面与
+// 计划面必须在该窗口同口径静默。方向改回（恢复）后观察结论回归权威；mod 资源
+// 不按路径裁决。
+func TestResourceDirectionExactPathIgnoreFallback(t *testing.T) {
+	const id = "file:config/b.toml"
+	rules := []model.MappingRule{
+		{ID: "config", ResourceKind: "text_file", ProjectPrefix: "config", RuntimePrefix: "config", Direction: "bidirectional"},
+		{ID: "ignore-config/b.toml", ResourceKind: "text_file", ProjectPrefix: "config/b.toml", RuntimePrefix: "config/b.toml", Direction: "ignore"},
+		{ID: "mods", ResourceKind: "mod", ProjectPrefix: "mods", RuntimePrefix: "mods", Direction: "bidirectional"},
+	}
+	pol := model.MappingPolicy{SchemaVersion: model.CurrentSchemaVersion, PolicyID: "default-v1", Revision: 1, Rules: rules}
+	staleProj := snapshot(model.SideProject, fileObs(id, "h1", "config"))
+	staleRt := snapshot(model.SideRuntime, fileObs(id, "h1", "config"))
+	emptyP := snapshot(model.SideProject)
+	emptyR := snapshot(model.SideRuntime)
+
+	// 快照观察 hit 被覆盖的目录规则（bidirectional）→ 精确覆盖规则胜出
+	if got := ResourceDirection(pol, staleProj, staleRt, id); got != "ignore" {
+		t.Errorf("窗口内观察指向目录规则时方向 = %q，期望 ignore", got)
+	}
+	// 双侧无观察（文件日后被删）仍按精确覆盖判 ignore
+	if got := ResourceDirection(pol, emptyP, emptyR, id); got != "ignore" {
+		t.Errorf("双侧无观察时方向 = %q，期望 ignore", got)
+	}
+	// 新扫描后观察直接命中 ignore 规则
+	freshProj := snapshot(model.SideProject, fileObs(id, "h1", "ignore-config/b.toml"))
+	if got := ResourceDirection(pol, freshProj, emptyR, id); got != "ignore" {
+		t.Errorf("观察命中 ignore 规则时方向 = %q，期望 ignore", got)
+	}
+	// 方向改回（受管范围页恢复）：观察结论（bidirectional）回归权威
+	restoredRules := append([]model.MappingRule{}, rules...)
+	restoredRules[1].Direction = "bidirectional"
+	restored := model.MappingPolicy{SchemaVersion: model.CurrentSchemaVersion, PolicyID: "default-v1", Revision: 1, Rules: restoredRules}
+	if got := ResourceDirection(restored, staleProj, staleRt, id); got != "bidirectional" {
+		t.Errorf("方向改回后方向 = %q，期望 bidirectional", got)
+	}
+	// mod 资源无 file: 内嵌路径，不按路径裁决
+	if got := ResourceDirection(pol, emptyP, emptyR, "mod:jar:x.jar"); got != "bidirectional" {
+		t.Errorf("mod 资源方向 = %q，期望 bidirectional（不按路径裁决）", got)
+	}
+}
+
 // findOp 按 ResourceID 查找操作。
 func findOp(ops []model.PlannedOperation, id string) (model.PlannedOperation, bool) {
 	for _, op := range ops {

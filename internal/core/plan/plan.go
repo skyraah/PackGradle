@@ -383,8 +383,12 @@ func ResourceDirection(policy model.MappingPolicy, project, runtime model.Observ
 	return resourceDirection(policy, project, runtime, id)
 }
 
-// resourceDirection 查资源观察命中的映射规则方向：project 侧观察优先，
-// 其 PolicyID 未命中规则时回退 runtime 侧；找不到规则视为 bidirectional。
+// resourceDirection 查资源受映射规则治理的方向（票 #100，ADR-0013 §3 的口径
+// 唯一点）：恰有两侧前缀等于资源路径的单文件 ignore 规则覆盖时恒判 ignore
+// ——最长前缀语义下它就是下一次扫描的胜出规则（observation PolicyID 在快照
+// 早于策略写入的窗口内仍指向被覆盖的目录规则，如忽略规则随提交事务合成的
+// 场景）；否则按观察查规则方向（project 侧观察优先，未命中回退 runtime 侧）；
+// 找不到规则视为 bidirectional。
 func resourceDirection(policy model.MappingPolicy, project, runtime model.ObservedSnapshot, id model.ResourceID) string {
 	for _, s := range []model.ObservedSnapshot{project, runtime} {
 		obs := observation(s, id)
@@ -393,11 +397,55 @@ func resourceDirection(policy model.MappingPolicy, project, runtime model.Observ
 		}
 		for i := range policy.Rules {
 			if policy.Rules[i].ID == obs.PolicyID {
+				if policy.Rules[i].Direction == directionIgnore {
+					return directionIgnore
+				}
+				// 观察 hit 非 ignore 规则时先记住结论，仍需检查精确覆盖
+				if d := exactPathIgnoreDirection(policy, id); d != "" {
+					return d
+				}
 				return policy.Rules[i].Direction
 			}
 		}
 	}
+	if d := exactPathIgnoreDirection(policy, id); d != "" {
+		return d
+	}
 	return directionBidirectional
+}
+
+// exactPathIgnoreDirection 判断资源是否被「两侧前缀恰等于资源路径」的单文件
+// ignore 规则覆盖（synthesizedIgnoreRules 的合成形状）；命中返回 ignore，
+// 否则空串。非 file: 资源不按路径裁决（mod 规则前缀恒为 mods）。
+func exactPathIgnoreDirection(policy model.MappingPolicy, id model.ResourceID) string {
+	path, ok := resourceIDPath(id)
+	if !ok {
+		return ""
+	}
+	for i := range policy.Rules {
+		r := &policy.Rules[i]
+		if r.Direction == directionIgnore && model.ResourceKind(r.ResourceKind) != model.ResourceMod &&
+			rulePathPrefix(r.ProjectPrefix) == path && rulePathPrefix(r.RuntimePrefix) == path {
+			return directionIgnore
+		}
+	}
+	return ""
+}
+
+// resourceIDPath 剥离 file: 资源 ID 内嵌的 root 相对路径（小写、斜杠、去首尾
+// 分隔，与 policy 包 normalizeRelPath 的匹配口径一致）。
+func resourceIDPath(id model.ResourceID) (string, bool) {
+	s := string(id)
+	if !strings.HasPrefix(s, "file:") {
+		return "", false
+	}
+	p := strings.Trim(strings.ToLower(strings.ReplaceAll(strings.TrimPrefix(s, "file:"), "\\", "/")), "/")
+	return p, p != ""
+}
+
+// rulePathPrefix 归一化规则前缀用于路径比较（小写、斜杠、去首尾分隔）。
+func rulePathPrefix(prefix string) string {
+	return strings.Trim(strings.ToLower(strings.ReplaceAll(prefix, "\\", "/")), "/")
 }
 
 // opAllowed 判断操作类别是否被方向允许：project_to_runtime 禁止
