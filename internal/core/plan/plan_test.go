@@ -134,6 +134,83 @@ func rule(id, direction string) model.MappingRule {
 	return model.MappingRule{ID: id, Direction: direction}
 }
 
+// TestResourceDirectionExactPathIgnoreFallback 票 #100（ADR-0013 §3 口径唯一点）：
+// 恰有两侧前缀等于资源路径的单文件 ignore 规则时恒判 ignore——忽略规则随提交
+// 事务合成后、下一次扫描前，存量快照的观察仍指向被覆盖的目录规则；差异面与
+// 计划面必须在该窗口同口径静默。方向改回（恢复）后观察结论回归权威；mod 资源
+// 不按路径裁决。
+func TestResourceDirectionExactPathIgnoreFallback(t *testing.T) {
+	const id = "file:config/b.toml"
+	rules := []model.MappingRule{
+		{ID: "config", ResourceKind: "text_file", ProjectPrefix: "config", RuntimePrefix: "config", Direction: "bidirectional"},
+		{ID: "ignore-config/b.toml", ResourceKind: "text_file", ProjectPrefix: "config/b.toml", RuntimePrefix: "config/b.toml", Direction: "ignore"},
+		{ID: "mods", ResourceKind: "mod", ProjectPrefix: "mods", RuntimePrefix: "mods", Direction: "bidirectional"},
+	}
+	pol := model.MappingPolicy{SchemaVersion: model.CurrentSchemaVersion, PolicyID: "default-v1", Revision: 1, Rules: rules}
+	staleProj := snapshot(model.SideProject, fileObs(id, "h1", "config"))
+	staleRt := snapshot(model.SideRuntime, fileObs(id, "h1", "config"))
+	emptyP := snapshot(model.SideProject)
+	emptyR := snapshot(model.SideRuntime)
+
+	// 快照观察 hit 被覆盖的目录规则（bidirectional）→ 精确覆盖规则胜出
+	if got := ResourceDirection(pol, staleProj, staleRt, id); got != "ignore" {
+		t.Errorf("窗口内观察指向目录规则时方向 = %q，期望 ignore", got)
+	}
+	// 双侧无观察（文件日后被删）仍按精确覆盖判 ignore
+	if got := ResourceDirection(pol, emptyP, emptyR, id); got != "ignore" {
+		t.Errorf("双侧无观察时方向 = %q，期望 ignore", got)
+	}
+	// 新扫描后观察直接命中 ignore 规则
+	freshProj := snapshot(model.SideProject, fileObs(id, "h1", "ignore-config/b.toml"))
+	if got := ResourceDirection(pol, freshProj, emptyR, id); got != "ignore" {
+		t.Errorf("观察命中 ignore 规则时方向 = %q，期望 ignore", got)
+	}
+	// 方向改回（受管范围页恢复）：观察结论（bidirectional）回归权威
+	restoredRules := append([]model.MappingRule{}, rules...)
+	restoredRules[1].Direction = "bidirectional"
+	restored := model.MappingPolicy{SchemaVersion: model.CurrentSchemaVersion, PolicyID: "default-v1", Revision: 1, Rules: restoredRules}
+	if got := ResourceDirection(restored, staleProj, staleRt, id); got != "bidirectional" {
+		t.Errorf("方向改回后方向 = %q，期望 bidirectional", got)
+	}
+	// mod 资源无 file: 内嵌路径，不按路径裁决
+	if got := ResourceDirection(pol, emptyP, emptyR, "mod:jar:x.jar"); got != "bidirectional" {
+		t.Errorf("mod 资源方向 = %q，期望 bidirectional（不按路径裁决）", got)
+	}
+}
+
+// TestResourceDirectionGlobbedExactPrefixNotIgnored 票 #100 C2 资格收窄：
+// 同前缀但带 glob 的 ignore 规则不精确治理该文件——扫描候选按 Matches 裁决
+//（managedfiles：include 不命中即退出候选），该文件实际由被覆盖的目录规则
+// 治理；精确前缀快路径不得据此判 ignore，否则与扫描口径背离（资源在扫描面
+// 出现、在计划面消失）。
+func TestResourceDirectionGlobbedExactPrefixNotIgnored(t *testing.T) {
+	const id = "file:config/b.toml"
+	rules := []model.MappingRule{
+		{ID: "config", ResourceKind: "text_file", ProjectPrefix: "config", RuntimePrefix: "config", Direction: "bidirectional"},
+		{ID: "user-glob", ResourceKind: "text_file", ProjectPrefix: "config/b.toml", RuntimePrefix: "config/b.toml", Include: []string{"bak.toml"}, Direction: "ignore"},
+		{ID: "mods", ResourceKind: "mod", ProjectPrefix: "mods", RuntimePrefix: "mods", Direction: "bidirectional"},
+	}
+	pol := model.MappingPolicy{SchemaVersion: model.CurrentSchemaVersion, PolicyID: "default-v1", Revision: 1, Rules: rules}
+	// 快照观察 hit config 目录规则（bidirectional）：带 glob 的同前缀 ignore
+	// 规则不抢裁决，方向随观察结论
+	staleProj := snapshot(model.SideProject, fileObs(id, "h1", "config"))
+	staleRt := snapshot(model.SideRuntime, fileObs(id, "h1", "config"))
+	if got := ResourceDirection(pol, staleProj, staleRt, id); got != "bidirectional" {
+		t.Errorf("观察 hit 目录规则时方向 = %q，期望 bidirectional（带 glob 的同前缀规则不精确治理）", got)
+	}
+	// 双侧无观察（快路径唯一入口）：同样不得判 ignore
+	if got := ResourceDirection(pol, snapshot(model.SideProject), snapshot(model.SideRuntime), id); got != "bidirectional" {
+		t.Errorf("双侧无观察时方向 = %q，期望 bidirectional（快路径不命中带 glob 规则）", got)
+	}
+	// 对照：去掉 include 即精确治理（合成形状），快路径恢复命中
+	trimmed := append([]model.MappingRule{}, rules...)
+	trimmed[1].Include = nil
+	trimmedPol := model.MappingPolicy{SchemaVersion: model.CurrentSchemaVersion, PolicyID: "default-v1", Revision: 1, Rules: trimmed}
+	if got := ResourceDirection(trimmedPol, snapshot(model.SideProject), snapshot(model.SideRuntime), id); got != "ignore" {
+		t.Errorf("同前缀无 glob 时方向 = %q，期望 ignore（对照：资格收窄只因 glob）", got)
+	}
+}
+
 // findOp 按 ResourceID 查找操作。
 func findOp(ops []model.PlannedOperation, id string) (model.PlannedOperation, bool) {
 	for _, op := range ops {

@@ -567,6 +567,13 @@ func (a *App) completeRecoveredRun(ctx context.Context, active model.Task, run m
 		blocked(resultIOError, fmt.Errorf("验证复扫失败: %w", err))
 		return
 	}
+	// 复扫所用现行策略：verifyRescan 的 ignore 过滤与复扫观察的 PolicyID 同源
+	// （票 #100，ADR-0013 §3）。
+	policySet, err := a.deps.Mappings.GetPolicy(ctx, rel.RelationID)
+	if err != nil {
+		blocked(resultIOError, fmt.Errorf("读取映射策略: %w", err))
+		return
+	}
 	var base *model.SyncBaseline
 	if plan.BaseBaselineID != "" {
 		b, err := a.deps.Baselines.Get(ctx, plan.BaseBaselineID)
@@ -582,7 +589,7 @@ func (a *App) completeRecoveredRun(ctx context.Context, active model.Task, run m
 		_, tgtSide, _ := applySideForOp(v.planned)
 		plans[i] = applyFilePlan{op: v.planned, action: v.action, targetSide: tgtSide}
 	}
-	violations, remaining, err := verifyRescan(plan, plans, rescanP, rescanR, base, nil)
+	violations, remaining, err := verifyRescan(plan, plans, rescanP, rescanR, base, nil, policySet)
 	if err != nil {
 		blocked(resultVerifyMismatch, fmt.Errorf("验证比较失败: %w", err))
 		return

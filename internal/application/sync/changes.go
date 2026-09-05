@@ -91,6 +91,20 @@ func (a *App) GetChanges(ctx context.Context, input view.GetChangesInput) (view.
 		return view.ChangesPage{}, err
 	}
 
+	// direction=ignore 的资源已移出受管范围，不进变更列表与计数（票 #100，
+	// ADR-0013 §3；与计划构建同口径过滤）。
+	policySet, err := a.deps.Mappings.GetPolicy(ctx, input.RelationID)
+	if err != nil {
+		return view.ChangesPage{}, err
+	}
+	ignored := ignoreDirectionFilter(policySet, snapP, snapR)
+	visible := make([]diff.ResourceDiff, 0, len(result.Diffs))
+	for _, d := range result.Diffs {
+		if !ignored(d.ResourceID) {
+			visible = append(visible, d)
+		}
+	}
+
 	// 逐资源诊断：取两侧快照中 ResourceID 命中的持久化诊断（映射冲突/未知格式/低置信度等）。
 	diagsByResource := changesDiagnostics(snapP, snapR)
 	conflictsByResource := make(map[model.ResourceID][]model.Conflict, len(result.Conflicts))
@@ -99,8 +113,8 @@ func (a *App) GetChanges(ctx context.Context, input view.GetChangesInput) (view.
 	}
 
 	// 先筛后页：items 为筛选后按 resource_id 字节序的子序列，cursor 以字节序推进。
-	items := make([]view.ChangeView, 0, len(result.Diffs))
-	for _, d := range result.Diffs {
+	items := make([]view.ChangeView, 0, len(visible))
+	for _, d := range visible {
 		if input.Classification != "" && string(d.Classification) != input.Classification {
 			continue
 		}
@@ -137,7 +151,7 @@ func (a *App) GetChanges(ctx context.Context, input view.GetChangesInput) (view.
 	page := view.ChangesPage{
 		SchemaVersion: model.CurrentSchemaVersion,
 		Items:         make([]view.ChangeView, 0),
-		Summary:       changesSummary(result.Diffs),
+		Summary:       changesSummary(visible),
 	}
 	limit := ports.PageRequest{Cursor: input.Cursor, Limit: input.Limit}.NormalizeLimit()
 	start := 0

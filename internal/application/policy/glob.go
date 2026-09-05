@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"regexp"
 	"strings"
+
+	"packgradle/internal/core/normalize"
 )
 
 // Glob 是编译后的 root-relative glob 匹配器。
@@ -26,7 +28,7 @@ func CompileGlob(pattern string) (*Glob, error) {
 	if strings.HasPrefix(slash, "/") {
 		return nil, fmt.Errorf("glob 模式为绝对路径: %q", pattern)
 	}
-	p := normalizeRelPath(pattern)
+	p := normalize.NormalizeRelPath(pattern)
 	if p == "" {
 		return nil, fmt.Errorf("空 glob 模式")
 	}
@@ -57,13 +59,9 @@ func (g *Glob) MatchPath(path string) bool {
 	return false
 }
 
-// normalizeRelPath 归一化：反斜杠转斜杠、小写、去首尾 '/'。
-func normalizeRelPath(p string) string {
-	p = strings.ReplaceAll(p, "\\", "/")
-	p = strings.ToLower(p)
-	p = strings.Trim(p, "/")
-	return p
-}
+// NormalizeRelPath 引用说明：路径归一化唯一实现在 core/normalize（票 #100
+// 评审微修下沉：core→application 逆向边不收，application→core 正向），本包
+// glob 编译与规则前缀编译直接调 normalize.NormalizeRelPath，不再持本地副本。
 
 // validateRelSegments 校验 root 相对路径形状：非空段、无 '..'/'.'、无冒号
 // （root 边界的编译期检查；运行时越界仍由 filesystem.Resolver 兜底）。

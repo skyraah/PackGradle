@@ -375,8 +375,20 @@ func validChoice(kind model.ConflictKind, choice model.ResolutionChoice) bool {
 	return false
 }
 
-// resourceDirection 查资源观察命中的映射规则方向：project 侧观察优先，
-// 其 PolicyID 未命中规则时回退 runtime 侧；找不到规则视为 bidirectional。
+// ResourceDirection 是 resourceDirection 的导出口（票 #100，ADR-0013 §3）：
+// 工作区 diff_state、changes 页、QuickUpdate 无差异判定与 verifyRescan 的
+// ignore 过滤必须与计划构建完全同口径，统一经本函数判定，杜绝「计划静默
+// 但差异面显示」的裂缝。
+func ResourceDirection(policy model.MappingPolicy, project, runtime model.ObservedSnapshot, id model.ResourceID) string {
+	return resourceDirection(policy, project, runtime, id)
+}
+
+// resourceDirection 查资源受映射规则治理的方向（票 #100，ADR-0013 §3 的口径
+// 唯一点）：恰有两侧前缀等于资源路径的单文件 ignore 规则覆盖时恒判 ignore
+// ——最长前缀语义下它就是下一次扫描的胜出规则（observation PolicyID 在快照
+// 早于策略写入的窗口内仍指向被覆盖的目录规则，如忽略规则随提交事务合成的
+// 场景）；否则按观察查规则方向（project 侧观察优先，未命中回退 runtime 侧）；
+// 找不到规则视为 bidirectional。
 func resourceDirection(policy model.MappingPolicy, project, runtime model.ObservedSnapshot, id model.ResourceID) string {
 	for _, s := range []model.ObservedSnapshot{project, runtime} {
 		obs := observation(s, id)
@@ -385,11 +397,56 @@ func resourceDirection(policy model.MappingPolicy, project, runtime model.Observ
 		}
 		for i := range policy.Rules {
 			if policy.Rules[i].ID == obs.PolicyID {
+				if policy.Rules[i].Direction == directionIgnore {
+					return directionIgnore
+				}
+				// 观察 hit 非 ignore 规则时先记住结论，仍需检查精确覆盖
+				if d := exactPathIgnoreDirection(policy, id); d != "" {
+					return d
+				}
 				return policy.Rules[i].Direction
 			}
 		}
 	}
+	if d := exactPathIgnoreDirection(policy, id); d != "" {
+		return d
+	}
 	return directionBidirectional
+}
+
+// exactPathIgnoreDirection 判断资源是否被「两侧前缀恰等于资源路径」的单文件
+// ignore 规则覆盖（synthesizedIgnoreRules 的合成形状）；命中返回 ignore，
+// 否则空串。非 file: 资源不按路径裁决（mod 规则前缀恒为 mods）。
+// 资格收窄（票 #100 C2）：仅 include/exclude 均空的规则算精确治理该文件——
+// 合成规则两者恒空；用户自建同前缀但带 glob 的规则经扫描 Matches 裁决
+//（managedfiles 候选收集：include 不命中即退出候选）可能不治理该文件，
+// 不得据此判 ignore，否则与扫描口径背离（扫描面出现、计划面消失）——该
+// 资源按观察/最长前缀裁决的正常语义走（direction=ignore 的这类规则同样
+// 只在观察 hit 时生效）。
+func exactPathIgnoreDirection(policy model.MappingPolicy, id model.ResourceID) string {
+	path, ok := resourceIDPath(id)
+	if !ok {
+		return ""
+	}
+	for i := range policy.Rules {
+		r := &policy.Rules[i]
+		if r.Direction == directionIgnore && len(r.Include) == 0 && len(r.Exclude) == 0 &&
+			ExactPathRuleForPath(*r, path) {
+			return directionIgnore
+		}
+	}
+	return ""
+}
+
+// resourceIDPath 剥离 file: 资源 ID 内嵌的 root 相对路径（归一化口径与扫描
+// 器一致：normalize.NormalizeRelPath，小写、斜杠、去首尾分隔）。
+func resourceIDPath(id model.ResourceID) (string, bool) {
+	s := string(id)
+	if !strings.HasPrefix(s, "file:") {
+		return "", false
+	}
+	p := normalize.NormalizeRelPath(strings.TrimPrefix(s, "file:"))
+	return p, p != ""
 }
 
 // opAllowed 判断操作类别是否被方向允许：project_to_runtime 禁止

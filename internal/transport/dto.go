@@ -535,6 +535,11 @@ type CommitDTO struct {
 	// Skipped 是本场剔出的取数失败清单（契约 06 §3.7/ADR-0008 §7，票 #63）：
 	// 成功 N + 跳过 M（带 err.download.* 原因码）；旧行无该记录为空数组。
 	Skipped []CommitSkippedDTO `json:"skipped"`
+	// Ignored/Manual 是用户决议资源清单（ADR-0013 §1，票 #100）：已忽略
+	//（ChoiceSkip，随提交合成 ignore 规则）/手动处理（ChoiceManual）分列，
+	// 与 Skipped 的物化取数剔除项无关；旧行无该记录为空数组。
+	Ignored []CommitDecisionDTO `json:"ignored"`
+	Manual  []CommitDecisionDTO `json:"manual"`
 }
 
 // CommitSkippedDTO 是跳过清单单行：资源 ID + 原因码（文案由前端 locale 提供）。
@@ -542,6 +547,11 @@ type CommitSkippedDTO struct {
 	ResourceID string   `json:"resource_id"`
 	ReasonCode string   `json:"reason_code"`
 	ReasonArgs []string `json:"reason_args,omitempty"`
+}
+
+// CommitDecisionDTO 是用户决议资源单行（ADR-0013 §1，票 #100）。
+type CommitDecisionDTO struct {
+	ResourceID string `json:"resource_id"`
 }
 
 // CommitPageDTO 是历史列表分页（created_at DESC；cursor=上一页末条 commit_id）。

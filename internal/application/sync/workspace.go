@@ -144,12 +144,29 @@ func (a *App) GetWorkspace(ctx context.Context, relationID string) (view.Workspa
 		if err != nil {
 			return view.WorkspaceView{}, err
 		}
+		// direction=ignore 的资源与计划构建同口径剔除（票 #100，ADR-0013 §3）：
+		// 忽略资源与基线分歧不计入 dirty/conflicted。
+		policySet, err := a.deps.Mappings.GetPolicy(ctx, relationID)
+		if err != nil {
+			return view.WorkspaceView{}, err
+		}
+		ignored := ignoreDirectionFilter(policySet, snapP, snapR)
+		conflicted := false
+		for _, c := range result.Conflicts {
+			if !ignored(c.ResourceID) {
+				conflicted = true
+				break
+			}
+		}
 		switch {
-		case len(result.Conflicts) > 0:
+		case conflicted:
 			state.DiffState = "conflicted"
 		default:
 			state.DiffState = "clean"
 			for _, d := range result.Diffs {
+				if ignored(d.ResourceID) {
+					continue
+				}
 				if d.Classification != diff.ClassNoop && d.Classification != diff.ClassConverged {
 					state.DiffState = "dirty"
 					break

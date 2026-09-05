@@ -427,14 +427,24 @@ type CommitSkippedView struct {
 	ReasonArgs []string `json:"reason_args,omitempty"`
 }
 
+// CommitDecisionView 是用户决议资源的提交详情单行（ADR-0013 §1，票 #100）：
+// 「已忽略」（ChoiceSkip，随提交合成 ignore 规则）与「手动处理」（ChoiceManual，
+// 本次吸收进基线）分列展示，与 Skipped 的物化取数剔除项无关。
+type CommitDecisionView struct {
+	ResourceID string `json:"resource_id"`
+}
+
 // CommitView 是单提交详情（changes 全量，单 commit 不分页；契约 05 §3.5）。
 // Skipped 从提交头 summary JSON 解析（引擎定义形状；旧行无该记录为空切片）。
+// Ignored/Manual 同源解析用户决议清单（旧行无该记录为空切片）。
 type CommitView struct {
-	SchemaVersion int                 `json:"schema_version"`
-	Summary       CommitSummaryView   `json:"summary"`
-	PlanID        string              `json:"plan_id"`
-	Changes       []CommitChangeView  `json:"changes"`
-	Skipped       []CommitSkippedView `json:"skipped"`
+	SchemaVersion int                  `json:"schema_version"`
+	Summary       CommitSummaryView    `json:"summary"`
+	PlanID        string               `json:"plan_id"`
+	Changes       []CommitChangeView   `json:"changes"`
+	Skipped       []CommitSkippedView  `json:"skipped"`
+	Ignored       []CommitDecisionView `json:"ignored"`
+	Manual        []CommitDecisionView `json:"manual"`
 }
 
 // CommitPage 是历史列表分页（created_at DESC；cursor=上一页末条 commit_id）。
