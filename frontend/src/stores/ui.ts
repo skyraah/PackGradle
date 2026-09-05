@@ -9,10 +9,15 @@ interface Notice {
     timeout: number
 }
 
+// 任务中心抽屉开合（App.vue 绑定渲染）：抽屉本体挂在壳层，壳层铃铛与视图内的
+// 「查看任务」入口（UX 原型 §7.1 行操作优先级链，票 #104；工作区对象头 C-02
+// 扫描中横幅/主操作，票 #105）共用同一状态。
+export const taskDrawerOpen = ref(false)
+
 const snackbar = ref(false)
 const snackbarMsg = ref('')
 const snackbarTone = ref<NoticeTone>('info')
-const snackbarTimeout = ref(4200)
+const snackbarTimeout = ref(3200)
 const current = ref<Notice | null>(null)
 const queue: Notice[] = []
 let transitionTimer: ReturnType<typeof setTimeout> | undefined
@@ -28,7 +33,7 @@ function showNext() {
     snackbar.value = true
 }
 
-export function showSnackbar(message: string, tone: NoticeTone = 'info', timeout = 4200) {
+export function showSnackbar(message: string, tone: NoticeTone = 'info', timeout = 3200) {
     const normalized = message.trim()
     if (!normalized) return
     queue.push({ message: normalized, tone, timeout })

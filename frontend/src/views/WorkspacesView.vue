@@ -1,82 +1,92 @@
 <script setup lang="ts">
-// /workspaces：工作区列表（契约 04 缓存骨架 + UX 原型 §7.1）。
+// /workspaces：工作区列表（契约 04 缓存骨架 + UX 原型 §7.1，票 #104 六列骨架）。
 // 数据全部来自 stores/syncCache（查询 API 的投影）：bootstrap 首次填充前渲骨架，
 // 事件/对账触发的受控重查原地更新，页面不做第二处数据获取、不订阅事件。
-// 行操作由 features/availability 驱动渲染（契约 03 §2.1）：未注册的动作不出现入口。
+// 列结构对照原型 W-01..W-04：工作区、关系健康、变化状态、当前任务、最近活动、
+// 行操作；行末唯一主操作按原型 §7.1 优先级链给出（处理恢复 > 重新绑定 >
+// 开始扫描 > 重试扫描 > 查看任务 > 生成同步分析 > 查看变化）；扫描/重绑入口
+// 沿用 features/availability 唯一门控（契约 03 §2.1）：不可用灰置保留位置并显
+// 后端原因码；快速更新不在行末（拍板移入对象头「更多」菜单，#105 落地）。
 import { computed, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useRouter } from 'vue-router'
+import { ArrowLeftRight } from '@lucide/vue'
 import { SyncService } from '../api'
 import type { TaskDTO, WorkspaceDTO } from '../api'
 import { bootstrapped, bootstrapError, retryBootstrap, tasks, triggerRequery, workspaces } from '../stores/syncCache'
-import { showSnackbar } from '../stores/ui'
+import { showSnackbar, taskDrawerOpen } from '../stores/ui'
 import { errText } from '../utils/errors'
-import { availabilityReasonText, canPrepareSync, canQuickUpdate, canRebind, prepareSync } from '../utils/plans'
+import { availabilityReasonText, canPrepareSync, canRebind, prepareSync } from '../utils/plans'
+import { DIFF_TONES, HEALTH_TONES, latestScanText, toneOf, type BadgeTone } from '../utils/pageState'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
+import { Progress } from '@/components/ui/progress'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 
 const { t } = useI18n()
 const router = useRouter()
 
-// 正交状态徽标：ok=绿 / 进行中=secondary / 需注意=琥珀 / 异常=destructive（稳定状态色，
-// 不使用整行鲜红背景——UX 原型 §7.1 状态画板）
-interface BadgeTone {
-    variant: 'default' | 'secondary' | 'destructive' | 'outline'
-    class?: string
-}
-const OK: BadgeTone = { variant: 'outline', class: 'text-emerald-600 dark:text-emerald-400' }
-const WARN: BadgeTone = { variant: 'outline', class: 'text-amber-600 dark:text-amber-400' }
-const NEUTRAL: BadgeTone = { variant: 'outline' }
-const BUSY: BadgeTone = { variant: 'secondary' }
-const BAD: BadgeTone = { variant: 'destructive' }
-
-const scanTones: Record<string, BadgeTone> = {
-    ready: OK,
-    scanning: BUSY,
-    queued: BUSY,
-    never_scanned: NEUTRAL,
-    failed: BAD,
-}
-const baselineTones: Record<string, BadgeTone> = { ready: OK, stale: WARN, none: NEUTRAL }
-const diffTones: Record<string, BadgeTone> = {
-    clean: OK,
-    dirty: BUSY,
-    conflicted: BAD,
-    initialization_required: WARN,
-    unknown: NEUTRAL,
-}
-const healthTones: Record<string, BadgeTone> = {
-    healthy: OK,
-    endpoint_missing: WARN,
-    rebind_required: WARN,
-    recovery_required: BAD,
-}
-
-function toneOf(map: Record<string, BadgeTone>, value: string): BadgeTone {
-    return map[value] ?? NEUTRAL
-}
+// 正交状态徽标（UX 原型 §7.1 状态画板）：色调映射收敛于 utils/pageState（票 #102）
 
 // —— 行视图模型：缓存每次提交后统一派生，模板不重复取值 ——
+// 行末唯一主操作（UX 原型 §7.1 优先级链，票 #104）：primary 对应原型
+// btn-primary / btn-tonal 两档强调；disabled+title 承接 availability 灰置语义。
+type RowActionKind = 'recover' | 'rebind' | 'scan' | 'rescan' | 'viewTask' | 'prepare' | 'viewChanges'
+
+interface RowAction {
+    kind: RowActionKind
+    label: string
+    primary: boolean
+    disabled?: boolean
+    title?: string
+}
+
 interface WorkspaceRow {
     workspace: WorkspaceDTO
     task: TaskDTO | null
-    canScan: boolean
-    canPrepareSync: boolean
-    canRebind: boolean
-    rebindReason: string
-    recoveryRequired: boolean
-    canHistory: boolean
-    canQuickUpdate: boolean
-    quickUpdateReason: string
     pendingPlanID: string
-    scanLabel: string
+    recoveryRequired: boolean
     healthTone: BadgeTone
-    scanTone: BadgeTone
-    baselineTone: BadgeTone
     diffTone: BadgeTone
     activity: string
+    action: RowAction
+}
+
+// rowActionFor 按原型 §7.1 优先级链派生行末唯一主操作（七态互斥，文案逐字对照
+// 原型）：恢复门最先；rebind_required 出「重新绑定」（路径迁移是合法主动操作，
+// 恢复门已在上一分支拦下）；scan never/failed 出扫描入口（availability 灰置时
+// 保留位置显原因码）；其余活跃任务（扫描中/排队/应用/回滚）出「查看任务」；
+// prepare_sync 可用出「生成同步分析」（T11 计划页承接）；兜底「查看变化」。
+function rowActionFor(w: WorkspaceDTO, task: TaskDTO | null): RowAction {
+    if (w.relation.health === 'recovery_required') {
+        return { kind: 'recover', label: t('workspaces.recoverAction'), primary: true }
+    }
+    if (w.relation.health === 'rebind_required') {
+        const reason = availabilityReasonText(w, 'rebind')
+        return {
+            kind: 'rebind',
+            label: t('workspaces.rebindAction'),
+            primary: true,
+            disabled: !canRebind(w),
+            title: reason || undefined,
+        }
+    }
+    const canScan = w.features.scan && w.availability?.some(a => a.action === 'scan' && a.available) === true
+    const scanReason = availabilityReasonText(w, 'scan')
+    if (w.state.scan_state === 'never_scanned') {
+        return { kind: 'scan', label: t('workspaces.scanAction'), primary: true, disabled: !canScan, title: scanReason || undefined }
+    }
+    if (w.state.scan_state === 'failed') {
+        return { kind: 'rescan', label: t('workspaces.scanRetryAction'), primary: true, disabled: !canScan, title: scanReason || undefined }
+    }
+    if (task || w.state.scan_state === 'scanning' || w.state.scan_state === 'queued') {
+        return { kind: 'viewTask', label: t('workspaces.viewTaskAction'), primary: false }
+    }
+    if (canPrepareSync(w)) {
+        return { kind: 'prepare', label: t('workspaces.planAction'), primary: true }
+    }
+    return { kind: 'viewChanges', label: t('workspaces.changesAction'), primary: false }
 }
 
 const rows = computed<WorkspaceRow[]>(() =>
@@ -85,34 +95,16 @@ const rows = computed<WorkspaceRow[]>(() =>
         return {
             workspace: w,
             task,
-            // 能力驱动入口（契约 03 §2.1）：features 且 availability 可用才渲染（唯一门控，
-            // 前端不自行推断快照存在性——scan ready 由后端推导表保证）；prepare_sync 由
-            // T11 承接页（/workspaces/:id/plans/:plan_id）点亮
-            canScan: w.features.scan && w.availability?.some(a => a.action === 'scan' && a.available) === true,
-            canPrepareSync: canPrepareSync(w),
-            canRebind: canRebind(w),
-            // 已注册但不可用（如恢复门期间的 rebind）→ 保留稳定位置并显后端原因码
-            // （UX 原型 §4.3 主操作不可用语义；恢复门期间为 err.recovery.in_progress）
-            rebindReason: availabilityReasonText(w, 'rebind'),
-            // 快速更新入口（契约 06 §1/§9，票 #62）：quick_update availability 唯一门控
-            //（后端已恒注册）——点亮可点，未开/门禁期灰置并显后端原因码（未开授权
-            // 为 err.auth_mode.disabled，恢复期为 err.recovery.in_progress）
-            canQuickUpdate: canQuickUpdate(w),
-            quickUpdateReason: availabilityReasonText(w, 'quick_update'),
             // 待确认角标数据源（契约 07 §3.2/§6，票 #86）：后端投影的最新待人工
             // 计划，relation_invalidated 到达即经受控重查刷新（§4 新发射点收口时序）
             pendingPlanID: w.state.pending_plan_id ?? '',
             recoveryRequired: w.relation.health === 'recovery_required',
-            // 历史入口（T13 B 口径走查发现补，票 #45）：history_view feature 唯一门控，
-            // 列表行承接 /workspaces/:id/history（T10 路由注释既定「入口在工作区列表行
-            // 操作由 T11 承接」而 T11 未落，历史页此前 UI 不可达）；空态由历史页自行呈现
-            canHistory: w.features.history_view === true,
-            scanLabel: w.state.scan_state === 'failed' ? t('workspaces.scanRetryAction') : t('workspaces.scanAction'),
-            healthTone: toneOf(healthTones, w.relation.health),
-            scanTone: toneOf(scanTones, w.state.scan_state),
-            baselineTone: toneOf(baselineTones, w.state.baseline_state),
-            diffTone: toneOf(diffTones, w.state.diff_state),
-            activity: lastActivity(w),
+            // 正交状态徽标（票 #102 共享映射；列结构对照原型 W-03 只保留健康/变化两组，
+            // 扫描与基线信息由行末主操作与 #105 变化页指标条承接）
+            healthTone: toneOf(HEALTH_TONES, w.relation.health),
+            diffTone: toneOf(DIFF_TONES, w.state.diff_state),
+            activity: latestScanText(w.latest_project_snapshot?.captured_at, w.latest_runtime_snapshot?.captured_at),
+            action: rowActionFor(w, task),
         }
     }),
 )
@@ -131,33 +123,27 @@ const watchBanners = computed(() =>
         })),
 )
 
-function taskProgress(task: TaskDTO): string {
-    if (task.total <= 0) return ''
-    return Math.min(100, Math.round((task.completed / task.total) * 100)) + '%'
+// 任务列（原型 .task-cell 形态，票 #104）：类型徽章（st-run 呼吸动画由 Badge
+// pulse 承接）+ 90px 细进度条 + 百分比；total<=0 无法推导百分比时只显零位进度条
+function taskPercent(task: TaskDTO): number | null {
+    if (task.total <= 0) return null
+    return Math.min(100, Math.round((task.completed / task.total) * 100))
 }
 
-function taskLabel(task: TaskDTO): string {
-    return task.message_key ? t(task.message_key, task.message_args ?? []) : t('workspaces.taskKind.' + task.kind)
-}
-
-function lastActivity(w: WorkspaceDTO): string {
-    const stamps = [w.latest_project_snapshot?.captured_at, w.latest_runtime_snapshot?.captured_at]
-        .filter((s): s is string => !!s)
-        .map(s => Date.parse(s))
-        .filter(v => !Number.isNaN(v))
-    if (!stamps.length) return '—'
-    return new Date(Math.max(...stamps)).toLocaleString()
+function taskKindLabel(task: TaskDTO): string {
+    return t('workspaces.taskKind.' + task.kind)
 }
 
 // —— 行操作（动作成功后立即触发一轮受控重查；后续事件继续经管线刷新）——
-// withPending 统一防重入：同 id 动作进行中禁点，结束后释放
-const pending = ref({ scanning: new Set<string>(), cancelling: new Set<string>(), preparing: new Set<string>(), recovering: new Set<string>(), updating: new Set<string>() })
+// withPending 统一防重入：同 id 动作进行中禁点，结束后释放（票 #104 收敛后
+// 行内只剩扫描/生成同步分析/处理恢复三类写动作）
+const pending = ref({ scanning: new Set<string>(), preparing: new Set<string>(), recovering: new Set<string>() })
 
-function isPending(kind: 'scanning' | 'cancelling' | 'preparing' | 'recovering' | 'updating', id: string): boolean {
+function isPending(kind: 'scanning' | 'preparing' | 'recovering', id: string): boolean {
     return pending.value[kind].has(id)
 }
 
-async function withPending(kind: 'scanning' | 'cancelling' | 'preparing' | 'recovering' | 'updating', id: string, action: () => Promise<void>): Promise<void> {
+async function withPending(kind: 'scanning' | 'preparing' | 'recovering', id: string, action: () => Promise<void>): Promise<void> {
     if (isPending(kind, id)) return
     const next = new Set(pending.value[kind])
     next.add(id)
@@ -183,33 +169,6 @@ function prepareSyncPlan(row: WorkspaceRow): void {
             await router.push('/workspaces/' + ws.relation.relation_id + '/plans/' + plan.plan_id)
         } catch (e) {
             showSnackbar(errText(e), 'error')
-        }
-    })
-}
-
-// 快速更新（契约 07 §3.1/§6，票 #86）：概览主操作区的一次点击单调用——链在
-// 后端（扫描 → 计划 → 停靠判定 → 免确认执行或停待确认），前端阻塞等收口，
-// 进行中统一 busy（scan/plan/apply 三阶段文案随 utils/quickUpdate 编排退役）。
-// 三态承接：no_diff → 「已是最新」提示；apply_started → 任务中心移交（UX §7.9
-// 沿既有变化页承接）；awaiting_confirmation → 导航待确认计划页（P2 既有流）。
-function quickUpdate(row: WorkspaceRow): void {
-    const relID = row.workspace.relation.relation_id
-    void withPending('updating', relID, async () => {
-        try {
-            const res = await SyncService.QuickUpdate(relID)
-            triggerRequery()
-            if (res.outcome === 'no_diff') {
-                showSnackbar(t('workspaces.quickUpdate.upToDate'), 'success')
-            } else if (res.outcome === 'apply_started') {
-                showSnackbar(t('workspaces.quickUpdate.directToast'), 'success')
-                await router.push('/workspaces/' + relID + '/changes')
-            } else {
-                showSnackbar(t('workspaces.quickUpdate.manualToast'), 'warning')
-                await router.push('/workspaces/' + relID + '/plans/' + res.plan_id)
-            }
-        } catch (e) {
-            showSnackbar(errText(e), 'error')
-            triggerRequery()
         }
     })
 }
@@ -261,27 +220,60 @@ function startScan(w: WorkspaceRow): void {
     })
 }
 
-function cancelTask(task: TaskDTO): void {
-    void withPending('cancelling', task.task_id, async () => {
-        try {
-            await SyncService.CancelTask(task.task_id)
-            triggerRequery()
-        } catch (e) {
-            showSnackbar(errText(e), 'error')
-        }
-    })
+// 行点击进变化页（原型 rowlink → ws-open）；recovery_required 行不设行点击
+// （票 #104）：恢复语义由行末「处理恢复」唯一承接，避免误入恢复中的工作区
+function openWorkspace(row: WorkspaceRow): void {
+    if (row.recoveryRequired) return
+    void router.push('/workspaces/' + row.workspace.relation.relation_id + '/changes')
 }
 
-// 列表头（骨架与数据表共用同一组表头）
+// 行末主操作分发（原型 §7.1 act 映射）：viewTask 打开任务中心抽屉（壳层共用
+// stores/ui 的 taskDrawerOpen），其余为导航或写动作
+function runRowAction(row: WorkspaceRow): void {
+    const relID = row.workspace.relation.relation_id
+    switch (row.action.kind) {
+        case 'recover':
+            openRecovery(row)
+            break
+        case 'rebind':
+            void router.push('/workspaces/' + relID + '/rebind')
+            break
+        case 'scan':
+        case 'rescan':
+            startScan(row)
+            break
+        case 'viewTask':
+            taskDrawerOpen.value = true
+            break
+        case 'prepare':
+            prepareSyncPlan(row)
+            break
+        case 'viewChanges':
+            void router.push('/workspaces/' + relID + '/changes')
+            break
+    }
+}
+
+// 行末主操作禁用态：availability 灰置（disabled+title 已派生）叠加防重入 pending
+function actionDisabled(row: WorkspaceRow): boolean {
+    const relID = row.workspace.relation.relation_id
+    if (row.action.kind === 'prepare') return isPending('preparing', relID)
+    if (row.action.kind === 'recover') return isPending('recovering', relID)
+    if (row.action.kind === 'scan' || row.action.kind === 'rescan') {
+        return row.action.disabled === true || isPending('scanning', relID)
+    }
+    return row.action.disabled === true
+}
+
+// 列表头（骨架与数据表共用同一组表头；六列对照原型 W-01/W-03，行操作列
+// 表头留空，基线/扫描状态列按票 #104 取消——基线归 #105 变化页指标条）
 const cols: { key: string; alignRight?: boolean }[] = [
     { key: 'workspaces.colWorkspace' },
     { key: 'workspaces.colHealth' },
-    { key: 'workspaces.colScan' },
-    { key: 'workspaces.colBaseline' },
     { key: 'workspaces.colDiff' },
     { key: 'workspaces.colTask' },
     { key: 'workspaces.colActivity' },
-    { key: 'workspaces.colActions', alignRight: true },
+    { key: '', alignRight: true },
 ]
 </script>
 
@@ -289,7 +281,7 @@ const cols: { key: string; alignRight?: boolean }[] = [
     <div class="mx-auto flex w-full max-w-6xl flex-col gap-4 p-4 text-foreground">
         <div class="flex items-center justify-between gap-4">
             <div>
-                <h1 class="text-xl font-semibold">{{ t('workspaces.title') }}</h1>
+                <h1 class="page-title">{{ t('workspaces.title') }}</h1>
                 <p class="text-muted-foreground mt-1 text-sm">{{ t('workspaces.subtitle') }}</p>
             </div>
             <Button @click="router.push('/workspaces/new')">{{ t('workspaces.new') }}</Button>
@@ -322,7 +314,7 @@ const cols: { key: string; alignRight?: boolean }[] = [
                     <TableHeader>
                         <TableRow>
                             <TableHead v-for="c in cols" :key="c.key" :class="c.alignRight ? 'text-right' : ''">
-                                {{ t(c.key) }}
+                                {{ c.key ? t(c.key) : '' }}
                             </TableHead>
                         </TableRow>
                     </TableHeader>
@@ -347,26 +339,32 @@ const cols: { key: string; alignRight?: boolean }[] = [
                             </TableCell>
                         </TableRow>
 
-                        <!-- 列表：正交状态 + 能力驱动行操作（UX 原型 W-03） -->
+                        <!-- 列表：六列骨架 + 行末唯一主操作（UX 原型 W-03，票 #104）；
+                             recovery_required 行不设行点击，其余行点击进变化页 -->
                         <template v-else>
-                            <TableRow v-for="row in rows" :key="row.workspace.relation.relation_id">
+                            <TableRow
+                                v-for="row in rows"
+                                :key="row.workspace.relation.relation_id"
+                                :class="row.recoveryRequired ? '' : 'cursor-pointer'"
+                                @click="openWorkspace(row)"
+                            >
                                 <TableCell>
                                     <div class="flex items-center gap-2">
-                                        <div class="font-medium">
+                                        <div class="flex items-center gap-1.5 font-medium">
                                             {{ row.workspace.relation.project.display_name }}
-                                            <span class="text-muted-foreground">↔</span>
+                                            <ArrowLeftRight class="text-muted-foreground size-3.5" />
                                             {{ row.workspace.relation.runtime.display_name }}
                                         </div>
                                         <!-- 待确认角标（契约 07 §6，票 #86）：pending_plan_id
-                                             数据源，「有待确认计划」直达计划页 -->
+                                             数据源，「有待确认计划」直达计划页（阻断行点击冒泡） -->
                                         <button
                                             v-if="row.pendingPlanID"
                                             type="button"
                                             class="cursor-pointer"
                                             :title="t('workspaces.pendingPlanBadge')"
-                                            @click="openPendingPlan(row)"
+                                            @click.stop="openPendingPlan(row)"
                                         >
-                                            <Badge variant="outline" class="text-amber-600 dark:text-amber-400">
+                                            <Badge variant="st-warn">
                                                 {{ t('workspaces.pendingPlanBadge') }}
                                             </Badge>
                                         </button>
@@ -385,148 +383,44 @@ const cols: { key: string; alignRight?: boolean }[] = [
                                     </Badge>
                                 </TableCell>
                                 <TableCell>
-                                    <Badge :variant="row.scanTone.variant" :class="row.scanTone.class">
-                                        {{ t('workspaces.scanState.' + row.workspace.state.scan_state) }}
-                                    </Badge>
-                                </TableCell>
-                                <TableCell>
-                                    <Badge :variant="row.baselineTone.variant" :class="row.baselineTone.class">
-                                        {{ t('workspaces.baselineState.' + row.workspace.state.baseline_state) }}
-                                    </Badge>
-                                </TableCell>
-                                <TableCell>
                                     <Badge :variant="row.diffTone.variant" :class="row.diffTone.class">
                                         {{ t('workspaces.diffState.' + row.workspace.state.diff_state) }}
                                     </Badge>
                                 </TableCell>
                                 <TableCell>
-                                    <div v-if="row.task" class="flex flex-col">
-                                        <span class="text-sm">{{ taskLabel(row.task) }}</span>
-                                        <span v-if="taskProgress(row.task)" class="text-muted-foreground text-xs">
-                                            {{ taskProgress(row.task) }}
+                                    <!-- 任务列（原型 .task-cell）：类型徽章（呼吸动画）+
+                                         90px 细进度条 + 百分比；无任务显「—」 -->
+                                    <div v-if="row.task" class="flex items-center gap-2">
+                                        <Badge variant="st-run" pulse>{{ taskKindLabel(row.task) }}</Badge>
+                                        <Progress
+                                            :model-value="taskPercent(row.task) ?? 0"
+                                            class="h-[5px] w-[90px] rounded-[3px] bg-surface-3"
+                                        />
+                                        <span
+                                            v-if="taskPercent(row.task) !== null"
+                                            class="text-muted-foreground text-xs tabular-nums"
+                                        >
+                                            {{ taskPercent(row.task) }}%
                                         </span>
                                     </div>
                                     <span v-else class="text-muted-foreground">—</span>
                                 </TableCell>
                                 <TableCell class="text-muted-foreground text-xs">{{ row.activity }}</TableCell>
-                                <TableCell>
-                                    <div class="flex justify-end gap-2">
-                                        <!-- 快速更新主操作（契约 07 §3.1/§6，票 #86）：quick_update
-                                             availability 唯一门控——点亮一次点击单调用直达三态；
-                                             未开授权（err.auth_mode.disabled）/活跃任务/恢复门/
-                                             扫描未就绪灰置保留位置并显后端原因码（UX §4.3）；
-                                             进行中统一 busy（链在后端，阶段前端不可感知） -->
-                                        <Button
-                                            size="xs"
-                                            :variant="row.canQuickUpdate ? 'default' : 'outline'"
-                                            :disabled="!row.canQuickUpdate || isPending('updating', row.workspace.relation.relation_id)"
-                                            :title="row.canQuickUpdate ? undefined : row.quickUpdateReason"
-                                            @click="quickUpdate(row)"
-                                        >
-                                            {{
-                                                isPending('updating', row.workspace.relation.relation_id)
-                                                    ? t('workspaces.quickUpdate.busy')
-                                                    : t('workspaces.quickUpdateAction')
-                                            }}
-                                        </Button>
-                                        <!-- 处理恢复：恢复门期间的行内主上下文动作（UX 原型 §7.1
-                                             行操作优先级 1；契约 05 §5 双入口之列表行） -->
-                                        <Button
-                                            v-if="row.recoveryRequired"
-                                            size="xs"
-                                            variant="outline"
-                                            :disabled="isPending('recovering', row.workspace.relation.relation_id)"
-                                            @click="openRecovery(row)"
-                                        >
-                                            {{ t('workspaces.recoverAction') }}
-                                        </Button>
-                                        <!-- 受管范围入口：映射策略查看/编辑（policy 随关系恒存在） -->
-                                        <Button
-                                            size="xs"
-                                            variant="outline"
-                                            @click="router.push('/workspaces/' + row.workspace.relation.relation_id + '/mappings')"
-                                        >
-                                            {{ t('workspaces.mappingsAction') }}
-                                        </Button>
-                                        <!-- 工作区设置入口（票 #62）：授权模式等工作区级开关，
-                                             详见 /workspaces/:id/settings 设置页 -->
-                                        <Button
-                                            size="xs"
-                                            variant="outline"
-                                            @click="router.push('/workspaces/' + row.workspace.relation.relation_id + '/settings')"
-                                        >
-                                            {{ t('workspaces.settingsAction') }}
-                                        </Button>
-                                        <!-- 变更浏览入口：两侧快照齐备（scan ready）才可读时计算 diff -->
-                                        <Button
-                                            v-if="row.workspace.state.scan_state === 'ready'"
-                                            size="xs"
-                                            variant="outline"
-                                            @click="router.push('/workspaces/' + row.workspace.relation.relation_id + '/changes')"
-                                        >
-                                            {{ t('workspaces.changesAction') }}
-                                        </Button>
-                                        <!-- 同步计划入口：prepare_sync 可用（T11 计划页承接） -->
-                                        <Button
-                                            v-if="row.canPrepareSync"
-                                            size="xs"
-                                            variant="outline"
-                                            :disabled="isPending('preparing', row.workspace.relation.relation_id)"
-                                            @click="prepareSyncPlan(row)"
-                                        >
-                                            {{ t('workspaces.planAction') }}
-                                        </Button>
-                                        <!-- 同步历史入口：history_view feature 门控（T13 补，票 #45；
-                                             T10 路由注释既定入口在本处而 T11 未落） -->
-                                        <Button
-                                            v-if="row.canHistory"
-                                            size="xs"
-                                            variant="outline"
-                                            @click="router.push('/workspaces/' + row.workspace.relation.relation_id + '/history')"
-                                        >
-                                            {{ t('workspaces.historyAction') }}
-                                        </Button>
-                                        <!-- 重新绑定入口：availability 驱动（T12 重绑页承接；
-                                             健康态不阻止——路径迁移是合法的主动操作）。
-                                             恢复门期间不可用（err.recovery.in_progress）→
-                                             保留位置禁点并以 tooltip 显后端原因码（UX §4.3）；
-                                             其余不可用态沿既有语义直接隐藏（P1 行为不回退） -->
-                                        <Button
-                                            v-if="row.recoveryRequired && row.rebindReason"
-                                            size="xs"
-                                            variant="outline"
-                                            disabled
-                                            :title="row.rebindReason"
-                                        >
-                                            {{ t('workspaces.rebindAction') }}
-                                        </Button>
-                                        <Button
-                                            v-else-if="row.canRebind"
-                                            size="xs"
-                                            variant="outline"
-                                            @click="router.push('/workspaces/' + row.workspace.relation.relation_id + '/rebind')"
-                                        >
-                                            {{ t('workspaces.rebindAction') }}
-                                        </Button>
-                                        <Button
-                                            v-if="row.canScan"
-                                            size="xs"
-                                            variant="outline"
-                                            :disabled="isPending('scanning', row.workspace.relation.relation_id)"
-                                            @click="startScan(row)"
-                                        >
-                                            {{ row.scanLabel }}
-                                        </Button>
-                                        <Button
-                                            v-if="row.task?.can_cancel"
-                                            size="xs"
-                                            variant="ghost"
-                                            :disabled="isPending('cancelling', row.task.task_id)"
-                                            @click="cancelTask(row.task)"
-                                        >
-                                            {{ t('workspaces.cancelTask') }}
-                                        </Button>
-                                    </div>
+                                <TableCell class="text-right" @click.stop>
+                                    <!-- 行末唯一主操作（UX 原型 §7.1 优先级链，票 #104）：
+                                         七态各出唯一按钮，btn-primary/btn-tonal 两档强调；
+                                         快速更新不占行末（#105 移入对象头「更多」菜单） -->
+                                    <Button
+                                        size="sm"
+                                        class="h-7 px-2.5 text-xs"
+                                        :variant="row.action.primary ? 'default' : 'secondary'"
+                                        :class="row.action.primary ? '' : 'bg-tint-primary text-primary hover:brightness-105'"
+                                        :disabled="actionDisabled(row)"
+                                        :title="row.action.title"
+                                        @click="runRowAction(row)"
+                                    >
+                                        {{ row.action.label }}
+                                    </Button>
                                 </TableCell>
                             </TableRow>
                         </template>

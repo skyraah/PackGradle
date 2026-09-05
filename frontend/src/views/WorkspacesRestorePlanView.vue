@@ -1,40 +1,55 @@
 <script setup lang="ts">
 // /workspaces/:id/plans/restore/:plan_id：回滚计划页（契约 06 §9 结构 B 定稿，票 #61；
-// UX 原型 H-04）。与 P2 plans 页同构：计划数据为本页查询快照（GetRestorePlan 读投影），
-// 工作区上下文读 stores/syncCache 投影，页面不做第二处取数。
-// 信息结构＝单表全列（资源/判定/CF 可用性/处理说明四列 + 顶部计数条）；
-// 流转＝draft 只读预览 → 决策（exact/allow_partial + skip）→ resolved 确认。
-// 判定面不复制后端决策：exact 解锁读 exact_feasible 投影、四标记/marker_reason/
-// staged/skipped/双警示全读 DTO 行投影，前端只做渲染与流转（可用性同样只用
-// prepare_restore availability，前端不得自行推断）。
-// 补全（StageUserObject）：行内「提供文件」对话框三态 busy/ready/miss；draft/resolved
-// 均可补全，字节绑计划暂存不进 CAS（ADR-0005 §7），staged 即入 exact 就绪面。
-// 确认框四要素（删除损失面 / CF 重取失败=整场退出 / 永远人工确认 / 新记录不改写历史）
-// 逐条可见；确认建 kind=restore 任务移交任务中心（可离开页面，committed 后历史
-// 新增 kind=restore 记录，历史详情页 P2 投影复用）。
-// stale/expired 不白屏：内容继续可读，主操作收敛为「重新准备回滚计划」（对同一
-// 目标提交重新 PrepareRestore，router.replace 到新计划）。
+// UX 原型 P3 H-04，票 #110）。信息结构＝单表全列（资源/判定/CF 可用性/处理说明
+// 四列 + 顶部 6 枚计数条）；页头＝「回滚计划」+ draft·只读徽章 + restore chip +「放弃」。
+// 横幅状态机（draft 决策相位）：有阻塞项 → 警告横幅（N 项阻塞 + 行内 mono 文件名，
+// 补文件或选 partial）；全部就绪 → 成功横幅。判定面不复制后端决策：exact 解锁读
+// exact_feasible 投影、四标记/marker_reason/staged/skipped/双警示全读 DTO 行投影。
+// 决策条＝exact/partial 两张单选卡（有阻塞项时 exact 置灰说明）+ 右侧「确认并回滚」；
+// 确认链 = ResolveRestorePlan（draft 时，带逐资源 skip）→ ConfirmRestorePlan，成功建
+// kind=restore 任务并跳任务中心追踪（可离开页面）。
+// 补全（StageUserObject，ADR-0005 §7）：行内三态 busy（旋转）/ ready（绿 toast 带
+// 就绪计数）/ miss（红 toast 带错误码 + 行内「重选文件」重试）；字节绑计划暂存不进
+// CAS。CF 可用性「依据」弹窗接真数据：PackwizService.CheckUpdates / FetchModVersion
+// （packwiz 更新清单按下载文件名匹配 → CF 最新版本信息），失败降级只显计划内探测。
+// stale/expired 不白屏：内容继续可读，主操作收敛为「重新准备回滚计划」。
 import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useRoute, useRouter } from 'vue-router'
-import { SyncService } from '../api'
+import {
+    CircleAlert,
+    CircleCheck,
+    Database,
+    Download,
+    ShieldCheck,
+    Trash2,
+    TriangleAlert,
+    Upload,
+} from '@lucide/vue'
+import type { Component } from 'vue'
+import { PackwizService, SyncService } from '../api'
+import type { ModInfo, ModUpdateInfo } from '../../bindings/packgradle/internal/packwiz/models'
 import type { RestorePlanDTO, RestorePlanItemDTO } from '../api'
 import { bootstrapped, tasks, triggerRequery, workspaces } from '../stores/syncCache'
-import { showSnackbar } from '../stores/ui'
+import { showSnackbar, taskDrawerOpen } from '../stores/ui'
 import { pickFile } from '../utils/dialogs'
 import { errorCode, errText } from '../utils/errors'
 import { availabilityReasonText, canPrepareRestore } from '../utils/plans'
 import {
     BAD,
+    INFO,
     NEUTRAL,
     OK,
+    PLAN_TONES,
     WARN,
     formatTime,
+    toneOf,
     type BadgeTone,
 } from '../utils/pageState'
+import RestoreConfirmDialog from '../components/common/RestoreConfirmDialog.vue'
+import type { ConfirmRequirementVM } from '../components/common/DangerConfirmDialog.vue'
 import {
     AlertDialog,
-    AlertDialogAction,
     AlertDialogCancel,
     AlertDialogContent,
     AlertDialogDescription,
@@ -45,6 +60,14 @@ import {
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
+import {
+    Dialog,
+    DialogContent,
+    DialogDescription,
+    DialogFooter,
+    DialogHeader,
+    DialogTitle,
+} from '@/components/ui/dialog'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 
 const { t } = useI18n()
@@ -106,7 +129,7 @@ const confirmFeatureOn = computed(() => wsRow.value?.features.restore_apply === 
 
 const items = computed(() => plan.value?.items ?? [])
 
-// —— 顶部计数条（结构 B；RestorePlanDTO 无 summary，行投影聚合属纯渲染）——
+// —— 顶部计数条（结构 B 6 枚；RestorePlanDTO 无 summary，行投影聚合属纯渲染）——
 const counts = computed(() => {
     const rows = items.value
     return {
@@ -121,8 +144,16 @@ const counts = computed(() => {
     }
 })
 
-// —— 判定徽标色调（四标记 + delete 行；色调沿工作区列表同画板）——
-const INFO: BadgeTone = { variant: 'outline', class: 'text-blue-600 dark:text-blue-400' }
+// —— 判定五标记（图标 + 配色语义，H-04）：cas 绿/db、dl 蓝/下载、user 琥珀/提供、
+// unrec 红/警示、del 灰/删除；色调常量收敛于 utils/pageState（票 #102）——
+const MARKER_ICONS: Record<string, Component> = {
+    restorable_from_cas: Database,
+    redownload_required: Download,
+    user_object_required: Upload,
+    unrecoverable: CircleAlert,
+    delete: Trash2,
+}
+
 function markerTone(row: RestorePlanItemDTO): BadgeTone {
     switch (row.marker) {
         case 'restorable_from_cas':
@@ -136,6 +167,9 @@ function markerTone(row: RestorePlanItemDTO): BadgeTone {
         default:
             return NEUTRAL // delete 行 marker 为空串（契约 06 §3.2）
     }
+}
+function markerIcon(row: RestorePlanItemDTO): Component {
+    return MARKER_ICONS[row.marker] ?? Trash2
 }
 function markerLabel(row: RestorePlanItemDTO): string {
     return row.marker ? t('restore.marker.' + row.marker) : t('restore.marker.delete')
@@ -158,7 +192,8 @@ watch(planID, () => {
     skips.value = []
     provideTarget.value = null
     confirmOpen.value = false
-    ack.value = false
+    probeDone.value = false
+    newerVersions.value = {}
 })
 
 // 计划就绪时初始化确切度缺省：exact_feasible 为 DTO 投影（实时就绪面），不自行判定
@@ -176,29 +211,7 @@ function skippable(row: RestorePlanItemDTO): boolean {
     )
 }
 
-const resolving = ref(false)
-async function submitResolve(): Promise<void> {
-    if (!plan.value || resolving.value) return
-    resolving.value = true
-    try {
-        const next = await SyncService.ResolveRestorePlan({
-            plan_id: plan.value.plan_id,
-            requested_exactness: exactness.value,
-            skip_resource_ids: skips.value,
-        })
-        showSnackbar(t('restore.resolveSuccess'), 'success')
-        // 固化于同一计划（status→resolved），原地换新不导航；补一轮受控重查对齐投影
-        plan.value = next
-        triggerRequery()
-    } catch (e) {
-        // err.restore.exact_infeasible / err.restore.skip_invalid 均为后端引导文案
-        showSnackbar(errText(e), 'error')
-    } finally {
-        resolving.value = false
-    }
-}
-
-// —— exact 解锁横幅（读 DTO 投影）：exact_feasible=true ⇒ 绿；否则列阻塞行 ——
+// —— exact 阻塞清单（读 DTO 投影）：未补全 user 行 + 全部不可恢复行 ——
 const blockerRows = computed(() =>
     items.value.filter(
         r => r.marker === 'unrecoverable' || (r.marker === 'user_object_required' && !r.staged),
@@ -206,9 +219,19 @@ const blockerRows = computed(() =>
 )
 const exactUnlocked = computed(() => plan.value?.exact_feasible === true)
 
-// —— 用户对象补全（行内「提供文件」对话框三态 busy/ready/miss，契约 06 §3.5）——
-// ready 的持久事实源是重载计划行的 staged 投影；busy/miss 是对话框本地相位，
-// 关闭对话框后 miss 留存行内提示，重开即可重选重试
+// 横幅阻塞文件名（H-04：行内 mono 文件名，多取 3 个 + 「等 N 项」）
+function baseName(p: string): string {
+    return p.split(/[\\/]/).pop() ?? p
+}
+const blockerNames = computed(() => {
+    const rows = blockerRows.value
+    const heads = rows.slice(0, 3).map(r => baseName(r.relative_path))
+    if (rows.length > 3) heads.push(t('restore.bannerMore', [rows.length - 3]))
+    return heads.join('、')
+})
+
+// —— 用户对象补全（行内三态 busy/ready/miss，契约 06 §3.5）：对话框只承担选文件
+// 与 miss 错误显示；提交即关对话框，行内转 busy 旋转，结果以 toast 收口 ——
 const rowStates = ref<Record<string, 'busy' | 'miss'>>({})
 function stageState(resourceID: string): 'busy' | 'miss' | undefined {
     return rowStates.value[resourceID]
@@ -220,13 +243,11 @@ const provideOpen = computed({
         if (!v) provideTarget.value = null
     },
 })
-const providePhase = ref<'idle' | 'busy' | 'ready' | 'miss'>('idle')
 const providePath = ref('')
 
 function openProvide(row: RestorePlanItemDTO): void {
     provideTarget.value = row
     providePath.value = ''
-    providePhase.value = 'idle'
 }
 
 async function browseProvide(): Promise<void> {
@@ -235,40 +256,158 @@ async function browseProvide(): Promise<void> {
 }
 
 async function submitProvide(): Promise<void> {
-    if (!plan.value || !provideTarget.value || !providePath.value || providePhase.value === 'busy')
-        return
+    if (!plan.value || !provideTarget.value || !providePath.value) return
     const resourceID = provideTarget.value.resource_id
+    const expect = provideTarget.value.expected_digest ?? ''
+    provideTarget.value = null // 关对话框；行内转 busy 旋转（原型 provCell busy）
     rowStates.value = { ...rowStates.value, [resourceID]: 'busy' }
-    providePhase.value = 'busy'
     try {
         const next = await SyncService.StageUserObject({
             plan_id: plan.value.plan_id,
             resource_id: resourceID,
             source_path: providePath.value,
         })
-        // 成功：重载投影该行 staged=true，exact 就绪面随 DTO 刷新（横幅转绿）
+        // 成功：重载投影该行 staged=true，exact 就绪面随 DTO 刷新（横幅转绿）；
+        // 绿 toast 带就绪计数，全部就绪时再补一条解锁提示
         plan.value = next
-        providePhase.value = 'ready'
         const rest = { ...rowStates.value }
         delete rest[resourceID]
         rowStates.value = rest
         triggerRequery()
+        showSnackbar(t('restore.provide.readyToast', [counts.value.userReady, counts.value.user]), 'success')
+        if (next.exact_feasible) showSnackbar(t('restore.provide.allReadyToast'), 'success')
     } catch (e) {
         if (errorCode(e) === 'err.userobject.hash_mismatch') {
-            // miss：内容与目标摘要不符，留在对话框内重选重试（绝不出错字节入库）
+            // miss：内容与目标摘要不符——红 toast 带错误码，行内留存「重选文件」重试
+            //（绝不出错字节入库）
             rowStates.value = { ...rowStates.value, [resourceID]: 'miss' }
-            providePhase.value = 'miss'
+            showSnackbar('err.userobject.hash_mismatch：' + t('err.userobject.hash_mismatch', [expect]), 'error')
         } else {
+            const rest = { ...rowStates.value }
+            delete rest[resourceID]
+            rowStates.value = rest
             showSnackbar(errText(e), 'error')
-            providePhase.value = 'idle'
         }
     }
 }
 
-// —— 确认（resolved → kind=restore 任务；四要素知情确认，契约 06 §9）——
+// —— CF 可用性实时核对（「有更新 x.y.z」chip 与「依据」弹窗共用，真数据：
+// PackwizService.CheckUpdates 更新清单按下载文件名匹配 + FetchModVersion 取 CF
+// 最新版本信息）。尽力探测、静默失败：核对不到时 chip 退化为「有更新」、弹窗
+// 只显计划内探测，不阻塞决策面 ——
+const newerVersions = ref<Record<string, string>>({})
+const probeDone = ref(false)
+
+function matchEntry(base: string, entries: ModUpdateInfo[]): ModUpdateInfo | undefined {
+    return entries.find(u => baseName(u.current_file).toLowerCase() === base || baseName(u.latest_file).toLowerCase() === base)
+}
+
+async function probeNewer(): Promise<void> {
+    const p = plan.value
+    const projectName = wsRow.value?.relation.project.display_name
+    if (!p || !projectName || probeDone.value) return
+    probeDone.value = true
+    const targets = (p.items ?? []).filter(
+        r => r.marker === 'redownload_required' && r.availability === 'ok' && r.newer_available === true,
+    )
+    if (!targets.length) return
+    try {
+        const res = await PackwizService.CheckUpdates(projectName)
+        const entries = [...(res.updates ?? []), ...(res.errors ?? [])]
+        for (const row of targets) {
+            const cand = matchEntry(baseName(row.relative_path).toLowerCase(), entries)
+            if (!cand) continue
+            try {
+                const mod = await PackwizService.FetchModVersion(projectName, cand.name)
+                const v = mod.cf_version || mod.version || baseName(cand.latest_file)
+                if (v) newerVersions.value = { ...newerVersions.value, [row.resource_id]: v }
+            } catch {
+                // 单个 mod 版本获取失败不影响其余行
+            }
+        }
+    } catch {
+        // packwiz 清单不可用（非托管/项目名不匹配）：chip 保持「有更新」无版本
+    }
+}
+
+watch(plan, p => {
+    if (p) void probeNewer()
+})
+
+function newerVersion(row: RestorePlanItemDTO): string {
+    return newerVersions.value[row.resource_id] ?? ''
+}
+
+// —— 「依据」探测依据弹窗（H-04 availCell）：计划内探测事实 + 实时更新核对 ——
+const evidenceTarget = ref<RestorePlanItemDTO | null>(null)
+const evidenceOpen = computed({
+    get: () => evidenceTarget.value !== null,
+    set: (v: boolean) => {
+        if (!v) evidenceTarget.value = null
+    },
+})
+const evidenceLoading = ref(false)
+interface EvidenceResult {
+    update?: ModUpdateInfo
+    latestVersion?: string
+    fileDate?: string
+    error?: string
+}
+const evidenceResult = ref<EvidenceResult | null>(null)
+
+async function openEvidence(row: RestorePlanItemDTO): Promise<void> {
+    evidenceTarget.value = row
+    evidenceResult.value = null
+    const projectName = wsRow.value?.relation.project.display_name
+    if (!projectName) {
+        evidenceResult.value = {}
+        return
+    }
+    evidenceLoading.value = true
+    try {
+        const res = await PackwizService.CheckUpdates(projectName)
+        const cand = matchEntry(baseName(row.relative_path).toLowerCase(), [
+            ...(res.updates ?? []),
+            ...(res.errors ?? []),
+        ])
+        if (!cand) {
+            evidenceResult.value = {}
+            return
+        }
+        const result: EvidenceResult = { update: cand }
+        try {
+            const mod: ModInfo = await PackwizService.FetchModVersion(projectName, cand.name)
+            result.latestVersion = mod.cf_version || mod.version
+            result.fileDate = mod.cf_file_date
+        } catch (e) {
+            result.error = errText(e)
+        }
+        evidenceResult.value = result
+    } catch (e) {
+        evidenceResult.value = { error: errText(e) }
+    } finally {
+        evidenceLoading.value = false
+    }
+}
+
+// —— 确认（四要素知情确认 → Resolve+Confirm 链 → kind=restore 任务，契约 06 §9）——
 const confirmOpen = ref(false)
-const ack = ref(false)
 const confirming = ref(false)
+
+// 确认框确切度：draft 跟随决策草稿；resolved 读固化决议
+const confirmPartial = computed(() => {
+    const p = plan.value
+    if (!p) return true
+    if (p.status === 'draft') return exactness.value === 'allow_partial'
+    return (p.requested_exactness ?? 'allow_partial') === 'allow_partial'
+})
+const confirmTargetLine = computed(() => t('restore.confirmTargetLine', [plan.value?.target_commit_id ?? '']))
+const requirementVMs = computed<ConfirmRequirementVM[]>(() =>
+    (plan.value?.confirmation_requirements ?? []).map(r => ({
+        label: r.code === 'restore_acknowledge' ? t('req.restore_acknowledge') : t('plans.confirm.' + r.code),
+        count: r.resource_count,
+    })),
+)
 
 // 四要素①删除损失面：N 项将删除 + 不可找回/不留存警示行计数
 const deleteCount = computed(() => counts.value.del)
@@ -286,24 +425,31 @@ const partialRemain = computed(() => {
 })
 
 async function confirmRestore(): Promise<void> {
-    if (!plan.value || confirming.value || !ack.value) return
+    if (!plan.value || confirming.value) return
     confirming.value = true
     try {
+        // 决策条单击直达确认：draft 先固化决议（exactness + 逐资源 skip；后端裁决
+        // err.restore.exact_infeasible / skip_invalid），再确认建 kind=restore 任务
+        if (plan.value.status === 'draft') {
+            const resolved = await SyncService.ResolveRestorePlan({
+                plan_id: plan.value.plan_id,
+                requested_exactness: exactness.value,
+                skip_resource_ids: skips.value,
+            })
+            plan.value = resolved
+        }
         await SyncService.ConfirmRestorePlan({ plan_id: plan.value.plan_id })
         showSnackbar(t('restore.confirmSuccess'), 'success')
         triggerRequery()
-        // 任务移交任务中心（可离开页面）：committed 后历史新增 kind=restore 记录
-        await router.push('/workspaces/' + relationID.value + '/history')
+        void loadPlan() // 反映 confirmed 投影
+        // 任务移交任务中心（可离开页面，跳任务中心追踪）：committed 后历史新增
+        // kind=restore 记录，历史不改写
+        taskDrawerOpen.value = true
     } catch (e) {
         showSnackbar(errText(e), 'error')
     } finally {
         confirming.value = false
     }
-}
-
-// 确认要求渲染：restore_acknowledge 走 req.* 键，其余沿 P2 plans.confirm.* 键
-function requirementLabel(code: string): string {
-    return code === 'restore_acknowledge' ? t('req.restore_acknowledge') : t('plans.confirm.' + code)
 }
 
 // —— stale/expired 重新准备（重 prepare 引导，不白屏）：对同一目标提交重新
@@ -338,28 +484,41 @@ watch(
     },
 )
 
-const statusTones: Record<string, { variant: 'default' | 'secondary' | 'destructive' | 'outline'; class?: string }> = {
-    draft: { variant: 'secondary' },
-    resolved: { variant: 'outline', class: 'text-emerald-600 dark:text-emerald-400' },
-    confirmed: { variant: 'outline', class: 'text-primary' },
-    applied: { variant: 'outline', class: 'text-emerald-600 dark:text-emerald-400' },
-    stale: { variant: 'outline', class: 'text-amber-600 dark:text-amber-400' },
-    expired: { variant: 'outline', class: 'text-amber-600 dark:text-amber-400' },
+const cols = ['restore.colResource', 'restore.colMarker', 'restore.colAvailability', 'restore.colAction']
+
+// 单选卡形态（H-04 .exopt：radio 点 + 标签；选中主色边 + tint 底 + 内嵌环）
+function decideCardClass(selected: boolean, disabled = false): string {
+    if (disabled) return 'border-border text-muted-foreground opacity-50'
+    return selected
+        ? 'border-primary bg-tint-success text-foreground shadow-[inset_0_0_0_1px_var(--primary)]'
+        : 'border-border text-muted-foreground hover:text-foreground'
+}
+function decideDotClass(selected: boolean): string {
+    return selected
+        ? 'border-primary bg-primary shadow-[inset_0_0_0_3px_var(--surface)]'
+        : 'border-muted-foreground/60 bg-transparent'
 }
 
-const cols = ['restore.colResource', 'restore.colMarker', 'restore.colAvailability', 'restore.colAction']
+function pickExactness(v: 'exact' | 'allow_partial'): void {
+    if (v === 'exact' && !exactUnlocked.value) {
+        showSnackbar(t('restore.exactBlockedTip'), 'warning')
+        return
+    }
+    exactness.value = v
+}
 </script>
 
 <template>
     <div class="mx-auto flex w-full max-w-6xl flex-col gap-4 p-4 text-foreground">
-        <!-- 头部：标题 + 状态 + 回滚目标 + 有效期 -->
+        <!-- 头部（H-04）：回滚计划 + draft·只读 + restore chip；右侧「放弃」 -->
         <div class="flex items-start justify-between gap-4">
-            <div>
-                <h1 class="flex items-center gap-2 text-xl font-semibold">
+            <div class="min-w-0">
+                <h1 class="page-title flex flex-wrap items-center gap-2">
                     {{ t('restore.title') }}
-                    <Badge v-if="plan" :variant="statusTones[plan.status]?.variant ?? 'outline'" :class="statusTones[plan.status]?.class">
+                    <Badge v-if="plan" :variant="toneOf(PLAN_TONES, plan.status).variant">
                         {{ t('restore.status.' + plan.status) }}
                     </Badge>
+                    <Badge variant="secondary" class="font-mono" plain>{{ t('restore.kindChip') }}</Badge>
                 </h1>
                 <p class="text-muted-foreground mt-1 text-sm">
                     <template v-if="wsRow">
@@ -381,11 +540,8 @@ const cols = ['restore.colResource', 'restore.colMarker', 'restore.colAvailabili
                 </p>
             </div>
             <div class="flex shrink-0 gap-2">
-                <Button variant="ghost" size="sm" @click="router.push('/workspaces/' + relationID + '/history')">
-                    {{ t('restore.backToHistory') }}
-                </Button>
-                <Button variant="ghost" size="sm" @click="router.push('/workspaces')">
-                    {{ t('restore.backToList') }}
+                <Button variant="outline" size="sm" @click="router.push('/workspaces/' + relationID + '/history')">
+                    {{ t('restore.abandon') }}
                 </Button>
             </div>
         </div>
@@ -463,187 +619,224 @@ const cols = ['restore.colResource', 'restore.colMarker', 'restore.colAvailabili
                     </CardContent>
                 </Card>
 
-                <!-- 顶部计数条（结构 B） -->
-                <div class="flex flex-wrap items-center gap-2">
-                    <Badge variant="outline" class="text-muted-foreground">{{ t('restore.count.total') }} {{ counts.total }}</Badge>
-                    <Badge variant="outline" class="text-emerald-600 dark:text-emerald-400">{{ t('restore.count.cas') }} {{ counts.cas }}</Badge>
-                    <Badge variant="outline" class="text-blue-600 dark:text-blue-400">{{ t('restore.count.dl') }} {{ counts.dl }}</Badge>
-                    <Badge variant="outline" class="text-amber-600 dark:text-amber-400">
-                        {{ t('restore.count.user') }} {{ counts.user }}（{{ t('restore.count.userReady') }} {{ counts.userReady }}）
-                    </Badge>
-                    <Badge v-if="counts.unrec > 0" variant="destructive">{{ t('restore.count.unrec') }} {{ counts.unrec }}</Badge>
-                    <Badge variant="outline" class="text-muted-foreground">
-                        {{ t('restore.count.del') }} {{ counts.del }}<template v-if="counts.warn > 0">（{{ t('restore.count.warn') }} {{ counts.warn }}）</template>
-                    </Badge>
-                </div>
+                <template v-else>
+                    <!-- 顶部计数条（结构 B 6 枚） -->
+                    <div class="flex flex-wrap items-center gap-2">
+                        <Badge variant="outline" class="text-muted-foreground">{{ t('restore.count.total') }} {{ counts.total }}</Badge>
+                        <Badge variant="outline" class="text-emerald-600 dark:text-emerald-400">{{ t('restore.count.cas') }} {{ counts.cas }}</Badge>
+                        <Badge variant="outline" class="text-blue-600 dark:text-blue-400">{{ t('restore.count.dl') }} {{ counts.dl }}</Badge>
+                        <Badge variant="outline" class="text-amber-600 dark:text-amber-400">
+                            {{ t('restore.count.user') }} {{ counts.user }}（{{ t('restore.count.userReady') }} {{ counts.userReady }}）
+                        </Badge>
+                        <Badge v-if="counts.unrec > 0" variant="destructive">{{ t('restore.count.unrec') }} {{ counts.unrec }}</Badge>
+                        <Badge variant="outline" class="text-muted-foreground">
+                            {{ t('restore.count.del') }} {{ counts.del }}<template v-if="counts.warn > 0">（{{ t('restore.count.warn') }} {{ counts.warn }}）</template>
+                        </Badge>
+                    </div>
 
-                <!-- exact 解锁横幅（读 exact_feasible 投影）：全部就绪且无阻塞 ⇒ 绿。
-                     仅 draft 决策相位渲染——resolved 后决议已固化，由决议摘要卡承接，
-                     横幅不再暗示可改选 exact -->
-                <Card v-if="canDecide">
-                    <CardContent
-                        class="flex flex-wrap items-center gap-2 py-3 text-sm"
-                        :class="exactUnlocked ? 'text-emerald-600 dark:text-emerald-400' : 'text-amber-600 dark:text-amber-400'"
+                    <!-- 横幅状态机（draft 决策相位）：阻塞 → 警告（N 项 + 文件名）；
+                         全部就绪 → 成功。resolved 后决议已固化，横幅不再暗示可改选 -->
+                    <div
+                        v-if="canDecide"
+                        class="flex flex-wrap items-center gap-2.5 rounded-lg border px-3.5 py-2.5 text-[12.5px]"
+                        :class="exactUnlocked ? 'border-tint-success bg-tint-success' : 'border-tint-warning bg-tint-warning'"
                     >
-                        <span class="font-medium">
-                            {{ exactUnlocked ? t('restore.bannerExactReady') : t('restore.bannerBlocked', [blockerRows.length]) }}
-                        </span>
-                        <span class="text-muted-foreground">
-                            {{ exactUnlocked ? t('restore.bannerExactReadyHint') : t('restore.bannerBlockedHint') }}
-                        </span>
-                    </CardContent>
-                </Card>
-
-                <!-- 结构 B 单表全列：资源/判定/CF 可用性/处理说明 -->
-                <Card>
-                    <CardContent class="py-2">
-                        <div v-if="items.length === 0" class="text-muted-foreground py-10 text-center text-sm">
-                            {{ t('restore.itemsEmpty') }}
+                        <CircleCheck v-if="exactUnlocked" class="text-success size-4 flex-none" aria-hidden="true" />
+                        <TriangleAlert v-else class="text-warning size-4 flex-none" aria-hidden="true" />
+                        <div class="min-w-0 flex-1">
+                            <span class="font-bold">
+                                {{ exactUnlocked ? t('restore.bannerExactReady') : t('restore.bannerBlocked', [blockerRows.length]) }}
+                            </span>
+                            <template v-if="!exactUnlocked && blockerNames">
+                                <span> · <span class="font-mono">{{ blockerNames }}</span></span>
+                            </template>
+                            <span> {{ exactUnlocked ? t('restore.bannerExactReadyHint') : t('restore.bannerBlockedHint') }}</span>
                         </div>
-                        <Table v-else>
-                            <TableHeader>
-                                <TableRow>
-                                    <TableHead v-for="c in cols" :key="c">{{ t(c) }}</TableHead>
-                                </TableRow>
-                            </TableHeader>
-                            <TableBody>
-                                <TableRow v-for="row in items" :key="row.resource_id">
-                                    <!-- 资源：路径 + 变更类别 -->
-                                    <TableCell>
-                                        <div class="max-w-80 truncate font-mono text-sm font-medium" :title="row.relative_path">
-                                            {{ row.relative_path }}
-                                        </div>
-                                        <div class="text-muted-foreground text-xs">
-                                            {{ changeLabel(row.change_kind) }}
-                                            <span v-if="row.skipped" class="text-amber-600 dark:text-amber-400"> · {{ t('restore.skippedLabel') }}</span>
-                                        </div>
-                                    </TableCell>
-                                    <!-- 判定：四标记徽标 + 降级/无重取原因 -->
-                                    <TableCell>
-                                        <Badge :variant="markerTone(row).variant" :class="markerTone(row).class">{{ markerLabel(row) }}</Badge>
-                                        <div v-if="reasonText(row)" class="text-muted-foreground mt-1 max-w-56 text-xs">{{ reasonText(row) }}</div>
-                                    </TableCell>
-                                    <!-- CF 可用性：仅 redownload 行（ok|unknown；unavailable 是降标非行内态） -->
-                                    <TableCell>
-                                        <template v-if="row.marker === 'redownload_required'">
-                                            <div v-if="row.availability === 'ok'" class="flex items-center gap-1.5 text-sm">
-                                                <span class="h-2 w-2 rounded-full bg-emerald-500"></span>
-                                                {{ t('restore.availOk') }}
-                                                <Badge v-if="row.newer_available" variant="outline" class="text-amber-600 dark:text-amber-400" :title="t('restore.availNewerTip')">
-                                                    {{ t('restore.availNewer') }}
-                                                </Badge>
+                    </div>
+
+                    <!-- 结构 B 单表全列：资源/判定/CF 可用性/处理说明 -->
+                    <Card>
+                        <CardContent class="py-2">
+                            <div v-if="items.length === 0" class="text-muted-foreground py-10 text-center text-sm">
+                                {{ t('restore.itemsEmpty') }}
+                            </div>
+                            <Table v-else>
+                                <TableHeader>
+                                    <TableRow>
+                                        <TableHead v-for="c in cols" :key="c">{{ t(c) }}</TableHead>
+                                    </TableRow>
+                                </TableHeader>
+                                <TableBody>
+                                    <TableRow v-for="row in items" :key="row.resource_id">
+                                        <!-- 资源：路径 + 变更类别 -->
+                                        <TableCell>
+                                            <div class="max-w-80 truncate font-mono text-sm font-medium" :title="row.relative_path">
+                                                {{ row.relative_path }}
                                             </div>
-                                            <div v-else class="text-muted-foreground flex items-center gap-1.5 text-sm">
-                                                <span class="bg-muted-foreground/40 h-2 w-2 rounded-full"></span>
-                                                {{ t('restore.availUnknown') }}
+                                            <div class="text-muted-foreground text-xs">
+                                                {{ changeLabel(row.change_kind) }}
+                                                <span v-if="row.skipped" class="text-amber-600 dark:text-amber-400"> · {{ t('restore.skippedLabel') }}</span>
                                             </div>
-                                        </template>
-                                        <span v-else class="text-muted-foreground">—</span>
-                                    </TableCell>
-                                    <!-- 处理说明：按行投影渲染（含双警示与补全三态） -->
-                                    <TableCell>
-                                        <div class="flex max-w-96 flex-col gap-1 text-sm">
-                                            <template v-if="row.deletion_warn">
-                                                <span class="text-amber-600 dark:text-amber-400">⚠ {{ t('restore.warnDeletion') }}</span>
-                                            </template>
-                                            <template v-if="row.preserve_skip">
-                                                <span class="text-amber-600 dark:text-amber-400">⚠ {{ t('restore.warnPreserve') }}</span>
-                                            </template>
-                                            <template v-if="row.marker === 'restorable_from_cas'">
-                                                <span class="text-muted-foreground">{{ t('restore.noteCas') }}</span>
-                                            </template>
-                                            <template v-else-if="row.marker === 'redownload_required'">
-                                                <span class="text-muted-foreground">{{ t('restore.noteDl') }}</span>
-                                            </template>
-                                            <template v-else-if="row.marker === 'unrecoverable'">
-                                                <span class="text-muted-foreground">{{ t('restore.noteUnrec') }}</span>
-                                            </template>
-                                            <template v-else-if="row.marker === 'user_object_required'">
-                                                <!-- 补全三态：ready（staged 投影）/ busy / miss（重选重试） -->
-                                                <span v-if="row.staged" class="text-emerald-600 dark:text-emerald-400">✓ {{ t('restore.provide.ready') }}</span>
-                                                <span v-else-if="stageState(row.resource_id) === 'busy'" class="text-muted-foreground">{{ t('restore.provide.busy') }}</span>
-                                                <div v-else class="flex flex-wrap items-center gap-2">
-                                                    <Button
-                                                        v-if="canProvide"
-                                                        variant="outline"
-                                                        size="xs"
-                                                        @click="openProvide(row)"
-                                                    >
-                                                        {{ t('restore.provide.action') }}
+                                        </TableCell>
+                                        <!-- 判定：五标记（图标 + 配色语义）+ 降级/无重取原因 -->
+                                        <TableCell>
+                                            <Badge :variant="markerTone(row).variant">
+                                                <component :is="markerIcon(row)" aria-hidden="true" />
+                                                {{ markerLabel(row) }}
+                                            </Badge>
+                                            <div v-if="reasonText(row)" class="text-muted-foreground mt-1 max-w-56 text-xs">{{ reasonText(row) }}</div>
+                                        </TableCell>
+                                        <!-- CF 可用性：仅 redownload 行（ok|unknown；unavailable 是降标非行内态）；
+                                             「依据」开探测依据弹窗（真数据核对） -->
+                                        <TableCell>
+                                            <template v-if="row.marker === 'redownload_required'">
+                                                <div v-if="row.availability === 'ok'" class="flex flex-wrap items-center gap-1.5 text-sm">
+                                                    <span class="h-2 w-2 flex-none rounded-full bg-emerald-500"></span>
+                                                    {{ t('restore.availOk') }}
+                                                    <Badge v-if="row.newer_available" variant="st-warn" plain :title="t('restore.availNewerTip')">
+                                                        {{ newerVersion(row) ? t('restore.availNewer', [newerVersion(row)]) : t('restore.availNewerPlain') }}
+                                                    </Badge>
+                                                    <Button variant="ghost" size="xs" class="text-muted-foreground" @click="openEvidence(row)">
+                                                        {{ t('restore.evidence.action') }}
                                                     </Button>
-                                                    <span v-if="stageState(row.resource_id) === 'miss'" class="text-destructive text-xs">
-                                                        {{ t('restore.provide.mismatchShort') }}
-                                                    </span>
+                                                </div>
+                                                <div v-else class="text-muted-foreground flex flex-wrap items-center gap-1.5 text-sm">
+                                                    <span class="h-2 w-2 flex-none rounded-full bg-muted-foreground/40"></span>
+                                                    {{ t('restore.availUnknown') }}
+                                                    <Button variant="ghost" size="xs" @click="openEvidence(row)">
+                                                        {{ t('restore.evidence.action') }}
+                                                    </Button>
                                                 </div>
                                             </template>
-                                            <template v-else-if="row.change_kind === 'delete'">
-                                                <span class="text-muted-foreground">{{ t('restore.noteDelete') }}</span>
-                                            </template>
-                                            <template v-if="row.expected_digest">
-                                                <span class="text-muted-foreground truncate font-mono text-xs" :title="row.expected_digest">
-                                                    {{ t('restore.expectedDigest') }} {{ row.expected_digest }}
-                                                </span>
-                                            </template>
-                                        </div>
-                                    </TableCell>
-                                </TableRow>
-                            </TableBody>
-                        </Table>
-                    </CardContent>
-                </Card>
+                                            <span v-else class="text-muted-foreground">—</span>
+                                        </TableCell>
+                                        <!-- 处理 / 说明：按行投影渲染（含损失面双警示与补全三态） -->
+                                        <TableCell>
+                                            <div class="flex max-w-96 flex-col gap-1 text-sm">
+                                                <template v-if="row.deletion_warn">
+                                                    <span class="inline-flex items-center gap-1 text-amber-600 dark:text-amber-400">
+                                                        <TriangleAlert class="size-3.5 flex-none" aria-hidden="true" />
+                                                        {{ t('restore.warnDeletion') }}
+                                                    </span>
+                                                </template>
+                                                <template v-if="row.preserve_skip">
+                                                    <span class="inline-flex items-center gap-1 text-amber-600 dark:text-amber-400">
+                                                        <TriangleAlert class="size-3.5 flex-none" aria-hidden="true" />
+                                                        {{ t('restore.warnPreserve') }}
+                                                    </span>
+                                                </template>
+                                                <template v-if="row.marker === 'restorable_from_cas'">
+                                                    <span class="text-muted-foreground">{{ t('restore.noteCas') }}</span>
+                                                </template>
+                                                <template v-else-if="row.marker === 'redownload_required'">
+                                                    <span class="text-muted-foreground">{{ t('restore.noteDl') }}</span>
+                                                </template>
+                                                <template v-else-if="row.marker === 'unrecoverable'">
+                                                    <span class="text-muted-foreground">{{ t('restore.noteUnrec') }}</span>
+                                                </template>
+                                                <template v-else-if="row.marker === 'user_object_required'">
+                                                    <!-- 补全三态：ready（staged 投影）/ busy（旋转）/ miss（重选重试） -->
+                                                    <span v-if="row.staged" class="inline-flex items-center gap-1 text-emerald-600 dark:text-emerald-400">
+                                                        <CircleCheck class="size-3.5 flex-none" aria-hidden="true" />
+                                                        {{ t('restore.provide.ready') }}
+                                                    </span>
+                                                    <span v-else-if="stageState(row.resource_id) === 'busy'" class="text-muted-foreground inline-flex items-center gap-1.5">
+                                                        <span class="border-primary border-t-primary h-3.5 w-3.5 animate-spin rounded-full border-2"></span>
+                                                        {{ t('restore.provide.busy') }}
+                                                    </span>
+                                                    <div v-else class="flex flex-wrap items-center gap-2">
+                                                        <Button
+                                                            v-if="canProvide"
+                                                            variant="outline"
+                                                            size="xs"
+                                                            @click="openProvide(row)"
+                                                        >
+                                                            <Upload class="size-3" aria-hidden="true" />
+                                                            {{ t('restore.provide.action') }}
+                                                        </Button>
+                                                        <span v-if="stageState(row.resource_id) === 'miss'" class="text-destructive inline-flex items-center gap-2 text-xs">
+                                                            {{ t('restore.provide.mismatchShort', [row.expected_digest ?? '']) }}
+                                                            <Button variant="outline" size="xs" @click="openProvide(row)">
+                                                                {{ t('restore.provide.retry') }}
+                                                            </Button>
+                                                        </span>
+                                                    </div>
+                                                </template>
+                                                <template v-else-if="row.change_kind === 'delete'">
+                                                    <span class="text-muted-foreground">{{ t('restore.noteDelete') }}</span>
+                                                </template>
+                                                <template v-if="row.expected_digest">
+                                                    <span class="text-muted-foreground truncate font-mono text-xs" :title="row.expected_digest">
+                                                        {{ t('restore.expectedDigest') }} {{ row.expected_digest }}
+                                                    </span>
+                                                </template>
+                                            </div>
+                                        </TableCell>
+                                    </TableRow>
+                                </TableBody>
+                            </Table>
+                        </CardContent>
+                    </Card>
 
-                <!-- 决策区（仅 draft；计划内容本身只读预览） -->
-                <Card v-if="canDecide && items.length > 0">
-                    <CardContent class="flex flex-col gap-3 py-4">
-                        <div class="font-medium">{{ t('restore.decideTitle') }}</div>
-                        <div class="flex flex-wrap items-center gap-4">
-                            <label
-                                class="flex cursor-pointer items-center gap-1.5 text-sm"
-                                :class="exactUnlocked ? '' : 'text-muted-foreground cursor-not-allowed'"
-                                :title="exactUnlocked ? undefined : t('restore.exactBlockedTip')"
-                            >
-                                <input
-                                    v-model="exactness"
-                                    type="radio"
-                                    name="restore-exactness"
-                                    value="exact"
-                                    :disabled="!exactUnlocked"
-                                    class="accent-current"
-                                />
-                                {{ t('restore.exactness.exact') }}
-                            </label>
-                            <label class="flex cursor-pointer items-center gap-1.5 text-sm">
-                                <input v-model="exactness" type="radio" name="restore-exactness" value="allow_partial" class="accent-current" />
-                                {{ t('restore.exactness.allow_partial') }}
-                            </label>
-                        </div>
-                        <p class="text-muted-foreground text-xs">
-                            {{ exactUnlocked ? t('restore.decideHintExactOk') : t('restore.decideHintBlocked') }}
-                        </p>
-                        <!-- skip 决议清单（仅可跳过行；合法性由后端裁决） -->
-                        <template v-if="items.some(r => skippable(r))">
-                            <div class="text-muted-foreground text-xs">{{ t('restore.skipTitle') }}</div>
-                            <div class="flex flex-col gap-1.5">
-                                <label
-                                    v-for="row in items.filter(r => skippable(r))"
-                                    :key="row.resource_id"
-                                    class="flex cursor-pointer items-center gap-2 text-sm"
+                    <!-- 决策条（仅 draft）：exact/partial 两张单选卡 + 右侧「确认并回滚」；
+                         有阻塞项时 exact 置灰并说明 -->
+                    <Card v-if="canDecide && items.length > 0">
+                        <CardContent class="flex flex-col gap-3 py-4">
+                            <div class="flex flex-wrap items-center gap-3">
+                                <button
+                                    type="button"
+                                    class="flex cursor-pointer items-center gap-2.5 rounded-lg border px-3.5 py-2.5 text-left transition-colors"
+                                    :class="decideCardClass(exactness === 'exact', !exactUnlocked)"
+                                    :title="exactUnlocked ? undefined : t('restore.exactBlockedTip')"
+                                    @click="pickExactness('exact')"
                                 >
-                                    <input v-model="skips" type="checkbox" :value="row.resource_id" class="accent-current" />
-                                    <span class="max-w-80 truncate font-mono text-xs" :title="row.relative_path">{{ row.relative_path }}</span>
-                                    <Badge :variant="markerTone(row).variant" :class="markerTone(row).class">{{ markerLabel(row) }}</Badge>
-                                </label>
+                                    <span class="size-4 flex-none rounded-full border-2" :class="decideDotClass(exactness === 'exact')"></span>
+                                    <span>
+                                        <span class="block text-[12.5px] font-semibold">{{ t('restore.exactness.exact') }}</span>
+                                        <span class="text-muted-foreground block text-xs font-normal">{{ t('restore.decide.exactDesc') }}</span>
+                                    </span>
+                                </button>
+                                <button
+                                    type="button"
+                                    class="flex cursor-pointer items-center gap-2.5 rounded-lg border px-3.5 py-2.5 text-left transition-colors"
+                                    :class="decideCardClass(exactness === 'allow_partial')"
+                                    @click="pickExactness('allow_partial')"
+                                >
+                                    <span class="size-4 flex-none rounded-full border-2" :class="decideDotClass(exactness === 'allow_partial')"></span>
+                                    <span>
+                                        <span class="block text-[12.5px] font-semibold">{{ t('restore.exactness.allow_partial') }}</span>
+                                        <span class="text-muted-foreground block text-xs font-normal">{{ t('restore.decide.partialDesc') }}</span>
+                                    </span>
+                                </button>
+                                <div class="min-w-4 grow"></div>
+                                <Button v-if="confirmFeatureOn" size="sm" :disabled="confirming" @click="confirmOpen = true">
+                                    <ShieldCheck class="size-3.5" aria-hidden="true" />
+                                    {{ t('restore.confirmAction') }}
+                                </Button>
                             </div>
-                        </template>
-                        <div class="flex items-center justify-end gap-2">
-                            <Button size="sm" :disabled="resolving" @click="submitResolve">{{ t('restore.resolveAction') }}</Button>
-                        </div>
-                    </CardContent>
-                </Card>
+                            <p class="text-muted-foreground text-xs">
+                                {{ exactUnlocked ? t('restore.decideHintExactOk') : t('restore.decideHintBlocked') }}
+                            </p>
+                            <!-- skip 决议清单（仅可跳过行；合法性由后端裁决） -->
+                            <template v-if="items.some(r => skippable(r))">
+                                <div class="text-muted-foreground text-xs">{{ t('restore.skipTitle') }}</div>
+                                <div class="flex flex-col gap-1.5">
+                                    <label
+                                        v-for="row in items.filter(r => skippable(r))"
+                                        :key="row.resource_id"
+                                        class="flex cursor-pointer items-center gap-2 text-sm"
+                                    >
+                                        <input v-model="skips" type="checkbox" :value="row.resource_id" class="accent-current" />
+                                        <span class="max-w-80 truncate font-mono text-xs" :title="row.relative_path">{{ row.relative_path }}</span>
+                                        <Badge :variant="markerTone(row).variant">{{ markerLabel(row) }}</Badge>
+                                    </label>
+                                </div>
+                            </template>
+                        </CardContent>
+                    </Card>
 
-                <!-- resolved：决议摘要（既成事实只读）+ 确认主操作 -->
-                <template v-if="canConfirm && items.length > 0">
-                    <Card>
+                    <!-- resolved：决议摘要（既成事实只读）+ 确认主操作 -->
+                    <Card v-if="canConfirm && items.length > 0">
                         <CardContent class="flex flex-wrap items-center justify-between gap-3 py-4">
                             <span class="text-sm">
                                 <span class="font-medium">{{ t('restore.resolvedTitle') }}</span>
@@ -654,6 +847,7 @@ const cols = ['restore.colResource', 'restore.colMarker', 'restore.colAvailabili
                                 </span>
                             </span>
                             <Button v-if="confirmFeatureOn" size="sm" @click="confirmOpen = true">
+                                <ShieldCheck class="size-3.5" aria-hidden="true" />
                                 {{ t('restore.confirmAction') }}
                             </Button>
                         </CardContent>
@@ -662,7 +856,8 @@ const cols = ['restore.colResource', 'restore.colMarker', 'restore.colAvailabili
             </template>
         </template>
 
-        <!-- 提供文件对话框（三态：idle 输入 / busy 校验中 / ready 已校验 / miss 重选重试） -->
+        <!-- 提供文件对话框（idle 选文件 / miss 显错误重选；busy 与结果以行内三态 +
+             toast 收口，契约 06 §3.5） -->
         <AlertDialog v-model:open="provideOpen">
             <AlertDialogContent>
                 <AlertDialogHeader>
@@ -678,117 +873,104 @@ const cols = ['restore.colResource', 'restore.colMarker', 'restore.colAvailabili
                 </AlertDialogHeader>
 
                 <div class="flex flex-col gap-3">
-                    <!-- busy：校验中 -->
-                    <template v-if="providePhase === 'busy'">
-                        <div class="text-muted-foreground flex items-center gap-2 text-sm">
-                            <span class="border-primary border-t-primary h-4 w-4 animate-spin rounded-full border-2"></span>
-                            {{ t('restore.provide.busy') }}
-                        </div>
-                    </template>
-                    <!-- ready：已校验 · 字节就绪（计划行 staged 投影已翻转） -->
-                    <template v-else-if="providePhase === 'ready'">
-                        <div class="flex flex-col gap-1">
-                            <span class="text-emerald-600 text-sm dark:text-emerald-400">✓ {{ t('restore.provide.ready') }}</span>
-                            <span class="text-muted-foreground text-xs">{{ t('restore.provide.readyHint') }}</span>
-                        </div>
-                    </template>
-                    <!-- idle / miss：本地路径 + 浏览（miss 先显错误，重选后重试） -->
-                    <template v-else>
-                        <div v-if="providePhase === 'miss'" class="flex flex-col gap-1">
-                            <span class="text-destructive text-sm">
-                                {{ t('err.userobject.hash_mismatch', [provideTarget?.expected_digest ?? '']) }}
+                    <!-- miss：hash 不符错误先行（重选后重试） -->
+                    <div v-if="provideTarget && stageState(provideTarget.resource_id) === 'miss'" class="flex flex-col gap-1">
+                        <span class="text-destructive text-sm">
+                            {{ t('err.userobject.hash_mismatch', [provideTarget.expected_digest ?? '']) }}
+                        </span>
+                        <span class="text-muted-foreground text-xs">{{ t('restore.provide.missHint') }}</span>
+                    </div>
+                    <div class="flex items-center gap-2">
+                        <input
+                            v-model="providePath"
+                            class="border-input bg-background h-9 w-full rounded-md border px-3 font-mono text-xs"
+                            :placeholder="t('restore.provide.pathPlaceholder')"
+                        />
+                        <Button variant="outline" size="sm" class="shrink-0" @click="browseProvide">
+                            {{ t('restore.provide.browse') }}
+                        </Button>
+                    </div>
+                </div>
+
+                <AlertDialogFooter>
+                    <AlertDialogCancel>{{ t('common.cancel') }}</AlertDialogCancel>
+                    <Button size="sm" :disabled="!providePath" @click="submitProvide">
+                        {{ t('restore.provide.submit') }}
+                    </Button>
+                </AlertDialogFooter>
+            </AlertDialogContent>
+        </AlertDialog>
+
+        <!-- 探测依据弹窗（「依据」；真数据：packwiz 更新清单 + CF 版本信息） -->
+        <Dialog v-model:open="evidenceOpen">
+            <DialogContent class="sm:max-w-lg">
+                <DialogHeader>
+                    <DialogTitle>
+                        {{ t('restore.evidence.title') }}
+                        <span v-if="evidenceTarget" class="text-muted-foreground font-mono text-sm">
+                            {{ evidenceTarget.relative_path.split('/').pop() }}
+                        </span>
+                    </DialogTitle>
+                    <DialogDescription v-if="evidenceTarget" class="font-mono text-xs break-all">
+                        {{ evidenceTarget.relative_path }}
+                    </DialogDescription>
+                </DialogHeader>
+
+                <div class="grid grid-cols-[120px_1fr] gap-x-3 gap-y-2 text-[12.5px]">
+                    <span class="text-muted-foreground">{{ t('restore.evidence.resource') }}</span>
+                    <span class="truncate" :title="evidenceTarget?.relative_path">{{ baseName(evidenceTarget?.relative_path ?? '') }}</span>
+
+                    <span class="text-muted-foreground">{{ t('restore.evidence.planProbe') }}</span>
+                    <span>
+                        <template v-if="evidenceTarget?.availability === 'ok'">{{ t('restore.evidence.probeOk') }}</template>
+                        <template v-else>{{ t('restore.evidence.probeUnknown') }}</template>
+                    </span>
+
+                    <span class="text-muted-foreground">{{ t('restore.evidence.liveCheck') }}</span>
+                    <span>
+                        <template v-if="evidenceLoading">
+                            <span class="text-muted-foreground inline-flex items-center gap-1.5">
+                                <span class="border-primary border-t-primary h-3 w-3 animate-spin rounded-full border-2"></span>
+                                {{ t('restore.evidence.liveChecking') }}
                             </span>
-                            <span class="text-muted-foreground text-xs">{{ t('restore.provide.missHint') }}</span>
-                        </div>
-                        <div class="flex items-center gap-2">
-                            <input
-                                v-model="providePath"
-                                class="border-input bg-background h-9 w-full rounded-md border px-3 font-mono text-xs"
-                                :placeholder="t('restore.provide.pathPlaceholder')"
-                            />
-                            <Button variant="outline" size="sm" class="shrink-0" @click="browseProvide">
-                                {{ t('restore.provide.browse') }}
-                            </Button>
-                        </div>
-                    </template>
+                        </template>
+                        <template v-else-if="evidenceResult?.update">
+                            <span class="text-amber-600 dark:text-amber-400">
+                                {{ t('restore.evidence.liveUpdate', [evidenceResult.update.current_file, evidenceResult.update.latest_file]) }}
+                            </span>
+                            <span v-if="evidenceResult.latestVersion" class="text-muted-foreground block">
+                                {{ t('restore.evidence.latestVersion') }}：{{ evidenceResult.latestVersion }}
+                                <template v-if="evidenceResult.fileDate"> · {{ t('restore.evidence.fileDate') }} {{ evidenceResult.fileDate }}</template>
+                            </span>
+                            <span v-else-if="evidenceResult.error" class="text-destructive block text-xs">{{ evidenceResult.error }}</span>
+                        </template>
+                        <template v-else>
+                            <span class="text-muted-foreground">{{ t('restore.evidence.liveCurrent') }}</span>
+                            <span v-if="evidenceResult?.error" class="text-destructive block text-xs">{{ evidenceResult.error }}</span>
+                        </template>
+                    </span>
+
+                    <span class="text-muted-foreground">{{ t('restore.evidence.failureSemantics') }}</span>
+                    <span class="text-muted-foreground">{{ t('restore.evidence.failureText') }}</span>
                 </div>
 
-                <AlertDialogFooter>
-                    <AlertDialogCancel>{{ t('common.cancel') }}</AlertDialogCancel>
-                    <!-- 关闭（ready 态收尾）与提交按钮：不用 AlertDialogAction，避免自动关闭打断三态 -->
-                    <Button v-if="providePhase === 'ready'" size="sm" @click="provideOpen = false">
-                        {{ t('restore.provide.done') }}
-                    </Button>
-                    <Button v-else size="sm" :disabled="!providePath" @click="submitProvide">
-                        {{ providePhase === 'miss' ? t('restore.provide.retry') : t('restore.provide.submit') }}
-                    </Button>
-                </AlertDialogFooter>
-            </AlertDialogContent>
-        </AlertDialog>
+                <DialogFooter>
+                    <Button variant="outline" size="sm" @click="evidenceOpen = false">{{ t('common.cancel') }}</Button>
+                </DialogFooter>
+            </DialogContent>
+        </Dialog>
 
-        <!-- 确认回滚对话框（四要素逐条可见 + 知情勾选，契约 06 §9） -->
-        <AlertDialog v-model:open="confirmOpen">
-            <AlertDialogContent class="sm:max-w-xl">
-                <AlertDialogHeader>
-                    <AlertDialogTitle>{{ t('restore.confirmTitle') }}</AlertDialogTitle>
-                    <AlertDialogDescription>
-                        {{ t('restore.confirmTargetLine', [plan?.target_commit_id ?? '']) }}
-                    </AlertDialogDescription>
-                </AlertDialogHeader>
-
-                <div class="flex flex-col gap-2 text-sm">
-                    <!-- ① 删除损失面 -->
-                    <div class="rounded-md border p-2">
-                        <div class="text-amber-600 dark:text-amber-400">
-                            ① {{ deleteCount > 0 ? t('restore.confirm.deleteLoss', [deleteCount, lossWarnCount]) : t('restore.confirm.noDelete') }}
-                        </div>
-                    </div>
-                    <!-- ② CF 重取失败语义 -->
-                    <div class="rounded-md border p-2">
-                        <div>② {{ t('restore.confirm.cfFailure') }}</div>
-                    </div>
-                    <!-- ③ 永远人工确认 -->
-                    <div class="rounded-md border p-2">
-                        <div>③ {{ t('restore.confirm.manualOnly') }}</div>
-                    </div>
-                    <!-- ④ 新记录不改写历史 -->
-                    <div class="rounded-md border p-2">
-                        <div>④ {{ t('restore.confirm.newRecord') }}</div>
-                    </div>
-                    <!-- partial 后果提示（allow_partial 决议时） -->
-                    <div v-if="(plan?.requested_exactness ?? '') === 'allow_partial'" class="text-muted-foreground text-xs">
-                        {{ t('restore.confirm.partialNote', [partialRemain]) }}
-                    </div>
-                    <!-- 后端确认要求投影（恒非空，restore_acknowledge 恒在） -->
-                    <div class="text-muted-foreground text-xs">{{ t('restore.confirm.reqTitle') }}</div>
-                    <div class="flex flex-col gap-1">
-                        <div
-                            v-for="req in plan?.confirmation_requirements ?? []"
-                            :key="req.code"
-                            class="flex items-center justify-between gap-2"
-                        >
-                            <span class="text-xs">{{ requirementLabel(req.code) }}</span>
-                            <Badge variant="outline" class="text-muted-foreground">{{ t('plans.resourceCount', [req.resource_count]) }}</Badge>
-                        </div>
-                    </div>
-                    <!-- 知情勾选：确认按钮门 -->
-                    <label class="mt-1 flex cursor-pointer items-start gap-2 text-sm">
-                        <input v-model="ack" type="checkbox" class="accent-current" />
-                        <span>{{ t('req.restore_acknowledge') }}</span>
-                    </label>
-                </div>
-
-                <AlertDialogFooter>
-                    <AlertDialogCancel>{{ t('common.cancel') }}</AlertDialogCancel>
-                    <AlertDialogAction
-                        :disabled="!ack || confirming"
-                        :class="confirming ? 'pointer-events-none opacity-50' : ''"
-                        @click="confirmRestore"
-                    >
-                        {{ t('restore.confirmSubmit') }}
-                    </AlertDialogAction>
-                </AlertDialogFooter>
-            </AlertDialogContent>
-        </AlertDialog>
+        <!-- 确认回滚对话框（四要素逐条可见 + 知情勾选门；标题按确切度区分） -->
+        <RestoreConfirmDialog
+            v-model:open="confirmOpen"
+            :partial="confirmPartial"
+            :target-line="confirmTargetLine"
+            :delete-count="deleteCount"
+            :loss-warn-count="lossWarnCount"
+            :partial-remain="partialRemain"
+            :requirements="requirementVMs"
+            :busy="confirming"
+            @confirm="confirmRestore"
+        />
     </div>
 </template>
