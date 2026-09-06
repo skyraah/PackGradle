@@ -2,7 +2,7 @@ import { fileURLToPath, URL } from 'node:url'
 import fs from 'node:fs'
 import type { Plugin } from "vite";
 import { defineConfig } from "vite";
-import vue from "@vitejs/plugin-vue";
+import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
 import wails from "@wailsio/runtime/plugins/vite";
 
@@ -37,9 +37,9 @@ export default defineConfig(({ mode }) => ({
   // __DEV__：开发/生产构建的静态门（与 import.meta.env.DEV 同语义）。
   // 生产构建中被替换为 false 字面量，mock 分支（mocks 动态导入、设置页 mock 卡片、
   // 顶栏 MOCK 徽标、目录选择 mock 路径）经常量折叠整体裁剪出产物（ADR-0001 §5）。
-  // 模板表达式里不能写 import.meta，故统一走此全局常量。
+  // 注意：React 侧 JSX 里可以写 import.meta，但沿用此全局常量保持与 Vue 版同一门控口径。
   define: {
     __DEV__: mode === "development",
   },
-  plugins: [vue(), tailwindcss(), wails("./bindings"), stripDevMockLocale(mode === "development")],
+  plugins: [react(), tailwindcss(), wails("./bindings"), stripDevMockLocale(mode === "development")],
 }));

@@ -1,5 +1,5 @@
 ---
-status: accepted
+status: accepted — 栈选型（Vue 3 + shadcn-vue）已于 2026-09-06 被 ADR-0014 取代（React + shadcn/ui 二次切换）；本 ADR 的单发布切换与旧入口退场方法论仍有效
 date: 2026-08-28
 ---
 
