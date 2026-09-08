@@ -1,85 +1,93 @@
-// 应用路由（ADR-0014 脚手架）：hash 历史（Wails 以静态资源服务器托管前端，hash 模式深链/刷新不 404）。
-// 一级导航按 UX 原型 §4.1：工作区 / 项目源 / 运行实例 / 设置，默认首页 /workspaces。
-// 旧栈路由（/、/projects*、/instances、/dev）与 catch-all 静默重定向 /workspaces（ADR-0001 §4）。
-// 每条路由的注释 = Vue 树（main:frontend/src/router/index.ts）的契约引用，移植页面时照此接线。
 import { createHashRouter, Navigate } from 'react-router'
-import type { LucideIcon } from 'lucide-react'
-import { Gamepad2, LayoutGrid, Package, Settings as SettingsIcon } from 'lucide-react'
+import { Gamepad2, LayoutGrid, LucideIcon, Package, Settings as SettingsIcon } from 'lucide-react'
 import App from './App'
-import RuntimesView from './views/RuntimesView'
-import SettingsView from './views/SettingsView'
-import SourcesView from './views/SourcesView'
-import WorkspacesChangesView from './views/WorkspacesChangesView'
-import WorkspacesCommitView from './views/WorkspacesCommitView'
-import WorkspacesHistoryView from './views/WorkspacesHistoryView'
-import WorkspacesMappingsView from './views/WorkspacesMappingsView'
-import WorkspacesNewView from './views/WorkspacesNewView'
-import WorkspacesPlanView from './views/WorkspacesPlanView'
-import WorkspacesRebindView from './views/WorkspacesRebindView'
-import WorkspacesRecoveryView from './views/WorkspacesRecoveryView'
-import WorkspacesRestorePlanView from './views/WorkspacesRestorePlanView'
-import WorkspacesSettingsView from './views/WorkspacesSettingsView'
-import WorkspacesView from './views/WorkspacesView'
+import RouteErrorView from './components/common/RouteErrorView'
+import {
+    ChangesView,
+    CommitView,
+    HistoryView,
+    MappingsView,
+    NewView,
+    PlanView,
+    RecoveryView,
+    RebindView,
+    RestorePlanView,
+    WorkspacesView,
 
-export interface NavItem {
-    path: string
-    titleKey: string
-    icon: LucideIcon
+    RuntimesView,
+    SettingsView,
+    SourcesView,
+} from './views'
+
+import type { NavItem, Section, RouteHandle} from './interface'
+
+const routeHandle = (pathOrIndex: true | string, element: React.ReactNode, titleKey?: string): RouteHandle => {
+    return pathOrIndex === true
+        ? { index: true, element, handle: titleKey ? { titleKey } : undefined }
+        : { path: pathOrIndex, element, handle: titleKey ? { titleKey } : undefined }
 }
 
-// 侧栏导航项（一级导航仅四项，UX 原型 §5.1 常显不可收起；不含详情页等二级路由）。
-// 新增页面只需在此注册即可自动出现在侧栏。
-export const navItems: NavItem[] = [
-    // 工作区页（契约 04 缓存骨架 + 列表页；导航 IA 见 docs/frontend/05 §4.1）
-    { path: '/workspaces', titleKey: 'nav.workspaces', icon: LayoutGrid },
-    // 端点管理页（契约 03 Project/Runtime 服务 + UX 原型 §7.x）
-    { path: '/sources', titleKey: 'nav.sources', icon: Package },
-    { path: '/runtimes', titleKey: 'nav.runtimes', icon: Gamepad2 },
-    { path: '/settings', titleKey: 'nav.settings', icon: SettingsIcon },
+const sectionHandle = (path: string, titleKey: string, icon: LucideIcon, children: RouteHandle[]): Section => {
+    return {
+        path: path,
+        titleKey: titleKey,
+        icon: icon,
+        children: children,
+    }
+}
+
+/**
+ * @description 一级导航区段表——侧栏与路由表的单一数据源。每个区段注册同时决定两件事：
+ *              icon rail 上的一个入口（path/titleKey/icon）与路由树里的一段嵌套路由（children，
+ *              子页一律相对路径）。新增一级页面只在此追加一个对象，双端同时生效，
+ *              不会出现「侧栏有、路由无」的单边遗漏。
+ */
+const sections: Section[] = [
+    sectionHandle('/workspaces', 'nav.workspaces', LayoutGrid, [
+        routeHandle(true, <WorkspacesView />, 'nav.workspaces'),
+        routeHandle("new", <NewView />, 'nav.workspacesChanges'),
+        routeHandle(":id/changes", <ChangesView />, 'nav.workspacesChanges'),
+        routeHandle(":id/mappings", <MappingsView />, 'nav.workspacesMappings'),
+        routeHandle(":id/plan/:plan_id", <PlanView />, 'nav.workspacesPlan'),
+        routeHandle(":id/restore-plan/:plan_id", <RestorePlanView />, 'nav.workspacesRestorePlan'),
+        routeHandle(":id/rebind", <RebindView />, 'nav.workspacesRebind'),
+        routeHandle(":id/history", <HistoryView />, 'nav.workspacesHistory'),
+        routeHandle(":id/history/:commit_id", <CommitView />, 'nav.workspacesCommit'),
+        routeHandle(":id/recoveries/:run_id", <RecoveryView />, 'nav.workspacesRecovery'),
+    ]),
+    sectionHandle('/sources', 'nav.sources', Package, [
+        routeHandle(true, <SourcesView />, 'nav.sources')
+    ]),
+    sectionHandle('/runtimes', 'nav.runtimes', Gamepad2, [
+        routeHandle(true, <RuntimesView />, 'nav.runtimes')
+    ]),
+    sectionHandle('/settings', 'nav.settings', SettingsIcon, [
+        routeHandle(true, <SettingsView />, 'nav.settings')
+    ]),
 ]
 
-// 旧栈路由静默重定向（ADR-0001 §4：单发布切换后旧入口整体退场，无提示）
+/**
+ * @description 侧栏入口清单：由 {@link sections} 投影而来，App 外壳据此渲染 icon rail
+ *              （main:frontend/src/App.tsx），不维护第二份路径表。
+ */
+export const navItems: NavItem[] = sections.map(({ path, titleKey, icon }) => ({ path, titleKey, icon }))
+
+/**
+ * @description catch-all 重定向：未匹配路径一律弹回 /workspaces；
+ *              replace 避免在历史栈里留下死地址。
+ */
 const redirectToWorkspaces = <Navigate to="/workspaces" replace />
 
+/**
+ * @description 应用路由器（hash 模式——Wails webview 无服务端路由可依托）。
+ *              children 由 {@link sections} 各区段摊平而成 + 一条 catch-all；
+ *              根 errorElement 兜住任意路由渲染期抛错并接管整壳（见 RouteErrorView），
+ *              子路由无需各自挂错误边界。
+ */
 export const router = createHashRouter([
     {
         element: <App />,
-        children: [
-            { path: '/workspaces', element: <WorkspacesView />, handle: { titleKey: 'nav.workspaces' } },
-            // 创建页（Prepare → Apply 建工作区，UX 原型 §7.2。列表页头部与空态的
-            // 「新建工作区」入口承接本页，不占侧栏导航项）
-            { path: '/workspaces/new', element: <WorkspacesNewView />, handle: { titleKey: 'nav.workspacesNew' } },
-            // 工作区详情：资源变更页（GetChanges 分页 + 筛选，UX 原型 §7.3。入口在工作区列表行操作）
-            { path: '/workspaces/:id/changes', element: <WorkspacesChangesView />, handle: { titleKey: 'nav.workspacesChanges' } },
-            // 工作区详情：受管范围页（GetMappingPolicy/UpdateMappingPolicy 读写 + 乐观锁编辑，
-            // UX 原型 §7.4。入口在工作区列表行操作）
-            { path: '/workspaces/:id/mappings', element: <WorkspacesMappingsView />, handle: { titleKey: 'nav.workspacesMappings' } },
-            // 工作区详情：设置页（授权模式开关 SetWorkspaceAuthorized，契约 06 §9，票 #62）
-            { path: '/workspaces/:id/settings', element: <WorkspacesSettingsView />, handle: { titleKey: 'nav.workspacesSettings' } },
-            // 工作区详情：计划页（PrepareSync/ResolvePlan/GetPlan 只读计划与 choose_side 冲突解决，
-            // UX 原型 §7.5。无 Apply/History/Restore 入口，票 #21）
-            { path: '/workspaces/:id/plans/:plan_id', element: <WorkspacesPlanView />, handle: { titleKey: 'nav.workspacesPlan' } },
-            // 工作区详情：回滚计划页（PrepareRestore/ResolveRestorePlan/GetRestorePlan/StageUserObject/
-            // ConfirmRestorePlan，结构 B 单表全列，契约 06 §9，票 #61。字面段 restore 与上一条
-            // :plan_id 参数路由并存时静态段优先匹配——react-router 同样按静态段加权；
-            // 入口唯一落在历史详情页主操作）
-            { path: '/workspaces/:id/plans/restore/:plan_id', element: <WorkspacesRestorePlanView />, handle: { titleKey: 'nav.workspacesRestorePlan' } },
-            // 工作区详情：重新绑定页（PrepareRebind/ApplyRebind 重绑闭环，UX 原型 §7.6，票 #22。
-            // 入口在工作区列表行操作与变化页头部（rebind_required））
-            { path: '/workspaces/:id/rebind', element: <WorkspacesRebindView />, handle: { titleKey: 'nav.workspacesRebind' } },
-            // 工作区详情：同步历史页（ListCommits 分页，UX 原型 §7.7；history_view 门控，契约 05 §5，票 #42）
-            { path: '/workspaces/:id/history', element: <WorkspacesHistoryView />, handle: { titleKey: 'nav.workspacesHistory' } },
-            // 工作区详情：同步记录详情页（GetCommit 逐资源变更表，UX 原型 §7.8，契约 05 §5。由历史页行进入）
-            { path: '/workspaces/:id/history/:commit_id', element: <WorkspacesCommitView />, handle: { titleKey: 'nav.workspacesCommit' } },
-            // 工作区详情：恢复详情页（GetApplyRun/ListApplyOperations/AcknowledgeRecovery，UX 原型 §7.12；
-            // 契约 05 §5 D2，run_id=task_id，票 #42。「处理恢复」入口在任务中心/列表行）
-            { path: '/workspaces/:id/recoveries/:run_id', element: <WorkspacesRecoveryView />, handle: { titleKey: 'nav.workspacesRecovery' } },
-            { path: '/settings', element: <SettingsView />, handle: { titleKey: 'nav.settings' } },
-            { path: '/', element: redirectToWorkspaces },
-            { path: '/projects/*', element: redirectToWorkspaces },
-            { path: '/instances', element: redirectToWorkspaces },
-            { path: '/dev', element: redirectToWorkspaces },
-            { path: '*', element: redirectToWorkspaces },
-        ],
+        errorElement: <RouteErrorView />,
+        children: [...sections, { path: '*', element: redirectToWorkspaces }],
     },
 ])
