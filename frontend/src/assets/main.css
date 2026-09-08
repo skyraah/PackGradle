@@ -47,6 +47,16 @@
     --warning: #b45309;
     --error: #dc2626;
     --info: #0369a1;
+    /* 侧栏令牌（原型 packgradle-desktop-prototype 亮色：bg+black 2.5%、fg-2/muted 取原型 [data-theme=light] 值） */
+    --sidebar: color-mix(in oklab, var(--background), black 2.5%);
+    --sidebar-foreground: oklch(0.42 0.02 265);
+    --sidebar-primary: #5e6ad2;
+    --sidebar-primary-foreground: #ffffff;
+    --sidebar-accent: color-mix(in oklab, var(--foreground) 8%, transparent);
+    --sidebar-accent-foreground: #08090a;
+    --sidebar-border: rgba(11, 13, 15, 0.06);
+    --sidebar-muted-foreground: #62666d;
+    --sidebar-ring: hsl(217.2 91.2% 59.8%);
 }
 
 .dark {
@@ -83,6 +93,16 @@
     --warning: #fbbf24;
     --error: #f87171;
     --info: #7dd3fc;
+    /* 侧栏令牌（原型 packgradle-desktop-prototype 暗色：bg+white 3%、fg-2/--fg/--muted 直接取原型 :root 值） */
+    --sidebar: color-mix(in oklab, var(--background), white 3%);
+    --sidebar-foreground: #d0d6e0;
+    --sidebar-primary: #5e6ad2;
+    --sidebar-primary-foreground: #ffffff;
+    --sidebar-accent: color-mix(in oklab, var(--foreground) 8%, transparent);
+    --sidebar-accent-foreground: #f7f8f8;
+    --sidebar-border: rgba(255, 255, 255, 0.05);
+    --sidebar-muted-foreground: #8a8f98;
+    --sidebar-ring: hsl(217.2 91.2% 59.8%);
 }
 
 @theme inline {
@@ -127,7 +147,16 @@
     --radius-sm: calc(var(--radius) - 4px); /* 4px：checkbox 等微型控件 */
     --radius-md: calc(var(--radius) - 2px); /* 6px：按钮 / 输入（原型 .btn / .input） */
     --radius-lg: var(--radius);             /* 8px：弹层 / toast（原型 .dialog / .toast） */
-    --radius-xl: var(--radius);             /* 8px：卡片（原型 .card） */
+    --radius-xl: var(--radius);
+    --color-sidebar-ring: var(--sidebar-ring);
+    --color-sidebar-border: var(--sidebar-border);
+    --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+    --color-sidebar-accent: var(--sidebar-accent);
+    --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+    --color-sidebar-primary: var(--sidebar-primary);
+    --color-sidebar-foreground: var(--sidebar-foreground);
+    --color-sidebar-muted-foreground: var(--sidebar-muted-foreground);
+    --color-sidebar: var(--sidebar);             /* 8px：卡片（原型 .card） */
 }
 
 /* 页面标题（原型 .page-head h1：18px/700） */
@@ -180,16 +209,35 @@ pre,
     -webkit-user-select: text;
 }
 
-button,
-input,
-textarea {
-    font: inherit;
-    letter-spacing: 0;
-}
+/* 按 Tailwind v4 惯例，自定义基础规则须进 @layer base：级联层里未分层规则永远压过
+   utilities 层——本条此前把所有 button/input 上的字号/字重 utilities（text-[13px]、
+   font-medium 等）整体击穿（侧栏 footer 折叠行是全侧栏唯一真 <button>，曾因此回落
+   16px/400，<a> 行不受影响）。入层后 base < utilities 恢复正常覆盖序，UA 样式表仍被压住 */
+@layer base {
+    button,
+    input,
+    textarea {
+        font: inherit;
+        letter-spacing: 0;
+    }
 
-:focus-visible {
-    outline: 2px solid var(--primary);
-    outline-offset: 2px;
+    /* shadcn v4 官方兜底：v4 preflight 不设边框色，裸 border 类一律落 currentColor
+       （stock 组件 dropdown/select/dialog/card…全是裸 border，暗色下曾被串成近纯白边圈；
+       侧栏时代的 border-sidebar-border 局部补丁是同一坑的个案）。outline-ring/50 同批
+       兜住 focus 轮廓色 */
+    * {
+        @apply border-border outline-ring/50;
+    }
+
+    /* 键盘焦点兜底：给没有自家焦点样式的裸元素保一道可见指示。必须留在 base 层——
+       此前未分层，压过了 utilities 的 outline-hidden：Radix 开/关菜单全走脚本聚焦，
+       命中 :focus-visible（首开零交互窗口 / Esc 键盘路径）时全局绿框击穿组件自家
+       焦点样式（shadcn 组件靠 outline-hidden 压制默认环再自绘 ring）。入层后
+       outline-hidden 的压制恢复生效，未自觉压制的元素仍保有这道兜底 */
+    :focus-visible {
+        outline: 2px solid var(--primary);
+        outline-offset: 2px;
+    }
 }
 
 .app-drag {
@@ -251,4 +299,13 @@ html.window-maximised body {
         animation-duration: 0.01ms !important;
         animation-iteration-count: 1 !important;
     }
+}
+
+/* 主题切换（AppSidebar 的 useLocalDarkTheme 驱动）：View Transitions 引擎默认的整窗
+   交叉淡入淡出，这里只放缓到 300ms/ease——克制档，无自绘形状（reduce 动效时 JS 侧
+   直接跳过 VTA 瞬时翻转，与本文件上方 reduce 块口径一致） */
+::view-transition-old(root),
+::view-transition-new(root) {
+    animation-duration: 300ms;
+    animation-timing-function: ease;
 }
