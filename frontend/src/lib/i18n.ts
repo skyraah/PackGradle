@@ -11,19 +11,45 @@
 //
 // ———————— 移植注意（给 utils/errors.ts 的搬迁，Vue 版在 main 分支） ————————
 // vue-i18n 位置插值写 {0}，i18next 默认插值写 {{0}}——zh-CN.json 有 143 行含 {0}。
-// 二选一：装 i18next-sprintf-postprocessor 保持 {0} 原样；或渲染时改 t(key, { '0': x })。
-// 脚手架阶段（标题类文案）不含插值，不受影响。
+// 已定方案（utils/errors.ts renderAppErr 落地）：t 时 skipInterpolation 取原始键值，
+// 再手工替换 {n} 占位——单点适配，其余键的常规 t() 不受影响，无需 postprocessor。
 import i18n from 'i18next'
 import { initReactI18next } from 'react-i18next'
 import zhCN from '../locales/zh-CN.json'
 
+// 语言偏好持久化（packgradle.locale，自 Vue 版 SettingsView 移植到初始化处）：
+// P1 仅 zh-CN 一套文案；启动时读存储（缺省 zh-CN），设置页语言 Select 经
+// i18n.changeLanguage + 写回该键生效（localStorage 不可用时保持默认）。
+const LOCALE_KEY = 'packgradle.locale'
+
+function loadLocale(): string {
+    try {
+        const saved = localStorage.getItem(LOCALE_KEY)
+        if (saved) return saved
+    } catch {
+        // localStorage 不可用时保持默认 zh-CN
+    }
+    return 'zh-CN'
+}
+
 void i18n.use(initReactI18next).init({
-    lng: 'zh-CN',
+    lng: loadLocale(),
     fallbackLng: 'zh-CN',
     resources: { 'zh-CN': { translation: zhCN } },
     // React 自带 XSS 防护，i18next 侧无需再转义
     interpolation: { escapeValue: false },
 })
+
+// setLocale 切换语言并持久化（设置页语言 Select 的落点；持久化失败不阻断本次
+// 会话内的切换）——新语言包就位后即插即用。
+export function setLocale(locale: string): void {
+    void i18n.changeLanguage(locale)
+    try {
+        localStorage.setItem(LOCALE_KEY, locale)
+    } catch {
+        // 忽略：会话内切换仍生效
+    }
+}
 
 export default i18n
 
