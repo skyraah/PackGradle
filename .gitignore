@@ -1,5 +1,13 @@
 .task
 .zcode
+.scratch
+build
+devdocs
+node_modules
+*.txt
+# 本地测试录像与 TS 增量构建缓存（走查/构建副产物，不入 git）
+*.webm
+*.tsbuildinfo
 /.gocache/
 /.gotmp/
 bin
