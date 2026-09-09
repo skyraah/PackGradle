@@ -21,24 +21,25 @@ pg-core（Java Core）重建的架构决策集：所有阻塞实现的决策各�
 - [#117 [research] Java 生态事实矩阵（JDK/库/打包/LSP）](https://github.com/skyraah/PackGradle/issues/117)：JDK 21/25 Premier 至 2028-09/2030-09（LTS 两年节奏）；sqlite-jdbc 活跃、Flyway-SQLite 已社区化（手写 PRAGMA user_version 为惯用）；Jackson 2.21/3.x 双线、picocli 4.7.7、lsp4j 1.0.0（jsonrpc 模块可独立使用）；JDK WatchService macOS 为轮询实现；jpackage + JEP 514/515 AOT cache。全文见票内评论与 research/java-eco-matrix 分支。
 - [#126 [research] Java 系统保险柜生态（keyring/DPAPI）](https://github.com/skyraah/PackGradle/issues/126)：java-keyring 停更约 3 年且 Windows 后端 CredWriteA 逼近凭据管理器 2560 字节上限；JNA 自带 DPAPI 但无 Wincred/Keychain 绑定；macOS SecKeychain 被弃用（TN3137）且有 Gradle daemon 长跑失效 issue；纯 JDK 信封零新依赖可行（AES-GCM+PBKDF2 标准自带，HKDF 在 JDK 25 定稿、21 需手写 RFC 5869）。全文见票内评论与 research/java-keyring-eco 分支。
 - [pg-core 领域模型与能力域重审（概念地图 + 分组）](https://github.com/skyraah/PackGradle/issues/115)（2026-09-10）：十核心概念全保留；时代词三删（legacy 识别/切换/退场，Java 对旧关联不识别当普通内容）；补五词条（扫描/扫描快照/差异/计划/同步范围，受管范围→同步范围更名）；契约面四词归 #119/#123；七域能力分组定稿（关系与端点 7/差异与决议 10/执行与恢复 8/历史与对象库 7/下载与凭据 4/监听 2/诊断 2）；概念地图落本目录 concept-map.md。「开新仓库」倾向已记录，#118 作现状候选。
+- [pg-core 进程模型与生命周期（daemon/单实例/锁归属）](https://github.com/skyraah/PackGradle/issues/116)（2026-09-10）：无共享按需进程——每客户端 spawn 自己的 Core 子进程（CLI 每命令一个、完即退；GUI 客户端打开期间各持一个），不设 daemon、无跨客户端共享、无服务发现；单实例收窄到同类型 GUI 客户端（配置管理须读时加载+原子写）；存储协调沿用 Go（WAL + busy_timeout + active-task 数据库检查，不加跨进程文件锁，数据库是唯一跨进程协调点）；断连即终止、在途任务靠下次启动恢复，无宽限窗口。决议全文见票内评论与 `docs/adr/0016-pg-core-process-model.md`。
 
-## 票面快照（2026-09-10 · 票 #115 收口时；#117/#126 由并行会话同日收口）
+## 票面快照（2026-09-10 · 票 #116 收口时；#115/#117/#126 同日先已收口）
 
 | 票 | 标题 | 状态 |
 |---|---|---|
-| #115 | 领域模型与能力域重审 | **已关**（本票） |
-| #116 | 进程模型与生命周期 | 边界可取 |
+| #115 | 领域模型与能力域重审 | **已关** |
+| #116 | 进程模型与生命周期 | **已关**（本票） |
 | #117 | [research] Java 生态事实矩阵 | **已关**（并行会话） |
-| #118 | Java 技术基线与仓库物理形态 | 边界可取（#117 关闭后解锁） |
-| #119 | Protocol 与事件流选型 | 被阻塞（2） |
-| #120 | 领域语义重审·能力域组 | 边界可取（#115 关闭后解锁，按七域分组拆票） |
-| #121 | 存储与持久化边界 | 边界可取（#117 关闭后解锁） |
-| #122 | 任务编排与 watcher 架构 | 被阻塞（3） |
-| #123 | 三客户端接入契约 | 被阻塞（1） |
-| #124 | 迁移与行为对齐策略 | 被阻塞（1） |
-| #125 | Desktop host 选型（低优先） | 被阻塞（1） |
+| #118 | Java 技术基线与仓库物理形态 | 边界可取 |
+| #119 | Protocol 与事件流选型 | 被阻塞（1：#118） |
+| #120 | 领域语义重审·能力域组 | 边界可取（按七域分组拆票） |
+| #121 | 存储与持久化边界 | 边界可取 |
+| #122 | 任务编排与 watcher 架构 | 被阻塞（2：#119/#120） |
+| #123 | 三客户端接入契约 | 被阻塞（1：#119） |
+| #124 | 迁移与行为对齐策略 | 被阻塞（1：#121） |
+| #125 | Desktop host 选型（低优先） | 被阻塞（1：#123） |
 | #126 | [research] Java 系统保险柜生态 | **已关**（并行会话） |
-| #127 | 凭据机制重估 | 被阻塞（2） |
+| #127 | 凭据机制重估 | 被阻塞（2：#118/#120） |
 
 ## Not yet specified（fog）
 
