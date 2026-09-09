@@ -37,8 +37,19 @@ const tools: ToolInfo[] = [
 ]
 
 // —— 环境杂项 ——
-let apiKey = 'mock$cf-api-key-0000'
 let configExists = true
+
+// —— 凭据槽位（ADR-0015）——
+// mock 侧只存明文值与设置时间（内存态，刷新即重置）；掩码/校验/槽位枚举
+// 语义由各服务 mock 镜像后端口径。默认预置 CF 钥匙，让设置页凭据区开箱
+// 即见「已配置」状态。
+interface SecretEntry {
+    value: string
+    updatedAt: number
+}
+const secretSlots = new Map<string, SecretEntry>([
+    ['curseforge/api-key', { value: 'mock$cf-api-key-0000', updatedAt: Date.now() - 86_400_000 }],
+])
 
 // —— 保留策略（默认值对齐 internal/core/model/retention.go DefaultRetention）——
 const retention: RetentionSettingsDTO = {
@@ -66,11 +77,14 @@ let gcTaskSeq = 0
 
 export const db = {
     tools,
-    get apiKey() {
-        return apiKey
+    getSlot(kind: string): SecretEntry | undefined {
+        return secretSlots.get(kind)
     },
-    set apiKey(v: string) {
-        apiKey = v
+    setSlot(kind: string, value: string): void {
+        secretSlots.set(kind, { value, updatedAt: Date.now() })
+    },
+    clearSlot(kind: string): void {
+        secretSlots.delete(kind)
     },
     get configExists() {
         return configExists

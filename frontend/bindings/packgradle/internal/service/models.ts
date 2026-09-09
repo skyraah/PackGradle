@@ -47,6 +47,15 @@ export interface PrismOverview {
 }
 
 /**
+ * SecretStatus 是 Status 的前端投影（时间戳为 RFC3339 文本）。
+ */
+export interface SecretStatus {
+    "set": boolean;
+    "last4": string;
+    "updatedAt": string;
+}
+
+/**
  * ToolInfo 描述一个工具的检测结果。
  * 不包含用户可见文案：检测来源（Source）由前端按翻译键渲染提示
  */

@@ -13,6 +13,7 @@
 import * as RealEnvService from '../../bindings/packgradle/internal/service/envservice'
 import * as RealPackwizService from '../../bindings/packgradle/internal/service/packwizservice'
 import * as RealPrismService from '../../bindings/packgradle/internal/service/prismservice'
+import * as RealSecretsService from '../../bindings/packgradle/internal/service/secretsservice'
 import * as RealProjectService from '../../bindings/packgradle/internal/transport/projectservice'
 import * as RealRuntimeService from '../../bindings/packgradle/internal/transport/runtimeservice'
 import * as RealSyncService from '../../bindings/packgradle/internal/transport/syncservice'
@@ -44,13 +45,14 @@ export function setMockEnabled(v: boolean): void {
 // 本阶段仅实现设置页消费的 env + settings 两服务（./mocks/envservice.ts、
 // ./mocks/settingsservice.ts）；其余服务的 mock 随各自页面迁移在 ./mocks/ 下补齐。
 type MockImpl = Record<string, unknown>
-let mockImpls: { env: MockImpl; settings: MockImpl } | null = null
+let mockImpls: { env: MockImpl; settings: MockImpl; secrets: MockImpl } | null = null
 if (import.meta.env.DEV && isMockEnabled()) {
-    const [env, settings] = await Promise.all([
+    const [env, settings, secrets] = await Promise.all([
         import('./mocks/envservice'),
         import('./mocks/settingsservice'),
+        import('./mocks/secretsservice'),
     ])
-    mockImpls = { env, settings }
+    mockImpls = { env, settings, secrets }
 }
 
 // proxyService 生成命名空间代理：每次属性访问时按开关挑选实现。
@@ -117,6 +119,16 @@ export const SettingsService: typeof RealSettingsService = proxyService(
     RealSettingsService,
     (mockImpls?.settings ?? {}) as MockImpl,
 ) as typeof RealSettingsService
+
+// 凭据槽位服务（ADR-0015）：Set / Delete / Status 三件，明文永不出后端
+export const SecretsService: typeof RealSecretsService = proxyService(
+    'SecretsService',
+    RealSecretsService,
+    (mockImpls?.secrets ?? {}) as MockImpl,
+) as typeof RealSecretsService
+
+// 凭据状态投影（ADR-0015；SecretsService.Status 返回型）
+export type { SecretStatus } from '../../bindings/packgradle/internal/service/models'
 
 // 端点管理页与工作区页的类型出口（真实绑定模型）
 export type {

@@ -4,14 +4,17 @@
 import * as EnvService from "./envservice.js";
 import * as PackwizService from "./packwizservice.js";
 import * as PrismService from "./prismservice.js";
+import * as SecretsService from "./secretsservice.js";
 export {
     EnvService,
     PackwizService,
-    PrismService
+    PrismService,
+    SecretsService
 };
 
 export type {
     ModVersionResult,
     PrismOverview,
+    SecretStatus,
     ToolInfo
 } from "./models.js";
