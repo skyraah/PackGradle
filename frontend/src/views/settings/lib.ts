@@ -14,6 +14,27 @@ export function formatBytes(bytes: number): string {
     return `${bytes} B`
 }
 
+// formatBytesHuman 字节 → 只读展示（本地存储三行等）：取能装下的最大单位
+//（KiB/MiB/GiB/TiB），1 位小数、整值省略小数；不足 1 KiB 裸显字节数。与
+// formatBytes 的分工：本函数四舍五入有损，只作展示，不得回填 retention 表单
+//（表单回填须走 formatBytes 保 format→parse 无损往返，见 buildUpdateInput）。
+export function formatBytesHuman(bytes: number): string {
+    const units = ['B', 'KiB', 'MiB', 'GiB', 'TiB'] as const
+    let v = bytes
+    let u = 0
+    while (v >= 1024 && u < units.length - 1) {
+        v /= 1024
+        u++
+    }
+    let disp = u === 0 ? v : Math.round(v * 10) / 10
+    // 进位后小数可能顶到 1024（如 1048575 B → 1024.0 KiB），再进一档免出「1024 KiB」
+    if (disp >= 1024 && u < units.length - 1) {
+        disp /= 1024
+        u++
+    }
+    return `${disp} ${units[u]}`
+}
+
 // parseBytes 解析「数值 + 可选单位」为字节数；无法解析返回 null。
 export function parseBytes(text: string): number | null {
     const m = /^\s*(\d+(?:\.\d+)?)\s*(GiB|MiB|KiB|B)?\s*$/i.exec(text)

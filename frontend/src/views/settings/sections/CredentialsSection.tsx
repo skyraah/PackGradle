@@ -19,7 +19,7 @@ export default function CredentialsSection() {
         <SettingsSection titleKey="settings.creds.title" descKey="settings.creds.desc">
             <SettingsRow labelKey="settings.creds.cfKey">
                 {cred.editing ? (
-                    <div className="flex min-w-[200px] flex-1 items-center gap-2">
+                    <div className="flex min-w-50 flex-1 items-center gap-2">
                         <Input
                             value={cred.input}
                             onChange={e => cred.setInput(e.target.value)}
@@ -30,7 +30,7 @@ export default function CredentialsSection() {
                         />
                     </div>
                 ) : (
-                    <div className="flex min-w-[200px] flex-1 items-center gap-2">
+                    <div className="flex min-w-50 flex-1 items-center gap-2">
                         {cred.loadFailed ? (
                             <span className="text-destructive text-xs">{t('settings.creds.loadFailed')}</span>
                         ) : (

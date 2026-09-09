@@ -17,7 +17,7 @@ import { fadeUp } from '@/lib/motion'
  *              （去掉顶边框、收紧上内边距，对齐 §7.11 全宽分区 + border-t 分隔骨架）。
  *              children 为分区行（SettingsRow 或操作行）。
  */
-export function SettingsSection({
+function SettingsSection({
     titleKey,
     descKey,
     first = false,
@@ -36,7 +36,7 @@ export function SettingsSection({
             // initial=false：减动效下跳过入场；正常态留 undefined 以继承拼装层
             // staggerContainer 的 initial/animate 变体标签，六分区才能成编排序列
             initial={reduceMotion ? false : undefined}
-            className={first ? 'border-t-0 pb-1.5 pt-1' : 'border-t border-border pb-1.5 pt-[18px]'}
+            className={first ? 'border-t-0 pb-1.5 pt-1' : 'border-t border-border pb-1.5 pt-4.5'}
         >
             <h2 className="text-[14.5px] font-bold leading-tight">{t(titleKey)}</h2>
             <p className="text-muted-foreground mb-3 mt-0.5 text-xs">{t(descKey)}</p>
@@ -49,12 +49,17 @@ export function SettingsSection({
  * @description SET-01 标签行：150px 标签 + children（值区/操作区），py-[9px] 行距。
  *              无标签的操作行（保存/回收、诊断按钮组）不套本件，各分区就地排。
  */
-export function SettingsRow({ labelKey, children }: { labelKey: string; children: ReactNode }) {
+function SettingsRow({ labelKey, children }: { labelKey: string; children: ReactNode }) {
     const { t } = useTranslation()
     return (
-        <div className="flex flex-wrap items-center gap-3.5 py-[9px]">
-            <span className="text-muted-foreground w-[150px] flex-none text-[12.5px]">{t(labelKey)}</span>
+        <div className="flex flex-wrap items-center gap-3.5 py-2.25">
+            <span className="text-muted-foreground w-37.5 flex-none text-[12.5px]">{t(labelKey)}</span>
             {children}
         </div>
     )
+}
+
+export {
+    SettingsSection,
+    SettingsRow
 }

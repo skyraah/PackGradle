@@ -33,7 +33,7 @@ export default function SettingsView() {
             variants={staggerContainer}
             initial="initial"
             animate="animate"
-            className="text-foreground mx-auto flex w-full max-w-[860px] flex-col p-4"
+            className="text-foreground mx-auto flex w-full max-w-215 flex-col p-4"
         >
             <div className="mb-3.5">
                 <h1 className="page-title">{t('settings.title')}</h1>
