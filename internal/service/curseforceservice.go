@@ -1,12 +1,12 @@
 package service
 
 import (
-	"strings"
 	"sync"
 
 	"packgradle/internal/curseforge"
 	"packgradle/internal/errs"
 	"packgradle/internal/packwiz"
+	"packgradle/internal/secrets"
 )
 
 // ModVersionResult 是一次批量获取中单个 mod 的结果
@@ -18,10 +18,12 @@ type ModVersionResult struct {
 	Error   string `json:"error"`
 }
 
-// apiKeyOrError 返回已配置的 CurseForge API Key
+// apiKeyOrError 返回生效的 CurseForge API Key（ADR-0015：环境变量覆盖
+// 优先，其次凭据槽位）。缺失统一报 err.cf.api_key_missing——存储侧真实
+// 原因（不可用/损坏）由设置页的 SecretsService.Status 透出。
 func (s *PackwizService) apiKeyOrError() (string, error) {
-	key := strings.TrimSpace(s.config.Get().CurseforgeApiKey)
-	if key == "" {
+	key, err := secrets.ResolveCFAPIKey(s.secrets)
+	if err != nil {
 		return "", errs.New("err.cf.api_key_missing")
 	}
 	return key, nil

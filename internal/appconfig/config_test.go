@@ -16,35 +16,6 @@ func newTestConfig(t *testing.T) *ConfigManager {
 	return NewConfigManagerAt(filepath.Join(t.TempDir(), "config.toml"))
 }
 
-// API Key 的保存、磁盘持久化与清除
-func TestConfigApiKeyPersist(t *testing.T) {
-	m := newTestConfig(t)
-
-	if err := m.SetApiKey("abc-123-xyz"); err != nil {
-		t.Fatalf("SetApiKey: %v", err)
-	}
-	if got := m.Get().CurseforgeApiKey; got != "abc-123-xyz" {
-		t.Errorf("Get 应返回已保存的 key，实际 %q", got)
-	}
-
-	// 重新从磁盘加载，验证持久化
-	m2 := &ConfigManager{path: m.path}
-	if err := ReadToml(m2.path, &m2.cfg); err != nil {
-		t.Fatalf("重新读取配置失败: %v", err)
-	}
-	if m2.cfg.CurseforgeApiKey != "abc-123-xyz" {
-		t.Errorf("配置文件应包含 key，实际 %q", m2.cfg.CurseforgeApiKey)
-	}
-
-	// 空串清除
-	if err := m.SetApiKey(""); err != nil {
-		t.Fatalf("SetApiKey(\"\"): %v", err)
-	}
-	if got := m.Get().CurseforgeApiKey; got != "" {
-		t.Errorf("清除后应为空，实际 %q", got)
-	}
-}
-
 // 项目的新增、同名覆盖路径、查找与移除
 func TestConfigProjects(t *testing.T) {
 	m := newTestConfig(t)

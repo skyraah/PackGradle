@@ -11,6 +11,7 @@ import (
 	"packgradle/internal/appconfig"
 	"packgradle/internal/curseforge"
 	"packgradle/internal/errs"
+	"packgradle/internal/secrets"
 )
 
 // fakeCfServer 模拟 CurseForge 官方 Get Mod File 接口
@@ -96,10 +97,11 @@ func TestFetchModVersionEndToEnd(t *testing.T) {
 	if err := m.AddProject(appconfig.ProjectEntry{Name: "CF Test", Path: dir}); err != nil {
 		t.Fatal(err)
 	}
-	if err := m.SetApiKey("test-key"); err != nil {
+	cfKey := secrets.NewMemoryStore()
+	if err := cfKey.Set(secrets.SlotCurseForgeAPIKey, "test-key"); err != nil {
 		t.Fatal(err)
 	}
-	svc := NewPackwizService(m)
+	svc := NewPackwizService(m, cfKey)
 
 	updated, err := svc.FetchModVersion("CF Test", "create")
 	if err != nil {
@@ -128,7 +130,7 @@ func TestFetchModVersionEndToEnd(t *testing.T) {
 	if err := m3.AddProject(appconfig.ProjectEntry{Name: "CF Test", Path: dir}); err != nil {
 		t.Fatal(err)
 	}
-	svc3 := NewPackwizService(m3)
+	svc3 := NewPackwizService(m3, secrets.NewMemoryStore())
 	if _, err := svc3.FetchModVersion("CF Test", "create"); errs.CodeOf(err) != "err.cf.api_key_missing" {
 		t.Errorf("未配置 API Key 应返回 err.cf.api_key_missing，实际 %v", err)
 	}
@@ -149,10 +151,11 @@ func TestFetchAllModVersions(t *testing.T) {
 	if err := m.AddProject(appconfig.ProjectEntry{Name: "CF Test", Path: dir}); err != nil {
 		t.Fatal(err)
 	}
-	if err := m.SetApiKey("test-key"); err != nil {
+	cfKey := secrets.NewMemoryStore()
+	if err := cfKey.Set(secrets.SlotCurseForgeAPIKey, "test-key"); err != nil {
 		t.Fatal(err)
 	}
-	svc := NewPackwizService(m)
+	svc := NewPackwizService(m, cfKey)
 
 	results, err := svc.FetchAllModVersions("CF Test")
 	if err != nil {
@@ -170,7 +173,7 @@ func TestFetchAllModVersions(t *testing.T) {
 	if err := m3.AddProject(appconfig.ProjectEntry{Name: "CF Test", Path: dir}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := NewPackwizService(m3).FetchAllModVersions("CF Test"); errs.CodeOf(err) != "err.cf.api_key_missing" {
+	if _, err := NewPackwizService(m3, secrets.NewMemoryStore()).FetchAllModVersions("CF Test"); errs.CodeOf(err) != "err.cf.api_key_missing" {
 		t.Errorf("未配置 API Key 应返回 err.cf.api_key_missing，实际 %v", err)
 	}
 }
@@ -191,7 +194,7 @@ func TestApplyCfCache(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	svc := NewPackwizService(m)
+	svc := NewPackwizService(m, secrets.NewMemoryStore())
 
 	projects := svc.ListProjects()
 	if len(projects) != 1 {
@@ -211,7 +214,7 @@ func TestApplyCfCache(t *testing.T) {
 
 // 未导入的项目 / 不存在的 mod 应报错
 func TestFetchModVersionNotFound(t *testing.T) {
-	svc := NewPackwizService(newTestConfig(t))
+	svc := NewPackwizService(newTestConfig(t), secrets.NewMemoryStore())
 	if _, err := svc.FetchModVersion("Missing", "create"); errs.CodeOf(err) != "err.proj.not_found" {
 		t.Errorf("未导入的项目应返回 err.proj.not_found，实际 %v", err)
 	}
@@ -277,10 +280,11 @@ func TestRefreshCfCacheAfterUpdate(t *testing.T) {
 	if err := m.AddProject(appconfig.ProjectEntry{Name: "CF Update Test", Path: dir}); err != nil {
 		t.Fatal(err)
 	}
-	if err := m.SetApiKey("test-key"); err != nil {
+	cfKey := secrets.NewMemoryStore()
+	if err := cfKey.Set(secrets.SlotCurseForgeAPIKey, "test-key"); err != nil {
 		t.Fatal(err)
 	}
-	svc := NewPackwizService(m)
+	svc := NewPackwizService(m, cfKey)
 
 	oldProj, err := svc.findProject("CF Update Test")
 	if err != nil {
@@ -348,7 +352,7 @@ func TestRefreshCfCacheAfterUpdateNoApiKey(t *testing.T) {
 	if err := m.AddProject(appconfig.ProjectEntry{Name: "CF Update Test", Path: dir}); err != nil {
 		t.Fatal(err)
 	}
-	svc := NewPackwizService(m)
+	svc := NewPackwizService(m, secrets.NewMemoryStore())
 
 	oldProj, err := svc.findProject("CF Update Test")
 	if err != nil {

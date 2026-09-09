@@ -11,16 +11,18 @@ import (
 	"packgradle/internal/junction"
 	"packgradle/internal/packwiz"
 	"packgradle/internal/pgignore"
+	"packgradle/internal/secrets"
 )
 
 // PackwizService 负责 packwiz 项目的导入、解析与管理
 type PackwizService struct {
 	config    *appconfig.ConfigManager
 	junctions junction.Manager
+	secrets   secrets.Store
 }
 
-func NewPackwizService(config *appconfig.ConfigManager) *PackwizService {
-	return &PackwizService{config: config, junctions: junction.NewWindowsManager()}
+func NewPackwizService(config *appconfig.ConfigManager, secretStore secrets.Store) *PackwizService {
+	return &PackwizService{config: config, junctions: junction.NewWindowsManager(), secrets: secretStore}
 }
 
 // ImportProject 导入一个 pack.toml 并返回解析结果（同名项目会覆盖路径）。

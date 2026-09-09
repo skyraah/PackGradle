@@ -1,9 +1,12 @@
 package sync_test
 
 // R3 凭据零泄漏注入断言（红线⑥；ADR-0011 §7 R3/§9；P4 验收规格 §5.4）：
-// config.toml 注入 curseforge_api_key 并装载进生产栈，随后构造三类失败——
-// 端点不可达（错误 detail）、坏 metafile 扫描（诊断输出）、预检不可达
+// config.toml 注入 curseforge_api_key 金丝雀并装载进生产栈，随后构造三类
+// 失败——端点不可达（错误 detail）、坏 metafile 扫描（诊断输出）、预检不可达
 //（检查 detail）——断言日志 / 错误 detail / 诊断输出三条通道均零泄漏。
+// ADR-0015 起 curseforge_api_key 不再是配置字段（解码忽略未知键，注入停留
+// 在文件层），金丝雀断言演化为「配置文件原文不进任何输出通道」；槽位侧的
+// 密文静置断言由 internal/secrets 的测试承接。
 // 配套复核结论见票 #90 报告（归验收收口票 T13 报告归档）。
 
 import (
@@ -39,7 +42,9 @@ func TestR3CredentialNoLeakOnFailure(t *testing.T) {
 	ctx := context.Background()
 	base := t.TempDir()
 
-	// ① 注入凭据：config.toml 携带 curseforge_api_key 并经生产加载层装载
+	// ① 注入金丝雀：config.toml 携带 curseforge_api_key 原文（ADR-0015 起
+	// 字段已退场，解码忽略未知键——原文停留在文件层，用于断言配置文件
+	// 内容不被任何输出通道回显）
 	configPath := filepath.Join(base, "config.toml")
 	if err := os.WriteFile(configPath, []byte(
 		"curseforge_api_key = \""+r3CanaryKey+"\"\n"), 0o644); err != nil {
@@ -47,10 +52,7 @@ func TestR3CredentialNoLeakOnFailure(t *testing.T) {
 	}
 	mgr, err := appconfig.NewConfigManagerAtLoaded(configPath)
 	if err != nil {
-		t.Fatalf("加载注入凭据的配置失败: %v", err)
-	}
-	if got := mgr.Get().CurseforgeApiKey; got != r3CanaryKey {
-		t.Fatalf("前置条件不成立：凭据未在场 %q", got)
+		t.Fatalf("加载注入金丝雀的配置失败: %v", err)
 	}
 
 	// ② 生产装配（config 端口接真实 appconfig；凭据在 config 快照内在场）
