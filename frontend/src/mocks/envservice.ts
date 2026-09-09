@@ -20,18 +20,21 @@ export async function Detect(): Promise<ToolInfo[] | null> {
     return clone(db.tools)
 }
 
+// GetApiKey 返回掩码投影（ADR-0015：明文不出后端）——已设置回非空
+// 掩码串（掩码点 + 末四位），与后端语义一致，判空用法不受影响。
 export async function GetApiKey(): Promise<string> {
     await delay(100)
-    return db.apiKey
+    return db.apiKey ? '••••' + db.apiKey.slice(-4) : ''
 }
 
 export async function MarkConfigCreated(): Promise<void> {
     db.configExists = true
 }
 
+// SetApiKey 保存钥匙（空串 = 清除，与后端口径一致）
 export async function SetApiKey(key: string): Promise<void> {
     await delay(200)
-    db.apiKey = key
+    db.apiKey = key.trim()
 }
 
 // SetToolPath 保存手动路径：标记为已找到（来源 config），返回最新检测结果

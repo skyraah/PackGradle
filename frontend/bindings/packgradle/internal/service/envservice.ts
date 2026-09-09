@@ -7,7 +7,8 @@
  * 
  * config.toml 是工具路径的唯一持久化来源：无论是用户手动输入
  * 还是程序自动检测到的路径，都会写入 config.toml，方便用户
- * 随时查看与修改。
+ * 随时查看与修改。CurseForge 钥匙自 ADR-0015 起不进 config.toml，
+ * 走凭据槽位（secrets.Store）。
  * @module
  */
 
@@ -43,7 +44,10 @@ export function Detect(): $CancellablePromise<$models.ToolInfo[] | null> {
 }
 
 /**
- * GetApiKey 返回已保存的 CurseForge API Key（未配置时为空串）
+ * GetApiKey 返回 CurseForge 钥匙的掩码投影（ADR-0015：明文不出后端）。
+ * 已设置时返回非空掩码串（掩码点 + 末四位）——既有消费方（判空用法）依赖
+ * 的正是非空语义；未设置或存储不可用时返回空串。真实原因由
+ * SecretsService.Status 透出。
  */
 export function GetApiKey(): $CancellablePromise<string> {
     return $Call.ByID(758417042);
@@ -58,7 +62,8 @@ export function MarkConfigCreated(): $CancellablePromise<void> {
 }
 
 /**
- * SetApiKey 保存用户填写的 CurseForge API Key（空串清除）
+ * SetApiKey 保存用户填写的 CurseForge API Key（ADR-0015：写凭据槽位，
+ * 不再落 config.toml）。空串映射为清除（保持既有「空串清除」语义）。
  */
 export function SetApiKey(key: string): $CancellablePromise<void> {
     return $Call.ByID(3983215750, key);

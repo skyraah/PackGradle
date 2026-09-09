@@ -7,6 +7,7 @@ import (
 	"packgradle/internal/appconfig"
 	"packgradle/internal/envutil"
 	"packgradle/internal/errs"
+	"packgradle/internal/secrets"
 )
 
 // EnvService 负责检测 packwiz / Prism Launcher 的装载状态，
@@ -14,13 +15,15 @@ import (
 //
 // config.toml 是工具路径的唯一持久化来源：无论是用户手动输入
 // 还是程序自动检测到的路径，都会写入 config.toml，方便用户
-// 随时查看与修改。
+// 随时查看与修改。CurseForge 钥匙自 ADR-0015 起不进 config.toml，
+// 走凭据槽位（secrets.Store）。
 type EnvService struct {
-	config *appconfig.ConfigManager
+	config  *appconfig.ConfigManager
+	secrets secrets.Store
 }
 
-func NewEnvService(config *appconfig.ConfigManager) *EnvService {
-	return &EnvService{config: config}
+func NewEnvService(config *appconfig.ConfigManager, secretStore secrets.Store) *EnvService {
+	return &EnvService{config: config, secrets: secretStore}
 }
 
 // Detect 检测两个工具的装载状态
@@ -64,14 +67,26 @@ func (s *EnvService) SetToolPath(name, path string) ([]ToolInfo, error) {
 	return s.Detect(), nil
 }
 
-// GetApiKey 返回已保存的 CurseForge API Key（未配置时为空串）
+// GetApiKey 返回 CurseForge 钥匙的掩码投影（ADR-0015：明文不出后端）。
+// 已设置时返回非空掩码串（掩码点 + 末四位）——既有消费方（判空用法）依赖
+// 的正是非空语义；未设置或存储不可用时返回空串。真实原因由
+// SecretsService.Status 透出。
 func (s *EnvService) GetApiKey() string {
-	return s.config.Get().CurseforgeApiKey
+	st, err := s.secrets.Status(secrets.SlotCurseForgeAPIKey)
+	if err != nil || !st.Set {
+		return ""
+	}
+	return secrets.MaskLast4(st.Last4)
 }
 
-// SetApiKey 保存用户填写的 CurseForge API Key（空串清除）
+// SetApiKey 保存用户填写的 CurseForge API Key（ADR-0015：写凭据槽位，
+// 不再落 config.toml）。空串映射为清除（保持既有「空串清除」语义）。
 func (s *EnvService) SetApiKey(key string) error {
-	return s.config.SetApiKey(strings.TrimSpace(key))
+	key = strings.TrimSpace(key)
+	if key == "" {
+		return s.secrets.Delete(secrets.SlotCurseForgeAPIKey)
+	}
+	return s.secrets.Set(secrets.SlotCurseForgeAPIKey, key)
 }
 
 // ConfigExists 判断全局 config.toml 是否已在磁盘上（首次运行检测，

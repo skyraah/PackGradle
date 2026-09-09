@@ -3,10 +3,12 @@ package service
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"packgradle/internal/appconfig"
 	"packgradle/internal/packwiz"
+	"packgradle/internal/secrets"
 )
 
 // newTestConfig 用临时目录构造 ConfigManager，避免污染真实用户配置
@@ -74,7 +76,7 @@ func TestDetectPackwizFromPathAndPersist(t *testing.T) {
 	withEnv(t, "PACKWIZ", "") // 清空可能存在的 PACKWIZ 变量，避免误命中
 	withEnv(t, "PATH", dir+";"+os.Getenv("PATH"))
 
-	svc := NewEnvService(newTestConfig(t))
+	svc := NewEnvService(newTestConfig(t), secrets.NewMemoryStore())
 	info := svc.detectPackwiz()
 
 	if !info.Found || info.Source != "path" {
@@ -94,7 +96,7 @@ func TestDetectPackwizFromGoBin(t *testing.T) {
 	// 清空 PATH，避免命中系统里真实安装的 packwiz
 	withEnv(t, "PATH", t.TempDir()) // 指向无 packwiz 的临时目录
 
-	svc := NewEnvService(newTestConfig(t))
+	svc := NewEnvService(newTestConfig(t), secrets.NewMemoryStore())
 	info := svc.detectPackwiz()
 
 	if !info.Found || info.Source != "default-dir" {
@@ -113,7 +115,7 @@ func TestDetectPackwizPrefersConfigPath(t *testing.T) {
 	if err := cm.SetToolPath("packwiz", saved); err != nil {
 		t.Fatal(err)
 	}
-	svc := NewEnvService(cm)
+	svc := NewEnvService(cm, secrets.NewMemoryStore())
 	info := svc.detectPackwiz()
 
 	if !info.Found || info.Source != "config" || info.Path != saved {
@@ -135,7 +137,7 @@ func TestDetectPackwizRefallsWhenConfigInvalid(t *testing.T) {
 	if err := cm.SetToolPath("packwiz", filepath.Join(t.TempDir(), "missing.exe")); err != nil {
 		t.Fatal(err)
 	}
-	svc := NewEnvService(cm)
+	svc := NewEnvService(cm, secrets.NewMemoryStore())
 	info := svc.detectPackwiz()
 
 	if !info.Found || info.Source != "path" {
@@ -156,7 +158,7 @@ func TestDetectPrismFromLocalAppData(t *testing.T) {
 	withEnv(t, "ProgramFiles", t.TempDir())
 	withEnv(t, "ProgramFiles(x86)", t.TempDir())
 
-	svc := NewEnvService(newTestConfig(t))
+	svc := NewEnvService(newTestConfig(t), secrets.NewMemoryStore())
 	info := svc.detectPrism()
 
 	if !info.Found || info.Source != "default-dir" {
@@ -177,7 +179,7 @@ func TestDetectPrismFromProgramFilesScan(t *testing.T) {
 	withEnv(t, "ProgramFiles(x86)", t.TempDir())
 	withEnv(t, "LOCALAPPDATA", t.TempDir())
 
-	svc := NewEnvService(newTestConfig(t))
+	svc := NewEnvService(newTestConfig(t), secrets.NewMemoryStore())
 	info := svc.detectPrism()
 
 	if !info.Found || info.Source != "default-dir" {
@@ -194,7 +196,7 @@ func TestDetectPrismFromEnvVar(t *testing.T) {
 	withEnv(t, "ProgramFiles", t.TempDir())
 	withEnv(t, "ProgramFiles(x86)", t.TempDir())
 
-	svc := NewEnvService(newTestConfig(t))
+	svc := NewEnvService(newTestConfig(t), secrets.NewMemoryStore())
 	info := svc.detectPrism()
 
 	if !info.Found || info.Source != "env" || info.Path != exe {
@@ -210,7 +212,7 @@ func TestDetectPackwizFromEnvVar(t *testing.T) {
 	withEnv(t, "PATH", t.TempDir())
 	withEnv(t, "USERPROFILE", t.TempDir())
 
-	svc := NewEnvService(newTestConfig(t))
+	svc := NewEnvService(newTestConfig(t), secrets.NewMemoryStore())
 	info := svc.detectPackwiz()
 
 	if !info.Found || info.Source != "env" || info.Path != exe {
@@ -226,7 +228,7 @@ func TestDetectFromEnvVarPointingToFile(t *testing.T) {
 	withEnv(t, "ProgramFiles", t.TempDir())
 	withEnv(t, "ProgramFiles(x86)", t.TempDir())
 
-	svc := NewEnvService(newTestConfig(t))
+	svc := NewEnvService(newTestConfig(t), secrets.NewMemoryStore())
 	info := svc.detectPrism()
 
 	if !info.Found || info.Source != "env" || info.Path != exe {
@@ -244,7 +246,7 @@ func TestDetectNotFound(t *testing.T) {
 	withEnv(t, "ProgramFiles", t.TempDir())
 	withEnv(t, "ProgramFiles(x86)", t.TempDir())
 
-	svc := NewEnvService(newTestConfig(t))
+	svc := NewEnvService(newTestConfig(t), secrets.NewMemoryStore())
 	if info := svc.detectPackwiz(); info.Found {
 		t.Error("packwiz 不应被检测到")
 	}
@@ -253,10 +255,10 @@ func TestDetectNotFound(t *testing.T) {
 	}
 }
 
-// CurseForge API Key 的保存（去除首尾空白）、读取与清除
+// CurseForge API Key 的保存（去除首尾空白）、掩码读取与清除（ADR-0015：
+// 明文不出后端，GetApiKey 只回非空掩码串供既有判空用法）
 func TestApiKeySetGetClear(t *testing.T) {
-	m := newTestConfig(t)
-	svc := NewEnvService(m)
+	svc := NewEnvService(newTestConfig(t), secrets.NewMemoryStore())
 
 	if got := svc.GetApiKey(); got != "" {
 		t.Fatalf("初始应为空，实际 %q", got)
@@ -265,8 +267,9 @@ func TestApiKeySetGetClear(t *testing.T) {
 	if err := svc.SetApiKey("  abc-123-xyz  "); err != nil {
 		t.Fatalf("SetApiKey: %v", err)
 	}
-	if got := svc.GetApiKey(); got != "abc-123-xyz" {
-		t.Errorf("应保存去除首尾空白后的 key，实际 %q", got)
+	got := svc.GetApiKey()
+	if got == "" || strings.Contains(got, "abc-123") || !strings.HasSuffix(got, "-xyz") {
+		t.Errorf("应返回非空掩码串（末四位线索、不含前段明文），实际 %q", got)
 	}
 
 	// 空串清除
@@ -280,7 +283,7 @@ func TestApiKeySetGetClear(t *testing.T) {
 
 // ConfigExists/MarkConfigCreated：首次运行判定与引导完成后落盘
 func TestConfigExistsAndMarkConfigCreated(t *testing.T) {
-	svc := NewEnvService(newTestConfig(t))
+	svc := NewEnvService(newTestConfig(t), secrets.NewMemoryStore())
 
 	if svc.ConfigExists() {
 		t.Fatal("临时目录中尚无 config.toml，ConfigExists 应为 false")

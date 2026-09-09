@@ -13,6 +13,7 @@ import (
 	"packgradle/internal/junction"
 	"packgradle/internal/pgignore"
 	"packgradle/internal/prism"
+	"packgradle/internal/secrets"
 )
 
 // makePrismFixture 在临时 APPDATA 下构造 Prism 数据目录（标准安装布局）：
@@ -606,7 +607,7 @@ func TestRemoveProjectCleansLinks(t *testing.T) {
 func TestRemoveProjectNoLinks(t *testing.T) {
 	cm := newTestConfig(t)
 	proj, _ := makeLinkProject(t, cm, "Plain")
-	pw := NewPackwizService(cm)
+	pw := NewPackwizService(cm, secrets.NewMemoryStore())
 	got, err := pw.RemoveProject(proj)
 	if err != nil {
 		t.Fatal(err)

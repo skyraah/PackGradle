@@ -84,8 +84,6 @@ type Config struct {
 	PrismInstancesDir string `toml:"prism_instances_dir"`
 	// 下载引擎韧性参数（ADR-0008 §4）
 	Download DownloadConfig `toml:"download"`
-	// 用户自行填写的 CurseForge API Key（用于按需查询 mod 版本等）
-	CurseforgeApiKey string `toml:"curseforge_api_key"`
 	// 保留策略设置（ADR-0007 §8；范围校验见 Retention/SetRetention）
 	Retention RetentionConfig `toml:"retention"`
 	// 旧版字段（v1）：项目 ↔ 实例关联与目录同步关联，启动时一次性迁移到项目级配置后清空
@@ -234,14 +232,6 @@ func (m *ConfigManager) FindProject(name string) (ProjectEntry, bool) {
 		}
 	}
 	return ProjectEntry{}, false
-}
-
-// SetApiKey 保存 CurseForge API Key；传空串则清除
-func (m *ConfigManager) SetApiKey(key string) error {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	m.cfg.CurseforgeApiKey = key
-	return m.save()
 }
 
 // SetPrismInstancesPath 保存用户手动指定的 Prism 实例根目录；传空串则清除（恢复自动定位）

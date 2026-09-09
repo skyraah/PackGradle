@@ -14,6 +14,7 @@ import (
 	"packgradle/internal/bootstrap"
 	"packgradle/internal/errs"
 	"packgradle/internal/notify"
+	"packgradle/internal/secrets"
 	"packgradle/internal/service"
 	"packgradle/internal/sessionlog"
 	"packgradle/internal/singleinstance"
@@ -93,6 +94,17 @@ func main() {
 		slog.Warn("迁移旧版项目关联配置失败", "err", err)
 	}
 
+	// 凭据槽位存储（ADR-0015）：系统凭据管理器承载 AES-GCM 密文信封，KEK
+	// 经 DPAPI 包裹落 root/credentials.kek。初始化失败退 BrokenStore 继续
+	// 启动——钥匙只影响 CF API 面，不拖垮应用；凭据操作如实报错，不降级明文。
+	var secretStore secrets.Store
+	if ks, kerr := secrets.NewKeyringStore(root); kerr != nil {
+		slog.Warn("凭据存储初始化失败（凭据操作将报错）", "err", kerr)
+		secretStore = secrets.Broken(kerr)
+	} else {
+		secretStore = ks
+	}
+
 	// 新架构（P1 只读核心）装配：SQLite 迁移失败必须阻止启动写操作。
 	// 保留设置端口接同一 ConfigManager（config.toml [retention]，契约 06 §3.6），
 	// SettingsService 随栈装配（票 #57）。
@@ -124,17 +136,21 @@ func main() {
 	})
 
 	// 创建 Wails 应用。'Bind' 中注册的 Go 服务方法可供前端直接调用。
-	// 新旧并存：legacy 三服务保持既有行为（已冻结）；SyncService 为 P1 只读核心出口，
-	// ProjectService/RuntimeService 为端点管理出口（/sources、/runtimes 页），
-	// SettingsService 为设置/开关域出口（契约 06 §2）。notifications 服务
-	//（票 #97）提供 toast 发送面与 ServiceStartup（wintoast 注册/激活回调）。
+	// 新旧并存：legacy 三服务保持既有行为（已冻结；EnvService 的 CF 钥匙
+	// 两方法自 ADR-0015 起薄委托凭据槽位，GetApiKey 只回掩码串）；
+	// SyncService 为 P1 只读核心出口，ProjectService/RuntimeService 为端点
+	// 管理出口（/sources、/runtimes 页），SettingsService 为设置/开关域出口
+	//（契约 06 §2）。SecretsService 为凭据槽位出口（ADR-0015，明文不出后端）。
+	// notifications 服务（票 #97）提供 toast 发送面与 ServiceStartup
+	//（wintoast 注册/激活回调）。
 	app := application.New(application.Options{
 		Name:        "PackGradle",
 		Description: "packwiz 与 Prism Launcher 整合包开发环境工具",
 		Services: []application.Service{
-			application.NewService(service.NewEnvService(config)),
-			application.NewService(service.NewPackwizService(config)),
+			application.NewService(service.NewEnvService(config, secretStore)),
+			application.NewService(service.NewPackwizService(config, secretStore)),
 			application.NewService(service.NewPrismService(config)),
+			application.NewService(service.NewSecretsService(secretStore)),
 			application.NewService(newStack.Service),
 			application.NewService(newStack.ProjectService),
 			application.NewService(newStack.RuntimeService),
